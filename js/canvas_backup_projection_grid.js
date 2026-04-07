@@ -1,0 +1,896 @@
+// ============================================
+// canvas.js - 캔버스 렌더링, 팬/줌, ROI 드래그
+// ============================================
+
+const CanvasManager = {
+    // 팬 상태
+    isPanning: false,
+    panStartX: 0,
+    panStartY: 0,
+    panScrollX: 0,
+    panScrollY: 0,
+
+    // ROI 선택/이동/리사이즈 상태
+    selectedRoiIdx: -1,
+    roiDragMode: null, // 'move' | 'resize-tl' | 'resize-tr' | 'resize-bl' | 'resize-br' | 'resize-t' | 'resize-b' | 'resize-l' | 'resize-r'
+    roiDragStartX: 0,
+    roiDragStartY: 0,
+    roiOriginal: null, // { x, y, w, h }
+
+    // 이진화 설정
+
+    init() {
+        const { canvas, canvasContainer, btnModePan, btnModeDraw,
+                btnClearRois, btnUndo, btnZoomIn, btnZoomOut, btnZoomFit, btnAnalyze } = App.els;
+
+        btnModePan.addEventListener('click', () => this.setMode('pan'));
+        btnModeDraw.addEventListener('click', () => this.setMode('draw'));
+        btnClearRois.addEventListener('click', () => this.clearAllRois());
+        btnUndo.addEventListener('click', () => this.undoLastRoi());
+        btnZoomIn.addEventListener('click', () => this.zoomBy(0.15));
+        btnZoomOut.addEventListener('click', () => this.zoomBy(-0.15));
+        btnZoomFit.addEventListener('click', () => this.zoomFit());
+        btnAnalyze.addEventListener('click', () => this.runAnalysis());
+
+        // 이미지 조정바 초기화
+        this.initAdjustBar();
+
+
+        // 마우스 이벤트
+        canvas.addEventListener('mousedown', (e) => this.handleStart(e));
+        window.addEventListener('mousemove', (e) => this.handleMove(e));
+        window.addEventListener('mouseup', (e) => this.handleEnd(e));
+
+        // 팬 모드 마우스 이벤트
+        canvasContainer.addEventListener('mousedown', (e) => {
+            if (!App.state.isDrawingMode && e.target !== canvas) {
+                this.startPan(e);
+            }
+        });
+        canvas.addEventListener('mousedown', (e) => {
+            if (!App.state.isDrawingMode) {
+                this.startPan(e);
+            }
+        });
+
+        // Ctrl+휠 = 줌 / 일반 휠 = 스크롤
+        canvasContainer.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                this.zoomBy(e.deltaY > 0 ? -0.1 : 0.1);
+            }
+        }, { passive: false });
+    },
+
+    setMode(mode) {
+        const { btnModeDraw, btnModePan, canvasContainer } = App.els;
+        App.state.isDrawingMode = (mode === 'draw');
+
+        btnModeDraw.classList.toggle('active', App.state.isDrawingMode);
+        btnModePan.classList.toggle('active', !App.state.isDrawingMode);
+        canvasContainer.classList.toggle('mode-draw', App.state.isDrawingMode);
+        canvasContainer.classList.toggle('mode-pan', !App.state.isDrawingMode);
+    },
+
+    // --- 팬 (드래그로 스크롤) ---
+    startPan(e) {
+        this.isPanning = true;
+        this.panStartX = e.clientX;
+        this.panStartY = e.clientY;
+        this.panScrollX = App.els.canvasContainer.scrollLeft;
+        this.panScrollY = App.els.canvasContainer.scrollTop;
+        App.els.canvasContainer.style.cursor = 'grabbing';
+        e.preventDefault();
+    },
+
+    // --- 줌 ---
+    zoomBy(delta) {
+        App.state.zoom = Math.max(App.state.minZoom, Math.min(App.state.maxZoom, App.state.zoom + delta));
+        this.applyZoom();
+    },
+
+    zoomFit() {
+        const container = App.els.canvasContainer;
+        const canvas = App.els.canvas;
+        if (!canvas.width || !canvas.height) return;
+
+        const pad = 24;
+        const scaleX = (container.clientWidth - pad) / canvas.width;
+        const scaleY = (container.clientHeight - pad) / canvas.height;
+        App.state.zoom = Math.min(scaleX, scaleY, 1.5);
+        this.applyZoom();
+    },
+
+    applyZoom() {
+        App.els.canvas.style.transform = `scale(${App.state.zoom})`;
+        App.updateStatusBar();
+    },
+
+    // --- ROI 관리 ---
+    clearAllRois() {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj) return;
+        imgObj.rois = [];
+        imgObj.results = null;
+        imgObj.gradeResult = null;
+        this.render();
+        App.updateStep(App.STEPS.REGION);
+        ImageManager.updateList();
+        Toast.info('모든 영역 박스가 삭제되었습니다');
+    },
+
+    undoLastRoi() {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj || imgObj.rois.length === 0) return;
+        imgObj.rois.pop();
+        imgObj.results = null;
+        imgObj.gradeResult = null;
+        this.render();
+        App.updateStep(App.STEPS.REGION);
+        ImageManager.updateList();
+    },
+
+    // ROI 개별 삭제
+    deleteRoi(index) {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj || index < 0 || index >= imgObj.rois.length) return;
+        imgObj.rois.splice(index, 1);
+        imgObj.results = null;
+        imgObj.gradeResult = null;
+        this.render();
+        App.updateStep(App.STEPS.REGION);
+        ImageManager.updateList();
+    },
+
+    // --- 마우스 좌표 (줌 보정) ---
+    getMousePos(evt) {
+        const canvas = App.els.canvas;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        return {
+            x: (evt.clientX - rect.left) * scaleX,
+            y: (evt.clientY - rect.top) * scaleY
+        };
+    },
+
+    // ROI 위의 마우스 위치 판별 (모서리/변/내부)
+    hitTestRoi(pos, roi, margin = 8) {
+        const { x, y, w, h } = roi;
+        const r = x + w, b = y + h;
+
+        // 모서리
+        if (Math.abs(pos.x - x) < margin && Math.abs(pos.y - y) < margin) return 'resize-tl';
+        if (Math.abs(pos.x - r) < margin && Math.abs(pos.y - y) < margin) return 'resize-tr';
+        if (Math.abs(pos.x - x) < margin && Math.abs(pos.y - b) < margin) return 'resize-bl';
+        if (Math.abs(pos.x - r) < margin && Math.abs(pos.y - b) < margin) return 'resize-br';
+        // 변
+        if (Math.abs(pos.y - y) < margin && pos.x > x && pos.x < r) return 'resize-t';
+        if (Math.abs(pos.y - b) < margin && pos.x > x && pos.x < r) return 'resize-b';
+        if (Math.abs(pos.x - x) < margin && pos.y > y && pos.y < b) return 'resize-l';
+        if (Math.abs(pos.x - r) < margin && pos.y > y && pos.y < b) return 'resize-r';
+        // 내부
+        if (pos.x > x && pos.x < r && pos.y > y && pos.y < b) return 'move';
+
+        return null;
+    },
+
+    handleStart(e) {
+        if (App.state.currentIndex === -1) return;
+
+        const pos = this.getMousePos(e);
+        const imgObj = App.getCurrentImage();
+
+        // 기존 ROI 위에 클릭했는지 확인
+        if (imgObj && imgObj.rois.length > 0) {
+            for (let i = imgObj.rois.length - 1; i >= 0; i--) {
+                const mode = this.hitTestRoi(pos, imgObj.rois[i]);
+                if (mode) {
+                    this.selectedRoiIdx = i;
+                    this.roiDragMode = mode;
+                    this.roiDragStartX = pos.x;
+                    this.roiDragStartY = pos.y;
+                    this.roiOriginal = { ...imgObj.rois[i] };
+                    e.preventDefault();
+
+                    // 영역설정 탭으로 전환 + 해당 카드 스크롤
+                    App.state.rightTab = 'settings';
+                    UI.updateRightPanel();
+                    this.render();
+
+                    // 해당 ROI 카드로 스크롤
+                    setTimeout(() => {
+                        const card = document.querySelector(`.roi-card[data-roi-index="${i}"]`);
+                        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 50);
+                    return;
+                }
+            }
+        }
+
+        // ROI 위가 아니면 새 박스 드래그 시작 (드로우 모드일 때만)
+        if (!App.state.isDrawingMode) return;
+        this.selectedRoiIdx = -1;
+        this.roiDragMode = null;
+        App.state.startX = pos.x;
+        App.state.startY = pos.y;
+        App.state.currentX = pos.x;
+        App.state.currentY = pos.y;
+        App.state.isDrawing = true;
+    },
+
+    handleMove(e) {
+        // 팬 드래그
+        if (this.isPanning) {
+            const dx = e.clientX - this.panStartX;
+            const dy = e.clientY - this.panStartY;
+            App.els.canvasContainer.scrollLeft = this.panScrollX - dx;
+            App.els.canvasContainer.scrollTop = this.panScrollY - dy;
+            return;
+        }
+
+        // ROI 이동/리사이즈
+        if (this.roiDragMode && this.selectedRoiIdx >= 0) {
+            const imgObj = App.getCurrentImage();
+            if (!imgObj) return;
+            const pos = this.getMousePos(e);
+            const dx = pos.x - this.roiDragStartX;
+            const dy = pos.y - this.roiDragStartY;
+            const roi = imgObj.rois[this.selectedRoiIdx];
+            const orig = this.roiOriginal;
+
+            switch (this.roiDragMode) {
+                case 'move':
+                    roi.x = orig.x + dx;
+                    roi.y = orig.y + dy;
+                    break;
+                case 'resize-br':
+                    roi.w = Math.max(20, orig.w + dx);
+                    roi.h = Math.max(20, orig.h + dy);
+                    break;
+                case 'resize-bl':
+                    roi.x = orig.x + dx;
+                    roi.w = Math.max(20, orig.w - dx);
+                    roi.h = Math.max(20, orig.h + dy);
+                    break;
+                case 'resize-tr':
+                    roi.y = orig.y + dy;
+                    roi.w = Math.max(20, orig.w + dx);
+                    roi.h = Math.max(20, orig.h - dy);
+                    break;
+                case 'resize-tl':
+                    roi.x = orig.x + dx;
+                    roi.y = orig.y + dy;
+                    roi.w = Math.max(20, orig.w - dx);
+                    roi.h = Math.max(20, orig.h - dy);
+                    break;
+                case 'resize-t':
+                    roi.y = orig.y + dy;
+                    roi.h = Math.max(20, orig.h - dy);
+                    break;
+                case 'resize-b':
+                    roi.h = Math.max(20, orig.h + dy);
+                    break;
+                case 'resize-l':
+                    roi.x = orig.x + dx;
+                    roi.w = Math.max(20, orig.w - dx);
+                    break;
+                case 'resize-r':
+                    roi.w = Math.max(20, orig.w + dx);
+                    break;
+            }
+
+            requestAnimationFrame(() => this.render());
+            return;
+        }
+
+        // ROI 위 커서 변경
+        if (!App.state.isDrawing && App.state.currentIndex >= 0) {
+            const imgObj = App.getCurrentImage();
+            const pos2 = this.getMousePos(e);
+            const container = App.els.canvasContainer;
+            container.classList.remove('cursor-move', 'cursor-nwse', 'cursor-nesw', 'cursor-ns', 'cursor-ew');
+
+            if (imgObj) {
+                for (let i = imgObj.rois.length - 1; i >= 0; i--) {
+                    const mode = this.hitTestRoi(pos2, imgObj.rois[i]);
+                    if (mode) {
+                        if (mode === 'move') container.classList.add('cursor-move');
+                        else if (mode === 'resize-tl' || mode === 'resize-br') container.classList.add('cursor-nwse');
+                        else if (mode === 'resize-tr' || mode === 'resize-bl') container.classList.add('cursor-nesw');
+                        else if (mode === 'resize-t' || mode === 'resize-b') container.classList.add('cursor-ns');
+                        else if (mode === 'resize-l' || mode === 'resize-r') container.classList.add('cursor-ew');
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 새 박스 드래그
+        if (!App.state.isDrawing || !App.state.isDrawingMode) return;
+        const pos = this.getMousePos(e);
+        App.state.currentX = pos.x;
+        App.state.currentY = pos.y;
+        requestAnimationFrame(() => this.render());
+    },
+
+    handleEnd(e) {
+        // 팬 끝
+        if (this.isPanning) {
+            this.isPanning = false;
+            if (!App.state.isDrawingMode) {
+                App.els.canvasContainer.style.cursor = 'grab';
+            }
+            return;
+        }
+
+        // ROI 이동/리사이즈 끝
+        if (this.roiDragMode && this.selectedRoiIdx >= 0) {
+            const imgObj = App.getCurrentImage();
+            const orig = this.roiOriginal;
+            const roi = imgObj ? imgObj.rois[this.selectedRoiIdx] : null;
+
+            // 실제로 이동/크기가 변경되었는지 확인
+            const moved = orig && roi && (
+                Math.abs(roi.x - orig.x) > 2 || Math.abs(roi.y - orig.y) > 2 ||
+                Math.abs(roi.w - orig.w) > 2 || Math.abs(roi.h - orig.h) > 2
+            );
+
+            if (moved && imgObj) {
+                imgObj.results = null;
+                imgObj.gradeResult = null;
+                this.render();
+                setTimeout(() => this.runAnalysis(), 50);
+            }
+
+            this.roiDragMode = null;
+            return;
+        }
+
+        // 새 박스 끝
+        if (!App.state.isDrawing || !App.state.isDrawingMode) return;
+        App.state.isDrawing = false;
+        const pos = this.getMousePos(e);
+        const s = App.state;
+        const w = pos.x - s.startX;
+        const h = pos.y - s.startY;
+
+        if (Math.abs(w) > 20 && Math.abs(h) > 20) {
+            const rx = w > 0 ? s.startX : pos.x;
+            const ry = h > 0 ? s.startY : pos.y;
+            const rw = Math.abs(w);
+            const rh = Math.abs(h);
+            const imgObj = App.getCurrentImage();
+
+            const newSettings = UI.defaultSettings();
+
+            // 자동 감지 (방향 포함)
+            try {
+                const imageData = this.getAdjustedImageData(imgObj, rx, ry, rw, rh);
+                const detected = OmrEngine.autoDetect(imageData, rx, ry);
+                if (detected) {
+                    newSettings.numQuestions = detected.numQuestions;
+                    newSettings.numChoices = detected.numChoices;
+                    newSettings.orientation = detected.orientation;
+
+                    // 가로이고 선택지 10개면 1-0, 아니면 일반 매핑
+                    if (detected.orientation === 'horizontal' && detected.numChoices >= 9) {
+                        newSettings.choicePreset = '1-0';
+                        newSettings.choiceLabels = [...UI.CHOICE_PRESETS['1-0'].labels];
+                        newSettings.numChoices = 10;
+                    } else {
+                        const presetMap = { 4: '1-4', 5: '1-5', 9: '1-9', 10: '1-0' };
+                        if (presetMap[detected.numChoices]) {
+                            newSettings.choicePreset = presetMap[detected.numChoices];
+                            newSettings.choiceLabels = [...UI.CHOICE_PRESETS[newSettings.choicePreset].labels];
+                        } else {
+                            newSettings.choiceLabels = Array.from({ length: detected.numChoices }, (_, i) => String(i + 1));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('자동 감지 실패:', e);
+            }
+
+            // ROI 추가
+            imgObj.rois.push({ x: rx, y: ry, w: rw, h: rh, settings: newSettings });
+            imgObj.results = null;
+            imgObj.gradeResult = null;
+            App.els.btnAnalyze.disabled = false;
+
+            // 바로 분석 실행
+            this.render();
+            setTimeout(() => {
+                this.runAnalysis();
+            }, 50);
+        } else {
+            this.render();
+        }
+    },
+
+    // --- 분석 실행 ---
+    runAnalysis() {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj || imgObj.rois.length === 0) {
+            Toast.error('먼저 박스 모드(D)에서 분석할 영역을 드래그하세요');
+            return;
+        }
+
+        App.els.btnAnalyze.disabled = true;
+        const text = App.els.btnAnalyze.querySelector('.analyze-label');
+        const spinner = App.els.btnAnalyze.querySelector('.spinner');
+        if (text) text.textContent = '분석 중...';
+        if (spinner) spinner.style.display = 'inline-block';
+
+        setTimeout(() => {
+          try {
+            const ctx = App.els.ctx;
+            ctx.clearRect(0, 0, App.els.canvas.width, App.els.canvas.height);
+            ctx.drawImage(imgObj.imgElement, 0, 0);
+
+            imgObj.results = [];
+            imgObj.validationErrors = [];
+
+            imgObj.rois.forEach((roi, idx) => {
+                const imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
+                const s = roi.settings || UI.defaultSettings();
+                const orientation = s.orientation || 'vertical';
+                const numQ = s.numQuestions || 0;
+                const numC = s.numChoices || 0;
+                const savedGrid = s.grid || null;
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, savedGrid);
+
+                // 분석 결과의 그리드 좌표를 settings에 저장 (양식 저장 시 포함됨)
+                if (analysis.gridData && !savedGrid) {
+                    s.grid = analysis.gridData;
+                }
+                const startNum = s.startNum || 1;
+                const expectedQ = s.numQuestions || 20;
+                const expectedC = s.numChoices || 5;
+
+                // 탐지된 행에 문항번호 부여
+                analysis.rows.forEach((row, i) => {
+                    row.questionNumber = startNum + i;
+                });
+
+                const detectedQ = analysis.rows.length;
+                const regionName = s.name || `영역 ${idx + 1}`;
+
+                // ── 검증: 문항수 불일치 ──
+                if (detectedQ < expectedQ) {
+                    // 부족한 문항을 "미인식"으로 채움
+                    for (let i = detectedQ; i < expectedQ; i++) {
+                        analysis.rows.push({
+                            questionNumber: startNum + i,
+                            numChoices: 0,
+                            markedAnswer: null,
+                            blobs: [],
+                            undetected: true // 미인식 플래그
+                        });
+                    }
+                    imgObj.validationErrors.push({
+                        roiIndex: idx + 1,
+                        regionName,
+                        type: 'missing_questions',
+                        expected: expectedQ,
+                        detected: detectedQ,
+                        missing: expectedQ - detectedQ
+                    });
+                } else if (detectedQ > expectedQ) {
+                    imgObj.validationErrors.push({
+                        roiIndex: idx + 1,
+                        regionName,
+                        type: 'extra_questions',
+                        expected: expectedQ,
+                        detected: detectedQ,
+                        extra: detectedQ - expectedQ
+                    });
+                }
+
+                // ── 검증: 지선다 불일치 ──
+                analysis.rows.forEach(row => {
+                    if (row.numChoices > 0 && row.numChoices !== expectedC && !row.undetected) {
+                        if (!imgObj.validationErrors.find(e =>
+                            e.roiIndex === idx + 1 && e.type === 'choice_mismatch')) {
+                            imgObj.validationErrors.push({
+                                roiIndex: idx + 1,
+                                regionName,
+                                type: 'choice_mismatch',
+                                expected: expectedC,
+                                detected: row.numChoices,
+                                questionNumber: row.questionNumber
+                            });
+                        }
+                    }
+                });
+
+                imgObj.results.push({
+                    roiIndex: idx + 1,
+                    numQuestions: analysis.rows.length,
+                    numChoices: analysis.maxCols,
+                    rows: analysis.rows,
+                    settings: s,
+                    debugBlobs: analysis.debugBlobs
+                });
+            });
+
+            // 검증 경고 토스트
+            if (imgObj.validationErrors.length > 0) {
+                const missingErrs = imgObj.validationErrors.filter(e => e.type === 'missing_questions');
+                if (missingErrs.length > 0) {
+                    missingErrs.forEach(e => {
+                        Toast.error(`${e.regionName}: ${e.expected}문항 중 ${e.detected}개만 인식 (${e.missing}개 누락)`);
+                    });
+                }
+            }
+
+            // 결과 탭으로 자동 전환
+            App.state.rightTab = 'results';
+
+            // 정답이 있으면 자동 채점 (전역 또는 영역별)
+            const hasAnyAnswers = App.state.answerKey ||
+                imgObj.rois.some(r => r.settings && r.settings.type === 'subject_answer' && r.settings.answerKey);
+            // 휴대폰번호 접두사 적용 (채점 여부 무관)
+            ImageManager.applyPhonePrefix(imgObj);
+
+            if (hasAnyAnswers) {
+                imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
+                if (imgObj.gradeResult) {
+                    App.updateStep(App.STEPS.GRADE);
+                    Toast.success(imgObj.validationErrors.length > 0 ? '채점 완료 (검증 경고 있음)' : '분석 및 채점 완료');
+                } else {
+                    App.updateStep(App.STEPS.ANALYZE);
+                    Toast.success('분석 완료');
+                }
+            } else {
+                App.updateStep(App.STEPS.ANALYZE);
+                Toast.success(imgObj.validationErrors.length > 0 ? '분석 완료 (검증 경고 있음)' : '분석 완료');
+            }
+
+            this.render();
+            ImageManager.updateList();
+
+          } catch (err) {
+            console.error('분석 오류:', err);
+            Toast.error('분석 중 오류 발생: ' + err.message);
+          } finally {
+            if (text) text.textContent = '분석 실행';
+            if (spinner) spinner.style.display = 'none';
+            App.els.btnAnalyze.disabled = false;
+          }
+        }, 100);
+    },
+
+    // 진하기(감마) 설정
+    intensity: 100,
+    _intensityCache: new Map(),
+
+    // --- 이미지 조정바 초기화 ---
+    initAdjustBar() {
+        const intensityInput = document.getElementById('adj-intensity');
+        const intensityVal = document.getElementById('adj-intensity-val');
+
+        intensityInput.addEventListener('input', () => {
+            this.intensity = parseInt(intensityInput.value);
+            intensityVal.textContent = intensityInput.value;
+            this._intensityCache.clear();
+            this.render(); // 현재 이미지만 적용
+        });
+
+        document.getElementById('adj-apply-all').addEventListener('click', () => {
+            if (this.intensity === 100) return;
+            const images = App.state.images;
+            if (!images || images.length === 0) return;
+            const gamma = this.intensity / 100;
+            const lut = new Uint8Array(256);
+            for (let i = 0; i < 256; i++) lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
+            let done = 0;
+            Toast.info(`전체 이미지 진하기 적용 중... (0/${images.length})`);
+            const processNext = () => {
+                if (done >= images.length) { Toast.success(`완료 (${images.length}장)`); return; }
+                const imgObj = images[done];
+                const img = imgObj.imgElement;
+                const key = (imgObj.src || img.src) + '_' + this.intensity;
+                if (!this._intensityCache.has(key)) {
+                    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+                    const off = document.createElement('canvas');
+                    off.width = w; off.height = h;
+                    const ctx = off.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(img, 0, 0);
+                    const imgData = ctx.getImageData(0, 0, w, h);
+                    const d = imgData.data;
+                    for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i+1] = lut[d[i+1]]; d[i+2] = lut[d[i+2]]; }
+                    ctx.putImageData(imgData, 0, 0);
+                    this._intensityCache.set(key, off);
+                }
+                done++;
+                if (done % 10 === 0) Toast.info(`전체 이미지 진하기 적용 중... (${done}/${images.length})`);
+                setTimeout(processNext, 0); // UI 블로킹 방지
+            };
+            processNext();
+        });
+
+        document.getElementById('adj-reset').addEventListener('click', () => {
+            this.intensity = 100;
+            intensityInput.value = 100;
+            intensityVal.textContent = '100';
+            this._intensityCache.clear();
+            this.render();
+        });
+
+        document.getElementById('adj-rotate-left').addEventListener('click', () => this.rotateImage(-90));
+        document.getElementById('adj-rotate-right').addEventListener('click', () => this.rotateImage(90));
+
+        // 분석 로그 체크박스
+        document.getElementById('adj-debug-log').addEventListener('change', (e) => {
+            OmrEngine.debugLog = e.target.checked;
+        });
+    },
+
+    // 감마 보정된 이미지 생성 (캐시)
+    _getIntensifiedImage(imgObj) {
+        if (this.intensity === 100) return null; // 원본 사용
+
+        const img = imgObj.imgElement;
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const key = (imgObj.src || img.src) + '_' + this.intensity;
+
+        if (this._intensityCache.has(key)) return this._intensityCache.get(key);
+
+        // 감마 LUT: 슬라이더 오른쪽(150)=진하게, 왼쪽(50)=옅게
+        const gamma = this.intensity / 100;
+        const lut = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) {
+            lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
+        }
+
+        const off = document.createElement('canvas');
+        off.width = w; off.height = h;
+        const offCtx = off.getContext('2d', { willReadFrequently: true });
+        offCtx.drawImage(img, 0, 0);
+        const imgData = offCtx.getImageData(0, 0, w, h);
+        const d = imgData.data;
+
+        for (let i = 0; i < d.length; i += 4) {
+            d[i] = lut[d[i]];
+            d[i+1] = lut[d[i+1]];
+            d[i+2] = lut[d[i+2]];
+        }
+        offCtx.putImageData(imgData, 0, 0);
+
+        // 캐시 (최대 200개)
+        if (this._intensityCache.size > 200) {
+            const firstKey = this._intensityCache.keys().next().value;
+            this._intensityCache.delete(firstKey);
+        }
+        this._intensityCache.set(key, off);
+        return off;
+    },
+
+    // 전체 이미지 회전
+    rotateImage(degrees) {
+        const images = App.state.images;
+        if (!images || images.length === 0) return;
+
+        let remaining = images.length;
+
+        images.forEach(imgObj => {
+            const img = imgObj.imgElement;
+            const sw = img.naturalWidth || img.width;
+            const sh = img.naturalHeight || img.height;
+
+            const off = document.createElement('canvas');
+            const isSwap = (degrees === 90 || degrees === -90);
+            off.width = isSwap ? sh : sw;
+            off.height = isSwap ? sw : sh;
+            const offCtx = off.getContext('2d');
+
+            offCtx.translate(off.width / 2, off.height / 2);
+            offCtx.rotate(degrees * Math.PI / 180);
+            offCtx.drawImage(img, -sw / 2, -sh / 2);
+
+            // toBlob → createObjectURL (toDataURL보다 안정적)
+            off.toBlob(blob => {
+                const url = URL.createObjectURL(blob);
+                const newImg = new Image();
+                newImg.onload = () => {
+                    URL.revokeObjectURL(url);
+                    imgObj.imgElement = newImg;
+                    imgObj.rois = [];
+                    imgObj.results = null;
+                    imgObj.gradeResult = null;
+
+                    remaining--;
+                    if (remaining === 0) {
+                        const cur = App.getCurrentImage();
+                        if (cur) {
+                            const { canvas } = App.els;
+                            canvas.width = cur.imgElement.width;
+                            canvas.height = cur.imgElement.height;
+                            canvas.style.display = 'block';
+                            document.getElementById('canvas-empty').style.display = 'none';
+                            this.zoomFit();
+                            this.render();
+                        }
+                        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+                    }
+                };
+                newImg.src = url;
+            }, 'image/png');
+        });
+    },
+
+
+    // 분석용 이미지 데이터 (진하기 적용)
+    // srcCanvas를 전달하면 재사용 (batch용 최적화)
+    getAdjustedImageData(imgObj, x, y, w, h, srcCanvas) {
+        const intensified = this._getIntensifiedImage(imgObj);
+        if (intensified) {
+            return intensified.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
+        }
+        if (srcCanvas) {
+            return srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
+        }
+        // 캐시된 원본 캔버스 사용
+        const img = imgObj.imgElement;
+        const key = imgObj.src || img.src;
+        if (!this._srcCanvasCache || this._srcCanvasCacheKey !== key) {
+            const off = document.createElement('canvas');
+            off.width = img.naturalWidth || img.width;
+            off.height = img.naturalHeight || img.height;
+            const offCtx = off.getContext('2d', { willReadFrequently: true });
+            offCtx.drawImage(img, 0, 0);
+            this._srcCanvasCache = off;
+            this._srcCanvasCacheKey = key;
+        }
+        return this._srcCanvasCache.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
+    },
+
+    // --- 렌더링 ---
+    render() {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj) return;
+
+        // 이미지가 있으면 조정바 표시
+        const bar = document.getElementById('image-adjust-bar');
+        if (bar) bar.style.display = 'flex';
+
+        const { canvas, ctx } = App.els;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const intensified = this._getIntensifiedImage(imgObj);
+        ctx.drawImage(intensified || imgObj.imgElement, 0, 0);
+
+        // ROI 박스
+        imgObj.rois.forEach((roi, idx) => {
+            const isSelected = idx === this.selectedRoiIdx;
+            ctx.strokeStyle = isSelected ? '#2563eb' : '#4A7CFF';
+            ctx.lineWidth = isSelected ? 4 : 3;
+            ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+            ctx.fillStyle = isSelected ? 'rgba(37, 99, 235, 0.12)' : 'rgba(74, 124, 255, 0.08)';
+            ctx.fillRect(roi.x, roi.y, roi.w, roi.h);
+
+            // 선택된 ROI: 모서리/변 핸들 그리기
+            if (isSelected) {
+                const hSize = 6;
+                ctx.fillStyle = '#2563eb';
+                const corners = [
+                    [roi.x, roi.y], [roi.x + roi.w, roi.y],
+                    [roi.x, roi.y + roi.h], [roi.x + roi.w, roi.y + roi.h]
+                ];
+                corners.forEach(([cx, cy]) => {
+                    ctx.fillRect(cx - hSize/2, cy - hSize/2, hSize, hSize);
+                });
+                // 변 중앙 핸들
+                const midHandles = [
+                    [roi.x + roi.w/2, roi.y], [roi.x + roi.w/2, roi.y + roi.h],
+                    [roi.x, roi.y + roi.h/2], [roi.x + roi.w, roi.y + roi.h/2]
+                ];
+                midHandles.forEach(([cx, cy]) => {
+                    ctx.fillRect(cx - hSize/2, cy - hSize/2, hSize, hSize);
+                });
+            }
+
+            // 영역명 + 방향 라벨
+            const name = (roi.settings && roi.settings.name) || `영역 ${idx + 1}`;
+            const orient = (roi.settings && roi.settings.orientation === 'horizontal') ? '가로' : '세로';
+            const text = `${name} (${orient})`;
+            ctx.font = 'bold 20px sans-serif';
+            const tw = ctx.measureText(text).width;
+            ctx.fillStyle = '#4A7CFF';
+            ctx.fillRect(roi.x, roi.y + roi.h, tw + 12, 28);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(text, roi.x + 6, roi.y + roi.h + 21);
+        });
+
+        // 드래그 중
+        if (App.state.isDrawing) {
+            const s = App.state;
+            ctx.strokeStyle = '#EF4444';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
+            ctx.strokeRect(s.startX, s.startY, s.currentX - s.startX, s.currentY - s.startY);
+            ctx.setLineDash([]);
+        }
+
+        // 디버그: BFS가 찾은 블롭 표시
+        if (imgObj.results) {
+            imgObj.results.forEach(roiResult => {
+                if (!roiResult.debugBlobs) return;
+                const db = roiResult.debugBlobs;
+                // BFS 전체 블롭 (빨간 점선) — 필터 전
+                db.all.forEach(b => {
+                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.strokeRect(b.cx - b.w/2, b.cy - b.h/2, b.w, b.h);
+                    ctx.setLineDash([]);
+                });
+                // 필터 통과 블롭 (초록 실선)
+                db.filtered.forEach(b => {
+                    ctx.strokeStyle = '#22c55e';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(b.cx - b.w/2, b.cy - b.h/2, b.w, b.h);
+                    // 좌표 표시
+                    ctx.font = '9px monospace';
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fillText(`${Math.round(b.cx)},${Math.round(b.cy)}`, b.cx - b.w/2, b.cy - b.h/2 - 2);
+                });
+            });
+        }
+
+        // 분석 결과 오버레이
+        if (imgObj.results) {
+            const hasGrade = imgObj.gradeResult !== null;
+            const details = hasGrade ? imgObj.gradeResult.details : null;
+
+            imgObj.results.forEach(roiResult => {
+                // 정상 블롭들의 중간값 반지름 계산 (오버레이 크기 통일)
+                const allBlobs = roiResult.rows.flatMap(r => r.blobs || []);
+                const radii = allBlobs
+                    .filter(b => b.w < 40 && b.h < 40) // 비정상 크기 제외
+                    .map(b => Math.min(b.w, b.h) / 2);
+                const medianR = radii.length > 0
+                    ? radii.sort((a, b) => a - b)[Math.floor(radii.length / 2)]
+                    : 8;
+
+                roiResult.rows.forEach(row => {
+                    const isMulti = row.multiMarked;
+                    (row.blobs || []).forEach(blob => {
+                        const drawR = medianR + 1;
+                        ctx.lineWidth = 2;
+                        if (blob.isMarked) {
+                            if (row.corrected) {
+                                // 수정됨: 보라색
+                                ctx.fillStyle = 'rgba(139, 92, 246, 0.5)';
+                                ctx.strokeStyle = '#7c3aed';
+                            } else if (isMulti) {
+                                ctx.fillStyle = 'rgba(239, 68, 68, 0.45)';
+                                ctx.strokeStyle = '#dc2626';
+                            } else if (hasGrade && details) {
+                                const d = details.find(d => d.questionNumber === row.questionNumber);
+                                const isCorrect = d ? d.isCorrect : true;
+                                ctx.fillStyle = isCorrect ? 'rgba(34, 197, 94, 0.45)' : 'rgba(239, 68, 68, 0.45)';
+                                ctx.strokeStyle = isCorrect ? '#16a34a' : '#dc2626';
+                            } else {
+                                ctx.fillStyle = 'rgba(74, 124, 255, 0.4)';
+                                ctx.strokeStyle = '#4A7CFF';
+                            }
+                            ctx.beginPath();
+                            ctx.arc(blob.cx, blob.cy, drawR, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                        } else {
+                            // 미마킹 셀: 노란색 테두리
+                            ctx.strokeStyle = 'rgba(245, 158, 11, 0.6)';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.arc(blob.cx, blob.cy, drawR, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                    });
+                });
+            });
+        }
+    }
+};

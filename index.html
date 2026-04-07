@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR 채점 시스템</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- 워크플로우 스테퍼 헤더 -->
+    <header class="workflow-bar">
+        <span class="app-title">OMR 채점</span>
+
+        <div class="stepper">
+            <div class="step active" data-step="1">
+                <span class="step-number">1</span> 업로드
+            </div>
+            <span class="step-arrow">→</span>
+            <div class="step" data-step="2">
+                <span class="step-number">2</span> 영역설정
+            </div>
+            <span class="step-arrow">→</span>
+            <div class="step" data-step="3">
+                <span class="step-number">3</span> 분석
+            </div>
+            <span class="step-arrow">→</span>
+            <div class="step" data-step="4">
+                <span class="step-number">4</span> 채점
+            </div>
+        </div>
+
+        <div class="header-actions">
+            <label class="btn btn-sm btn-primary" style="cursor:pointer;">
+                이미지 업로드
+                <input type="file" id="file-upload" style="display:none;" multiple accept="image/*">
+            </label>
+            <button id="btn-subject-manager" class="btn btn-sm">과목 관리</button>
+            <!-- 숨김: JS 참조용 -->
+            <button id="btn-generate" style="display:none;"></button>
+            <button id="btn-answer-key" style="display:none;"></button>
+
+            <!-- 저장 드롭다운 -->
+            <div class="dropdown">
+                <button class="btn btn-sm dropdown-toggle">저장 ▾</button>
+                <div class="dropdown-menu">
+                    <button id="btn-save-session" class="dropdown-item">세션 저장 (전체)</button>
+                    <button id="btn-save-template" class="dropdown-item">양식 저장 (ROI만)</button>
+                    <div class="dropdown-divider"></div>
+                    <button id="btn-export-csv" class="dropdown-item">CSV 다운로드</button>
+                    <button id="btn-export-excel" class="dropdown-item">Excel 다운로드</button>
+                </div>
+            </div>
+
+            <!-- 불러오기 드롭다운 -->
+            <div class="dropdown">
+                <button class="btn btn-sm dropdown-toggle">불러오기 ▾</button>
+                <div class="dropdown-menu">
+                    <button id="btn-load-session" class="dropdown-item">세션 불러오기</button>
+                    <button id="btn-load-template" class="dropdown-item">양식 불러오기</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 숨겨진 file input들 -->
+    <input type="file" id="template-file-input" style="display:none;" accept=".json">
+    <input type="file" id="session-file-input" style="display:none;" accept=".json">
+
+    <!-- 메인 3패널 -->
+    <div class="main-layout">
+
+        <!-- 좌: 이미지 목록 -->
+        <aside class="panel-left">
+            <div class="panel-header">이미지 목록</div>
+            <ul id="image-list" class="image-list">
+                <div class="image-list-empty">이미지를 업로드하세요.<br>여러 장을 한번에 선택할 수 있습니다.</div>
+            </ul>
+        </aside>
+
+        <!-- 중: 캔버스 -->
+        <main class="panel-center">
+            <div class="toolbar">
+                <!-- 이동/박스 버튼 숨김 (항상 박스 모드) -->
+                <button id="mode-pan" style="display:none;"></button>
+                <button id="mode-draw" style="display:none;"></button>
+
+                <button id="btn-undo" class="tool-btn">되돌리기 <span class="kbd">Ctrl+Z</span></button>
+                <button id="btn-clear-rois" class="tool-btn" style="color:var(--red);">전체삭제</button>
+                <div class="toolbar-divider"></div>
+                <button id="btn-zoom-out" class="tool-btn">−</button>
+                <span id="zoom-level" style="font-size:12px; font-weight:600; color:var(--text-secondary); min-width:40px; text-align:center;">100%</span>
+                <button id="btn-zoom-in" class="tool-btn">+</button>
+                <button id="btn-zoom-fit" class="tool-btn">맞춤</button>
+                <div class="spacer"></div>
+                <button id="btn-analyze" class="btn btn-primary" disabled>
+                    <span class="analyze-label">OMR 분석</span>
+                    <div class="spinner" style="display:none;"></div>
+                    <span class="kbd" style="background:rgba(255,255,255,0.2);">Enter</span>
+                </button>
+                <div class="dropdown" style="margin-left:4px;">
+                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">일괄 채점 ▾</button>
+                    <div class="dropdown-menu">
+                        <button class="dropdown-item" onclick="BatchProcess.run(false)">일괄 채점 (개별 영역 유지)</button>
+                        <button class="dropdown-item" onclick="BatchProcess.run(true)">전체 영역 재설정 후 채점</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="image-adjust-bar" id="image-adjust-bar" style="display:none;">
+                <label>진하기 <input type="range" id="adj-intensity" min="0" max="350" value="250" step="5"><span id="adj-intensity-val">250</span>%</label>
+                <div class="toolbar-divider"></div>
+                <button id="adj-apply-all" class="btn btn-sm" style="font-size:11px;">전체 적용</button>
+                <div class="toolbar-divider"></div>
+                <button id="adj-rotate-left" class="tool-btn" style="font-size:13px;" title="왼쪽 90도 회전">↺ 좌회전</button>
+                <button id="adj-rotate-right" class="tool-btn" style="font-size:13px;" title="오른쪽 90도 회전">↻ 우회전</button>
+                <div class="toolbar-divider"></div>
+                <button id="adj-skew-ccw" class="tool-btn" style="font-size:11px;" title="반시계 0.5도">↶ -0.5°</button>
+                <button id="adj-skew-cw" class="tool-btn" style="font-size:11px;" title="시계 0.5도">↷ +0.5°</button>
+                <label style="margin-left:2px;font-size:11px;cursor:pointer;"><input type="checkbox" id="adj-skew-all"> 전체</label>
+                <div class="toolbar-divider"></div>
+                <button id="adj-reset" class="tool-btn" style="font-size:11px;">초기화</button>
+                <label style="margin-left:8px;cursor:pointer;font-size:11px;"><input type="checkbox" id="adj-debug-log"> 분석 로그</label>
+            </div>
+            <div id="canvas-container" class="canvas-container mode-draw">
+                <canvas id="main-canvas" style="display:none;"></canvas>
+                <div id="canvas-empty" class="canvas-empty">
+                    <div class="canvas-empty-icon">📄</div>
+                    <div style="margin-bottom:16px;">OMR 답안지 이미지를 업로드하세요.</div>
+                    <label class="btn btn-primary" style="cursor:pointer; font-size:15px; padding:12px 32px;">
+                        이미지 업로드
+                        <input type="file" style="display:none;" multiple accept="image/*"
+                            onchange="App.els.fileUpload.files = this.files; App.els.fileUpload.dispatchEvent(new Event('change'));">
+                    </label>
+                </div>
+            </div>
+            <div id="inline-console" class="inline-console">
+                <div class="inline-console-header" onclick="document.getElementById('inline-console-body').classList.toggle('collapsed')">
+                    분석 로그 <span class="inline-console-toggle">▼</span>
+                    <button class="inline-console-clear" onclick="event.stopPropagation(); document.getElementById('inline-console-body').innerHTML='';">지우기</button>
+                </div>
+                <div id="inline-console-body" class="inline-console-body"></div>
+            </div>
+        </main>
+
+        <!-- 우: 결과 패널 -->
+        <aside class="panel-right">
+            <div class="panel-header" id="right-panel-title">시작하기</div>
+            <div class="panel-right-content" id="right-panel-content">
+                <div class="guide-text">
+                    <div style="font-size:40px; opacity:0.2; margin-bottom:12px;">📄</div>
+                    <strong>1. 이미지 업로드</strong><br>
+                    상단의 "이미지 업로드" 버튼으로<br>
+                    OMR 답안지 이미지를 불러오세요.<br><br>
+                    <strong>2. 영역 지정</strong><br>
+                    박스 모드(D)로 분석할 영역을 드래그<br><br>
+                    <strong>3. 분석 → 채점</strong><br>
+                    분석 실행(Enter) 후 결과를 확인하세요.
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- 상태바 -->
+    <footer class="status-bar">
+        <div class="status-item">
+            <span class="status-dot"></span>
+            <span id="status-images">이미지 0장</span>
+        </div>
+        <div class="status-item">
+            <span class="status-dot inactive" id="status-answer-dot"></span>
+            <span id="status-answer">정답 미입력</span>
+        </div>
+        <div class="status-item" style="margin-left:auto;">
+            줌 <span id="status-zoom">100%</span> · <span style="color:var(--text-muted);">Ctrl+휠로 확대/축소</span>
+        </div>
+    </footer>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- JS (순서 중요) -->
+    <script>
+    // 인라인 콘솔: console.log를 화면에도 표시
+    (function() {
+        const origLog = console.log.bind(console);
+        const origWarn = console.warn.bind(console);
+        const origError = console.error.bind(console);
+
+        function appendToInline(args, cls) {
+            const body = document.getElementById('inline-console-body');
+            if (!body) return;
+            const line = document.createElement('div');
+            line.className = 'log-line ' + cls;
+            line.textContent = Array.from(args).map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+            body.appendChild(line);
+            body.scrollTop = body.scrollHeight;
+        }
+
+        console.log = function() { origLog.apply(console, arguments); appendToInline(arguments, 'log-info'); };
+        console.warn = function() { origWarn.apply(console, arguments); appendToInline(arguments, 'log-warn'); };
+        console.error = function() { origError.apply(console, arguments); appendToInline(arguments, 'log-error'); };
+    })();
+    </script>
+    <script src="js/toast.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/omrEngine.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/imageManager.js"></script>
+    <script src="js/canvas.js"></script>
+    <script src="js/grading.js"></script>
+    <script src="js/batch.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/shortcuts.js"></script>
+    <script src="js/testGenerator.js"></script>
+    <script src="js/template.js"></script>
+    <script src="js/session.js"></script>
+    <script src="js/subjectManager.js"></script>
+</body>
+</html>
