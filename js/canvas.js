@@ -17,10 +17,6 @@ const CanvasManager = {
     roiDragStartY: 0,
     roiOriginal: null, // { x, y, w, h }
 
-    // 타이밍 마크 모드
-    tmMode: null, // null | 'strip-top' | 'strip-bottom' | 'strip-left' | 'strip-right' | 'row-click'
-    tmActiveRegionIdx: -1, // 행 클릭 시 대상 영역
-
     // 이진화 설정
 
     init() {
@@ -179,107 +175,11 @@ const CanvasManager = {
         return null;
     },
 
-    // 타이밍 마크 스트립 드래그 시작
-    startTimingMarkStrip(side) {
-        this.tmMode = 'strip-' + side;
-        App.els.canvasContainer.style.cursor = 'crosshair';
-        Toast.info(`${side === 'top' ? '상단' : side === 'bottom' ? '하단' : side === 'left' ? '좌측' : '우측'} 타이밍 마크 영역을 드래그하세요`);
-    },
-
-    // 타이밍 마크 행 클릭 모드
-    startRowClick(regionIdx) {
-        this.tmMode = 'row-click';
-        this.tmActiveRegionIdx = regionIdx;
-        App.els.canvasContainer.style.cursor = 'crosshair';
-        Toast.info('행 위치를 클릭하세요 (ESC로 종료)');
-    },
-
-    stopTimingMarkMode() {
-        this.tmMode = null;
-        this.tmActiveRegionIdx = -1;
-        App.els.canvasContainer.style.cursor = '';
-        this.render();
-    },
-
-    // 타이밍 마크 스트립 드래그 완료 → 마크 감지
-    finishTimingMarkStrip(rx, ry, rw, rh) {
-        const imgObj = App.getCurrentImage();
-        if (!imgObj) return;
-
-        const side = this.tmMode.replace('strip-', '');
-        this.tmMode = null;
-        App.els.canvasContainer.style.cursor = '';
-
-        // 전체 이미지에서 해당 영역의 imageData
-        const imageData = this.getAdjustedImageData(imgObj, rx, ry, rw, rh);
-        const marks = TimingMark.detectMarks(imageData, side, { x: rx, y: ry, w: rw, h: rh });
-
-        if (marks.length < 2) {
-            Toast.error('타이밍 마크를 2개 이상 감지하지 못했습니다.');
-            return;
-        }
-
-        // imgObj에 타이밍 마크 저장
-        if (!imgObj.timingMarks) imgObj.timingMarks = { top: [], bottom: [], left: [], right: [] };
-        imgObj.timingMarks[side] = marks;
-
-        console.log(`[TimingMark] ${side}: ${marks.length}개 감지`);
-        Toast.success(`${side} 타이밍 마크: ${marks.length}개 감지`);
-
-        this.render();
-        UI.updateRightPanel();
-    },
-
-    // 행 클릭 처리
-    addRowPosition(y) {
-        const imgObj = App.getCurrentImage();
-        if (!imgObj || this.tmActiveRegionIdx < 0) return;
-
-        if (!imgObj.tmRowPositions) imgObj.tmRowPositions = {};
-        const key = this.tmActiveRegionIdx;
-        if (!imgObj.tmRowPositions[key]) imgObj.tmRowPositions[key] = [];
-
-        imgObj.tmRowPositions[key].push(y);
-        imgObj.tmRowPositions[key].sort((a, b) => a - b);
-
-        console.log(`[TimingMark] 영역${key + 1} 행 추가: y=${Math.round(y)}, 총 ${imgObj.tmRowPositions[key].length}행`);
-        this.render();
-    },
-
-    // 마지막 행 되돌리기
-    undoRowPosition() {
-        const imgObj = App.getCurrentImage();
-        if (!imgObj || this.tmActiveRegionIdx < 0) return;
-        const key = this.tmActiveRegionIdx;
-        if (imgObj.tmRowPositions && imgObj.tmRowPositions[key] && imgObj.tmRowPositions[key].length > 0) {
-            imgObj.tmRowPositions[key].pop();
-            this.render();
-        }
-    },
-
     handleStart(e) {
         if (App.state.currentIndex === -1) return;
 
         const pos = this.getMousePos(e);
         const imgObj = App.getCurrentImage();
-
-        // 타이밍 마크 스트립 드래그 모드
-        if (this.tmMode && this.tmMode.startsWith('strip-')) {
-            App.state.startX = pos.x;
-            App.state.startY = pos.y;
-            App.state.currentX = pos.x;
-            App.state.currentY = pos.y;
-            App.state.isDrawing = true;
-            e.preventDefault();
-            return;
-        }
-
-        // 타이밍 마크 행 클릭 모드
-        if (this.tmMode === 'row-click') {
-            this.addRowPosition(pos.y);
-            e.preventDefault();
-            return;
-        }
 
         // 기존 ROI 위에 클릭했는지 확인 (리사이즈/이동 우선)
         if (imgObj && imgObj.rois.length > 0) {
@@ -447,25 +347,6 @@ const CanvasManager = {
             return;
         }
 
-        // 타이밍 마크 스트립 드래그 끝
-        if (this.tmMode && this.tmMode.startsWith('strip-') && App.state.isDrawing) {
-            App.state.isDrawing = false;
-            const pos = this.getMousePos(e);
-            const s = App.state;
-            const w = pos.x - s.startX;
-            const h = pos.y - s.startY;
-            if (Math.abs(w) > 10 || Math.abs(h) > 10) {
-                const rx = w > 0 ? s.startX : pos.x;
-                const ry = h > 0 ? s.startY : pos.y;
-                this.finishTimingMarkStrip(rx, ry, Math.abs(w), Math.abs(h));
-            } else {
-                this.stopTimingMarkMode();
-                Toast.info('타이밍 마크 취소');
-            }
-            this.render();
-            return;
-        }
-
         // 새 박스 끝
         if (!App.state.isDrawing || !App.state.isDrawingMode) return;
         App.state.isDrawing = false;
@@ -550,13 +431,45 @@ const CanvasManager = {
             imgObj.validationErrors = [];
 
             imgObj.rois.forEach((roi, idx) => {
-                const imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
+                let imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
                 const s = roi.settings || UI.defaultSettings();
                 const orientation = s.orientation || 'vertical';
                 const numQ = s.numQuestions || 0;
                 const numC = s.numChoices || 0;
                 const bSize = s.bubbleSize || this.bubbleSize || 0;
-                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize);
+                const stretch = s.stretchRatio || 1.0;
+
+                // 가로 스트레칭: 세로 길쭉 버블을 동그랗게 만들어서 BFS 실행
+                let stretchedOffsetX = roi.x;
+                if (stretch > 1.0) {
+                    const srcW = imageData.width, srcH = imageData.height;
+                    const dstW = Math.round(srcW * stretch);
+                    const off = document.createElement('canvas');
+                    off.width = dstW; off.height = srcH;
+                    const offCtx = off.getContext('2d');
+                    // 원본 imageData → 임시 캔버스 → 스트레칭
+                    const tmpCanvas = document.createElement('canvas');
+                    tmpCanvas.width = srcW; tmpCanvas.height = srcH;
+                    tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
+                    offCtx.drawImage(tmpCanvas, 0, 0, dstW, srcH);
+                    imageData = offCtx.getImageData(0, 0, dstW, srcH);
+                    stretchedOffsetX = roi.x * stretch;
+                }
+
+                const analysis = OmrEngine.analyzeROI(imageData, stretchedOffsetX, roi.y, orientation, numQ, numC, null, bSize);
+
+                // 스트레칭 역변환: x 좌표를 원래 비율로 복원
+                if (stretch > 1.0) {
+                    analysis.rows.forEach(row => {
+                        if (row.blobs) {
+                            row.blobs.forEach(blob => {
+                                blob.cx = (blob.cx - stretchedOffsetX) / stretch + roi.x;
+                                blob.x = Math.round(blob.cx - blob.w / (2 * stretch));
+                                blob.w = Math.round(blob.w / stretch);
+                            });
+                        }
+                    });
+                }
 
                 // 버블 크기만 저장 (좌표는 이미지마다 새로 찾음)
                 if (bSize > 0) s.bubbleSize = bSize;
@@ -983,65 +896,10 @@ const CanvasManager = {
             roi._labelRect = { x: labelX, y: labelY, w: labelW, h: labelH };
         });
 
-        // 타이밍 마크 세로/가로 실선
-        if (imgObj.timingMarks) {
-            const tm = imgObj.timingMarks;
-            const ch = canvas.height, cw = canvas.width;
-
-            // 상단 마크 → 세로 실선
-            if (tm.top && tm.top.length > 0) {
-                const bottomMarks = (tm.bottom && tm.bottom.length > 0) ? tm.bottom : null;
-                tm.top.forEach((mark, i) => {
-                    const x1 = mark.pos;
-                    const x2 = (bottomMarks && bottomMarks[i]) ? bottomMarks[i].pos : x1;
-                    ctx.strokeStyle = i === 0 ? 'rgba(255,165,0,0.6)' : 'rgba(255,0,0,0.4)';
-                    ctx.lineWidth = i === 0 ? 2 : 1;
-                    ctx.beginPath();
-                    ctx.moveTo(x1, 0);
-                    ctx.lineTo(x2, ch);
-                    ctx.stroke();
-                });
-            }
-
-            // 좌측 마크 → 가로 실선
-            if (tm.left && tm.left.length > 0) {
-                const rightMarks = (tm.right && tm.right.length > 0) ? tm.right : null;
-                tm.left.forEach((mark, i) => {
-                    const y1 = mark.pos;
-                    const y2 = (rightMarks && rightMarks[i]) ? rightMarks[i].pos : y1;
-                    ctx.strokeStyle = i === 0 ? 'rgba(255,165,0,0.6)' : 'rgba(255,0,0,0.4)';
-                    ctx.lineWidth = i === 0 ? 2 : 1;
-                    ctx.beginPath();
-                    ctx.moveTo(0, y1);
-                    ctx.lineTo(cw, y2);
-                    ctx.stroke();
-                });
-            }
-        }
-
-        // 사용자 지정 행 위치 (파란 가로선)
-        if (imgObj.tmRowPositions) {
-            Object.entries(imgObj.tmRowPositions).forEach(([key, rows]) => {
-                rows.forEach((y, i) => {
-                    ctx.strokeStyle = 'rgba(59,130,246,0.6)';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.moveTo(0, y);
-                    ctx.lineTo(canvas.width, y);
-                    ctx.stroke();
-                    // 행 번호
-                    ctx.font = '10px sans-serif';
-                    ctx.fillStyle = '#3b82f6';
-                    ctx.fillText(`R${i + 1}`, 2, y - 2);
-                });
-            });
-        }
-
         // 드래그 중
         if (App.state.isDrawing) {
             const s = App.state;
-            const isTmStrip = this.tmMode && this.tmMode.startsWith('strip-');
-            ctx.strokeStyle = isTmStrip ? '#f59e0b' : '#EF4444';
+            ctx.strokeStyle = '#EF4444';
             ctx.lineWidth = 2;
             ctx.setLineDash([6, 6]);
             ctx.strokeRect(s.startX, s.startY, s.currentX - s.startX, s.currentY - s.startY);

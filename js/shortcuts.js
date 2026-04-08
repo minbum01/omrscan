@@ -14,21 +14,6 @@ const Shortcuts = {
 
         const ctrl = e.ctrlKey || e.metaKey;
 
-        // 타이밍 마크 모드 키
-        if (CanvasManager.tmMode) {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                CanvasManager.stopTimingMarkMode();
-                Toast.info('타이밍 마크 모드 종료');
-                return;
-            }
-            if (ctrl && e.key === 'z' && CanvasManager.tmMode === 'row-click') {
-                e.preventDefault();
-                CanvasManager.undoRowPosition();
-                return;
-            }
-        }
-
         if (!ctrl && (e.key === 'v' || e.key === 'V')) {
             e.preventDefault();
             CanvasManager.setMode('pan');

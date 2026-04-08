@@ -29,6 +29,7 @@ const UI = {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical', choicePreset: '1-5',
             choiceLabels: ['1','2','3','4','5'], customLabels: '',
+            stretchRatio: 1.0,            // 가로 스트레칭 비율 (1.0=없음, 2.0=2배 늘림)
             type: 'subject_answer',       // 영역 타입
             answerKey: null,              // 영역별 정답 (과목답안용)
             answerSource: 'direct',       // 'direct' | 'subject_code'
@@ -87,19 +88,9 @@ const UI = {
         }
 
         // 상단 버튼
-        html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
+        html += `<div style="display:flex; gap:6px; margin-bottom:12px;">
             <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
             <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
-        </div>`;
-
-        // 타이밍 마크 모드 토글
-        const tmActive = imgObj.timingMarkMode || false;
-        html += `<div style="padding:6px 8px; margin-bottom:8px; border:1px solid ${tmActive ? 'var(--blue)' : 'var(--border)'}; border-radius:8px; background:${tmActive ? 'var(--blue-light)' : 'var(--bg-card)'};">
-            <label style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; cursor:pointer;">
-                <input type="checkbox" ${tmActive ? 'checked' : ''} onchange="UI.toggleTimingMarkMode(this.checked)">
-                타이밍 마크 기반 채점
-            </label>
-            ${tmActive ? this._renderTimingMarkPanel(imgObj) : ''}
         </div>`;
 
         if (imgObj.rois.length === 0) {
@@ -241,6 +232,18 @@ const UI = {
                         ` : ''}
                     </div>`;
                 }
+
+                // 가로 스트레칭 (세로 길쭉 버블용)
+                html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <span class="roi-field-label" style="white-space:nowrap;">가로 스트레칭</span>
+                        <input type="number" class="roi-field-input" value="${s.stretchRatio || 1.0}" min="1.0" max="5.0" step="0.1"
+                            style="width:55px; text-align:center;"
+                            data-roi="${idx}" data-field="stretchRatio" onchange="UI.onStretchChange(this)">
+                        <span style="font-size:10px; color:var(--text-muted);">배</span>
+                    </div>
+                    ${s.stretchRatio > 1 ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">분석 시 가로 ${s.stretchRatio}배 확대 후 BFS</div>` : ''}
+                </div>`;
 
                 // 수동 그리드 버튼
                 html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
@@ -722,62 +725,13 @@ const UI = {
         Toast.info(`영역 ${dragIdx + 1} → ${dropIdx + 1} 이동`);
     },
 
-    // =========================================
-    // 타이밍 마크 UI
-    // =========================================
-    toggleTimingMarkMode(checked) {
-        const imgObj = App.getCurrentImage();
-        if (!imgObj) return;
-        imgObj.timingMarkMode = checked;
-        if (checked && !imgObj.timingMarks) {
-            imgObj.timingMarks = { top: [], bottom: [], left: [], right: [] };
-        }
-        CanvasManager.render();
-        this.updateRightPanel();
-    },
-
-    _renderTimingMarkPanel(imgObj) {
-        const tm = imgObj.timingMarks || { top: [], bottom: [], left: [], right: [] };
-        let html = '';
-
-        // 타이밍 마크 감지 버튼
-        html += `<div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">`;
-        ['top', 'bottom', 'left', 'right'].forEach(side => {
-            const label = { top: '상단', bottom: '하단', left: '좌측', right: '우측' }[side];
-            const count = tm[side] ? tm[side].length : 0;
-            html += `<button class="btn btn-sm" style="flex:1; font-size:10px; padding:3px 4px; min-width:60px;"
-                onclick="CanvasManager.startTimingMarkStrip('${side}')">
-                ${label} ${count > 0 ? `(${count})` : ''}
-            </button>`;
-        });
-        html += `</div>`;
-
-        // 감지 결과 요약
-        const totalMarks = (tm.top?.length || 0) + (tm.bottom?.length || 0) + (tm.left?.length || 0) + (tm.right?.length || 0);
-        if (totalMarks > 0) {
-            html += `<div style="font-size:10px; color:var(--text-muted); margin-top:4px; text-align:center;">
-                총 ${totalMarks}개 마크 감지됨
-            </div>`;
-        }
-
-        // 영역별 행 위치 지정
-        if (imgObj.rois && imgObj.rois.length > 0 && totalMarks > 0) {
-            html += `<div style="margin-top:6px; border-top:1px solid var(--border-light); padding-top:6px;">
-                <div style="font-size:11px; font-weight:600; margin-bottom:4px;">행 위치 지정</div>`;
-            imgObj.rois.forEach((roi, idx) => {
-                const name = (roi.settings && roi.settings.name) || `영역 ${idx + 1}`;
-                const rowCount = imgObj.tmRowPositions && imgObj.tmRowPositions[idx] ? imgObj.tmRowPositions[idx].length : 0;
-                html += `<div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
-                    <span style="font-size:10px; flex:1;">${name}</span>
-                    <span style="font-size:10px; color:var(--text-muted);">${rowCount}행</span>
-                    <button class="btn btn-sm" style="font-size:9px; padding:2px 6px;"
-                        onclick="CanvasManager.startRowClick(${idx})">클릭</button>
-                </div>`;
-            });
-            html += `</div>`;
-        }
-
-        return html;
+    onStretchChange(input) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(input.dataset.roi);
+        const val = parseFloat(input.value) || 1.0;
+        imgObj.rois[idx].settings.stretchRatio = Math.max(1.0, Math.min(5.0, val));
+        imgObj.results = null; imgObj.gradeResult = null;
+        ImageManager.updateList(); this.updateRightPanel();
     },
 
     ensureSettings(roi) {
