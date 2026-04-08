@@ -87,9 +87,19 @@ const UI = {
         }
 
         // 상단 버튼
-        html += `<div style="display:flex; gap:6px; margin-bottom:12px;">
+        html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
             <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
             <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
+        </div>`;
+
+        // 타이밍 마크 모드 토글
+        const tmActive = imgObj.timingMarkMode || false;
+        html += `<div style="padding:6px 8px; margin-bottom:8px; border:1px solid ${tmActive ? 'var(--blue)' : 'var(--border)'}; border-radius:8px; background:${tmActive ? 'var(--blue-light)' : 'var(--bg-card)'};">
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; cursor:pointer;">
+                <input type="checkbox" ${tmActive ? 'checked' : ''} onchange="UI.toggleTimingMarkMode(this.checked)">
+                타이밍 마크 기반 채점
+            </label>
+            ${tmActive ? this._renderTimingMarkPanel(imgObj) : ''}
         </div>`;
 
         if (imgObj.rois.length === 0) {
@@ -710,6 +720,64 @@ const UI = {
         CanvasManager.render();
         this.updateRightPanel();
         Toast.info(`영역 ${dragIdx + 1} → ${dropIdx + 1} 이동`);
+    },
+
+    // =========================================
+    // 타이밍 마크 UI
+    // =========================================
+    toggleTimingMarkMode(checked) {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj) return;
+        imgObj.timingMarkMode = checked;
+        if (checked && !imgObj.timingMarks) {
+            imgObj.timingMarks = { top: [], bottom: [], left: [], right: [] };
+        }
+        CanvasManager.render();
+        this.updateRightPanel();
+    },
+
+    _renderTimingMarkPanel(imgObj) {
+        const tm = imgObj.timingMarks || { top: [], bottom: [], left: [], right: [] };
+        let html = '';
+
+        // 타이밍 마크 감지 버튼
+        html += `<div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">`;
+        ['top', 'bottom', 'left', 'right'].forEach(side => {
+            const label = { top: '상단', bottom: '하단', left: '좌측', right: '우측' }[side];
+            const count = tm[side] ? tm[side].length : 0;
+            html += `<button class="btn btn-sm" style="flex:1; font-size:10px; padding:3px 4px; min-width:60px;"
+                onclick="CanvasManager.startTimingMarkStrip('${side}')">
+                ${label} ${count > 0 ? `(${count})` : ''}
+            </button>`;
+        });
+        html += `</div>`;
+
+        // 감지 결과 요약
+        const totalMarks = (tm.top?.length || 0) + (tm.bottom?.length || 0) + (tm.left?.length || 0) + (tm.right?.length || 0);
+        if (totalMarks > 0) {
+            html += `<div style="font-size:10px; color:var(--text-muted); margin-top:4px; text-align:center;">
+                총 ${totalMarks}개 마크 감지됨
+            </div>`;
+        }
+
+        // 영역별 행 위치 지정
+        if (imgObj.rois && imgObj.rois.length > 0 && totalMarks > 0) {
+            html += `<div style="margin-top:6px; border-top:1px solid var(--border-light); padding-top:6px;">
+                <div style="font-size:11px; font-weight:600; margin-bottom:4px;">행 위치 지정</div>`;
+            imgObj.rois.forEach((roi, idx) => {
+                const name = (roi.settings && roi.settings.name) || `영역 ${idx + 1}`;
+                const rowCount = imgObj.tmRowPositions && imgObj.tmRowPositions[idx] ? imgObj.tmRowPositions[idx].length : 0;
+                html += `<div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
+                    <span style="font-size:10px; flex:1;">${name}</span>
+                    <span style="font-size:10px; color:var(--text-muted);">${rowCount}행</span>
+                    <button class="btn btn-sm" style="font-size:9px; padding:2px 6px;"
+                        onclick="CanvasManager.startRowClick(${idx})">클릭</button>
+                </div>`;
+            });
+            html += `</div>`;
+        }
+
+        return html;
     },
 
     ensureSettings(roi) {
