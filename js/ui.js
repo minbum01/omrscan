@@ -30,6 +30,7 @@ const UI = {
             orientation: 'vertical', choicePreset: '1-5',
             choiceLabels: ['1','2','3','4','5'], customLabels: '',
             stretchRatio: 1.0,            // 가로 스트레칭 비율 (1.0=없음, 2.0=2배 늘림)
+            showStretchPreview: false,    // 스트레칭 미리보기 표시 여부
             type: 'subject_answer',       // 영역 타입
             answerKey: null,              // 영역별 정답 (과목답안용)
             answerSource: 'direct',       // 'direct' | 'subject_code'
@@ -235,14 +236,18 @@ const UI = {
 
                 // 가로 스트레칭 (세로 길쭉 버블용)
                 html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
-                    <div style="display:flex; align-items:center; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
                         <span class="roi-field-label" style="white-space:nowrap;">가로 스트레칭</span>
                         <input type="number" class="roi-field-input" value="${s.stretchRatio || 1.0}" min="1.0" max="5.0" step="0.1"
                             style="width:55px; text-align:center;"
                             data-roi="${idx}" data-field="stretchRatio" onchange="UI.onStretchChange(this)">
                         <span style="font-size:10px; color:var(--text-muted);">배</span>
+                        <label style="display:flex; align-items:center; gap:3px; font-size:10px; cursor:pointer; margin-left:6px;">
+                            <input type="checkbox" ${s.showStretchPreview ? 'checked' : ''}
+                                data-roi="${idx}" onchange="UI.onPreviewChange(this)">
+                            미리보기
+                        </label>
                     </div>
-                    ${s.stretchRatio > 1 ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">분석 시 가로 ${s.stretchRatio}배 확대 후 BFS</div>` : ''}
                 </div>`;
 
                 // 수동 그리드 버튼
@@ -731,7 +736,15 @@ const UI = {
         const val = parseFloat(input.value) || 1.0;
         imgObj.rois[idx].settings.stretchRatio = Math.max(1.0, Math.min(5.0, val));
         imgObj.results = null; imgObj.gradeResult = null;
+        CanvasManager.render();
         ImageManager.updateList(); this.updateRightPanel();
+    },
+
+    onPreviewChange(checkbox) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(checkbox.dataset.roi);
+        imgObj.rois[idx].settings.showStretchPreview = checkbox.checked;
+        CanvasManager.render();
     },
 
     ensureSettings(roi) {
