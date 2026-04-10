@@ -577,17 +577,23 @@ const CanvasManager = {
             this.render(); // 현재 이미지만 적용
         });
 
-        document.getElementById('adj-apply-all').addEventListener('click', () => {
-            if (this.intensity === 100) return;
+        // "전체 적용" 체크박스: 체크 시 현재 intensity를 모든 이미지에 반영
+        document.getElementById('adj-intensity-all').addEventListener('change', (e) => {
+            if (!e.target.checked) return;
+            if (this.intensity === 100) { e.target.checked = false; return; }
             const images = App.state.images;
-            if (!images || images.length === 0) return;
+            if (!images || images.length === 0) { e.target.checked = false; return; }
             const gamma = this.intensity / 100;
             const lut = new Uint8Array(256);
             for (let i = 0; i < 256; i++) lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
             let done = 0;
             Toast.info(`전체 이미지 진하기 적용 중... (0/${images.length})`);
             const processNext = () => {
-                if (done >= images.length) { Toast.success(`완료 (${images.length}장)`); return; }
+                if (done >= images.length) {
+                    Toast.success(`완료 (${images.length}장)`);
+                    e.target.checked = false;
+                    return;
+                }
                 const imgObj = images[done];
                 const img = imgObj.imgElement;
                 const key = (imgObj.src || img.src) + '_' + this.intensity;
@@ -605,7 +611,7 @@ const CanvasManager = {
                 }
                 done++;
                 if (done % 10 === 0) Toast.info(`전체 이미지 진하기 적용 중... (${done}/${images.length})`);
-                setTimeout(processNext, 0); // UI 블로킹 방지
+                setTimeout(processNext, 0);
             };
             processNext();
         });
@@ -618,8 +624,14 @@ const CanvasManager = {
             this.render();
         });
 
-        document.getElementById('adj-rotate-left').addEventListener('click', () => this.rotateImage(-90));
-        document.getElementById('adj-rotate-right').addEventListener('click', () => this.rotateImage(90));
+        document.getElementById('adj-rotate-left').addEventListener('click', () => {
+            const applyAll = document.getElementById('adj-rotate-all').checked;
+            this.rotateImage(-90, applyAll);
+        });
+        document.getElementById('adj-rotate-right').addEventListener('click', () => {
+            const applyAll = document.getElementById('adj-rotate-all').checked;
+            this.rotateImage(90, applyAll);
+        });
 
         // 미세 기울기 버튼
         document.getElementById('adj-skew-ccw').addEventListener('click', () => this.applySkew(-0.5));
@@ -724,10 +736,10 @@ const CanvasManager = {
         });
     },
 
-    // 전체 이미지 90도 회전
-    rotateImage(degrees) {
-        const images = App.state.images;
-        if (!images || images.length === 0) return;
+    // 90도 회전 (applyAll=true면 전체, false면 현재 이미지만)
+    rotateImage(degrees, applyAll) {
+        const images = applyAll ? App.state.images : [App.getCurrentImage()];
+        if (!images || images.length === 0 || !images[0]) return;
 
         let remaining = images.length;
 
