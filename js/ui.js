@@ -31,7 +31,11 @@ const UI = {
             choiceLabels: ['1','2','3','4','5'], customLabels: '',
             stretchRatio: 1.0,            // 가로 스트레칭 비율 (1.0=없음, 2.0=2배 늘림)
             showStretchPreview: false,    // 스트레칭 미리보기 표시 여부
-            elongatedMode: false,         // 길쭉 버블 분석 모드 (h/w >= 2 필터)
+            elongatedMode: false,         // 길쭉 버블 분석 모드 (h/w >= minHW 필터)
+            elongatedMinHW: 1.4,          // 길쭉 비율 하한
+            elongatedMaxHW: 5.0,          // 길쭉 비율 상한
+            elongatedMinFill: 0.15,       // 채움률 하한
+            elongatedMaxFill: 0.95,       // 채움률 상한
             type: 'subject_answer',       // 영역 타입
             answerKey: null,              // 영역별 정답 (과목답안용)
             answerSource: 'direct',       // 'direct' | 'subject_code'
@@ -240,8 +244,38 @@ const UI = {
                     <label style="display:flex; align-items:center; gap:4px; font-size:11px; cursor:pointer;">
                         <input type="checkbox" ${s.elongatedMode ? 'checked' : ''}
                             data-roi="${idx}" onchange="UI.onElongatedModeChange(this)">
-                        길쭉 버블 분석 (h/w ≥ 2)
+                        길쭉 버블 분석
                     </label>
+                    ${s.elongatedMode ? `
+                    <div style="margin-top:6px; padding:6px; background:var(--bg-input); border-radius:4px;">
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
+                            <span style="width:60px;">h/w 하한</span>
+                            <input type="range" min="1.0" max="3.0" step="0.05" value="${s.elongatedMinHW}"
+                                style="flex:1;" data-roi="${idx}" data-field="elongatedMinHW" oninput="UI.onThresholdChange(this)">
+                            <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMinHW.toFixed(2)}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
+                            <span style="width:60px;">h/w 상한</span>
+                            <input type="range" min="2.0" max="8.0" step="0.1" value="${s.elongatedMaxHW}"
+                                style="flex:1;" data-roi="${idx}" data-field="elongatedMaxHW" oninput="UI.onThresholdChange(this)">
+                            <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMaxHW.toFixed(1)}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
+                            <span style="width:60px;">채움 하한</span>
+                            <input type="range" min="0.05" max="0.5" step="0.01" value="${s.elongatedMinFill}"
+                                style="flex:1;" data-roi="${idx}" data-field="elongatedMinFill" oninput="UI.onThresholdChange(this)">
+                            <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMinFill.toFixed(2)}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
+                            <span style="width:60px;">채움 상한</span>
+                            <input type="range" min="0.5" max="1.0" step="0.01" value="${s.elongatedMaxFill}"
+                                style="flex:1;" data-roi="${idx}" data-field="elongatedMaxFill" oninput="UI.onThresholdChange(this)">
+                            <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMaxFill.toFixed(2)}</span>
+                        </div>
+                        <button class="btn btn-sm" style="width:100%; margin-top:4px; font-size:10px; padding:2px;"
+                            onclick="UI.runAnalysisNow()">재분석</button>
+                    </div>
+                    ` : ''}
                 </div>`;
 
                 // 가로 스트레칭 (세로 길쭉 버블용 — 백업)
@@ -763,6 +797,27 @@ const UI = {
         imgObj.rois[idx].settings.elongatedMode = checkbox.checked;
         imgObj.results = null; imgObj.gradeResult = null;
         ImageManager.updateList(); this.updateRightPanel();
+    },
+
+    onThresholdChange(input) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(input.dataset.roi);
+        const field = input.dataset.field;
+        const val = parseFloat(input.value);
+        if (imgObj.rois[idx] && imgObj.rois[idx].settings) {
+            imgObj.rois[idx].settings[field] = val;
+            // 값 표시만 업데이트 (리렌더 최소화)
+            const valueSpan = input.parentElement.querySelector('span:last-child');
+            if (valueSpan) {
+                valueSpan.textContent = field.includes('HW') ? val.toFixed(field === 'elongatedMinHW' ? 2 : 1) : val.toFixed(2);
+            }
+        }
+    },
+
+    runAnalysisNow() {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        imgObj.results = null; imgObj.gradeResult = null;
+        CanvasManager.runAnalysis();
     },
 
     ensureSettings(roi) {

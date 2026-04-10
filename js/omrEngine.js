@@ -201,7 +201,12 @@ const OmrEngine = {
     // Stage 1 (길쭉 버블 전용): BFS + h/w >= 2 필터
     // 기존 _stage1_findBubbles의 복사본 + 필터 조건만 변경
     // ==========================================
-    _stage1_findBubbles_elongated(grayData, width, height, bubbleSize) {
+    _stage1_findBubbles_elongated(grayData, width, height, bubbleSize, thresholds) {
+        // thresholds: { minHW, maxHW, minFill, maxFill } — 사용자 조정 가능
+        const minHW = (thresholds && thresholds.minHW != null) ? thresholds.minHW : 1.4;
+        const maxHW = (thresholds && thresholds.maxHW != null) ? thresholds.maxHW : 5.0;
+        const minFill = (thresholds && thresholds.minFill != null) ? thresholds.minFill : 0.15;
+        const maxFill = (thresholds && thresholds.maxFill != null) ? thresholds.maxFill : 0.95;
         const THRESHOLD = (() => {
             let t = 0; for (let i = 0; i < grayData.length; i++) t += grayData[i];
             return (t / grayData.length) * 0.75;
@@ -247,20 +252,20 @@ const OmrEngine = {
             filtered = blobs.filter(b => {
                 const hw = b.h / b.w; // 길쭉 비율
                 const fill = b.area / (b.w * b.h);
-                return b.h >= minS && b.h <= maxS && hw >= 2.0 && hw <= 5.0 && fill > 0.3 && fill < 0.95;
+                return b.h >= minS && b.h <= maxS && hw >= minHW && hw <= maxHW && fill >= minFill && fill <= maxFill;
             });
             if (filtered.length < 4) {
                 filtered = blobs.filter(b => {
                     const hw = b.h / b.w;
                     const fill = b.area / (b.w * b.h);
-                    return b.h >= minS && b.h <= maxS && hw >= 2.0 && hw <= 5.0 && fill > 0.3;
+                    return b.h >= minS && b.h <= maxS && hw >= minHW && hw <= maxHW && fill >= minFill;
                 });
             }
         } else {
-            // 자동 모드: 먼저 h/w >= 2인 블롭만 후보로
+            // 자동 모드: 먼저 h/w 조건 충족 블롭만 후보로
             const candidates = blobs.filter(b => {
                 const hw = b.h / b.w;
-                return hw >= 2.0 && hw <= 5.0 && b.w >= 2;
+                return hw >= minHW && hw <= maxHW && b.w >= 2;
             });
             if (candidates.length < 2) {
                 this._log(`[Stage1-길쭉] 후보 부족: ${candidates.length}`);
@@ -271,7 +276,7 @@ const OmrEngine = {
             const medH = heights[Math.floor(heights.length / 2)];
             filtered = candidates.filter(b => {
                 const fill = b.area / (b.w * b.h);
-                return b.h >= medH * 0.6 && b.h <= medH * 1.6 && fill > 0.3;
+                return b.h >= medH * 0.6 && b.h <= medH * 1.6 && fill >= minFill && fill <= maxFill;
             });
         }
 
@@ -285,10 +290,10 @@ const OmrEngine = {
                 const hw = b.h / b.w;
                 const fill = b.area / (b.w * b.h);
                 let reason = '';
-                if (hw < 2.0) reason += '종횡비(길쭉아님) ';
-                if (hw > 5.0) reason += '너무김 ';
-                if (fill <= 0.3) reason += '채움률↓ ';
-                if (fill >= 0.95) reason += '꽉참 ';
+                if (hw < minHW) reason += '종횡비(길쭉아님) ';
+                if (hw > maxHW) reason += '너무김 ';
+                if (fill < minFill) reason += '채움률↓ ';
+                if (fill > maxFill) reason += '꽉참 ';
                 if (!reason) reason = '기타';
                 this._log(`  ✗ 탈락: cx=${Math.round(b.cx)} cy=${Math.round(b.cy)} ${b.w}x${b.h} h/w=${hw.toFixed(2)} fill=${fill.toFixed(2)} (${reason.trim()})`);
             });
@@ -548,7 +553,7 @@ const OmrEngine = {
     // ==========================================
     // 메인 분석 (4단계 파이프라인)
     // ==========================================
-    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0, elongatedMode = false) {
+    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0, elongatedMode = false, elongatedThresholds = null) {
         const width = imageData.width, height = imageData.height;
         const grayData = this.preprocess(imageData);
         let isVert = orientation === 'vertical';
@@ -558,7 +563,7 @@ const OmrEngine = {
         // 길쭉 모드 → 별도 함수, 일반 → 기존 함수
         // ──────────────────────────────────────
         const grid = elongatedMode
-            ? this._stage1_findBubbles_elongated(grayData, width, height, bubbleSize)
+            ? this._stage1_findBubbles_elongated(grayData, width, height, bubbleSize, elongatedThresholds)
             : this._stage1_findBubbles(grayData, width, height, bubbleSize);
         if (!grid) return { rows: [], maxCols: 0 };
 

@@ -439,6 +439,12 @@ const CanvasManager = {
                 const stretch = s.stretchRatio || 1.0;
                 const useStretch = stretch > 1.0;
                 const elongatedMode = s.elongatedMode || false;
+                const elongatedThresholds = elongatedMode ? {
+                    minHW: s.elongatedMinHW != null ? s.elongatedMinHW : 1.4,
+                    maxHW: s.elongatedMaxHW != null ? s.elongatedMaxHW : 5.0,
+                    minFill: s.elongatedMinFill != null ? s.elongatedMinFill : 0.15,
+                    maxFill: s.elongatedMaxFill != null ? s.elongatedMaxFill : 0.95,
+                } : null;
 
                 // 가로 스트레칭: 원본 ROI를 임시 캔버스에 늘려서 그리고 그 픽셀을 분석
                 let imageData;
@@ -459,7 +465,7 @@ const CanvasManager = {
                 // 스트레칭 시 offsetX/Y=0 (ROI 내부 상대좌표로 분석)
                 const analysisOffsetX = useStretch ? 0 : roi.x;
                 const analysisOffsetY = useStretch ? 0 : roi.y;
-                const analysis = OmrEngine.analyzeROI(imageData, analysisOffsetX, analysisOffsetY, orientation, numQ, numC, null, bSize, elongatedMode);
+                const analysis = OmrEngine.analyzeROI(imageData, analysisOffsetX, analysisOffsetY, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
 
                 // 스트레칭 역변환: 상대좌표 → 원본 절대좌표로 복원
                 if (useStretch) {
