@@ -87,12 +87,7 @@ const BatchProcess = {
                 const numC = s.numChoices || 0;
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
-                const elongatedThresholds = elongatedMode ? {
-                    minHW: s.elongatedMinHW != null ? s.elongatedMinHW : 1.4,
-                    maxHW: s.elongatedMaxHW != null ? s.elongatedMaxHW : 5.0,
-                    minFill: s.elongatedMinFill != null ? s.elongatedMinFill : 0.15,
-                    maxFill: 1.0,
-                } : null;
+                const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
                 const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
 
                 const startNum = s.startNum || 1;

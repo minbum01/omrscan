@@ -11,17 +11,42 @@ const UI = {
         'subject_code':   { label: '과목 코드', icon: '📋' },
     },
 
+    // 모드별 기본 임계값 (단일 진실 소스)
+    THRESHOLDS_DEFAULT: {
+        circular: { minHW: 0.7, maxHW: 1.4, minFill: 0.3, maxFill: 1.0 },
+        elongated: { minHW: 1.4, maxHW: 5.0, minFill: 0.15, maxFill: 1.0 },
+    },
+
+    // 현재 모드에 맞는 임계값 반환 (저장된 값 > 기본값)
+    getThresholds(s) {
+        const mode = s.elongatedMode ? 'elongated' : 'circular';
+        const d = this.THRESHOLDS_DEFAULT[mode];
+        return {
+            minHW: s.elongatedMinHW != null ? s.elongatedMinHW : d.minHW,
+            maxHW: s.elongatedMaxHW != null ? s.elongatedMaxHW : d.maxHW,
+            minFill: s.elongatedMinFill != null ? s.elongatedMinFill : d.minFill,
+            maxFill: 1.0,
+        };
+    },
+
+    // 모드 전환 시 해당 모드의 기본값으로 강제 리셋
+    resetThresholdsForMode(s) {
+        const mode = s.elongatedMode ? 'elongated' : 'circular';
+        const d = this.THRESHOLDS_DEFAULT[mode];
+        s.elongatedMinHW = d.minHW;
+        s.elongatedMaxHW = d.maxHW;
+        s.elongatedMinFill = d.minFill;
+        s.elongatedMaxFill = d.maxFill;
+    },
+
     defaultSettings() {
         return {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical',
-            choiceLabels: ['1','2','3','4','5'],  // 사용자 직접 입력
-            subjectName: '',              // 연결된 과목 이름 (전역 과목 관리와 매칭)
+            choiceLabels: ['1','2','3','4','5'],
+            subjectName: '',
             elongatedMode: false,
-            elongatedMinHW: 0.7,          // 기본 원형 버블용
-            elongatedMaxHW: 1.4,
-            elongatedMinFill: 0.3,
-            elongatedMaxFill: 1.0,
+            // 임계값은 getThresholds()가 모드별 기본값 반환 (필드 미포함)
             type: 'subject_answer',
             answerKey: null,
             answerSource: 'direct',
@@ -308,6 +333,8 @@ const UI = {
 
                 // 길쭉 버블 분석 모드 + 버블 감지 설정 (접기/펼치기)
                 const sliderOpen = roi._sliderOpen || false;
+                const t = this.getThresholds(s); // 현재 모드 기준의 유효 임계값
+                const modeLabel = s.elongatedMode ? '길쭉 버블 모드' : '원형 버블 모드';
                 html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
                     <label style="display:flex; align-items:center; gap:4px; font-size:11px; cursor:pointer;">
                         <input type="checkbox" ${s.elongatedMode ? 'checked' : ''}
@@ -317,27 +344,27 @@ const UI = {
                     <div style="margin-top:4px; display:flex; align-items:center; gap:4px; cursor:pointer; font-size:11px; color:var(--text-muted);"
                         onclick="UI.toggleSliderPanel(${idx})">
                         <span>${sliderOpen ? '▼' : '▶'}</span>
-                        <span>버블 감지 설정</span>
+                        <span>버블 감지 설정 (${modeLabel})</span>
                     </div>
                     ${sliderOpen ? `
                     <div style="margin-top:4px; padding:6px; background:var(--bg-input); border-radius:4px;">
                         <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
                             <span style="width:60px;">h/w 하한</span>
-                            <input type="range" min="0.3" max="3.0" step="0.05" value="${s.elongatedMinHW}"
+                            <input type="range" min="0.3" max="3.0" step="0.05" value="${t.minHW}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMinHW" oninput="UI.onThresholdChange(this)">
-                            <span style="width:30px; text-align:right; font-family:monospace;">${(s.elongatedMinHW || 1.4).toFixed(2)}</span>
+                            <span style="width:30px; text-align:right; font-family:monospace;">${t.minHW.toFixed(2)}</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
                             <span style="width:60px;">h/w 상한</span>
-                            <input type="range" min="1.0" max="8.0" step="0.1" value="${s.elongatedMaxHW}"
+                            <input type="range" min="1.0" max="8.0" step="0.1" value="${t.maxHW}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMaxHW" oninput="UI.onThresholdChange(this)">
-                            <span style="width:30px; text-align:right; font-family:monospace;">${(s.elongatedMaxHW || 5.0).toFixed(1)}</span>
+                            <span style="width:30px; text-align:right; font-family:monospace;">${t.maxHW.toFixed(1)}</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
                             <span style="width:60px;">채움 하한</span>
-                            <input type="range" min="0.05" max="0.5" step="0.01" value="${s.elongatedMinFill}"
+                            <input type="range" min="0.05" max="0.5" step="0.01" value="${t.minFill}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMinFill" oninput="UI.onThresholdChange(this)">
-                            <span style="width:30px; text-align:right; font-family:monospace;">${(s.elongatedMinFill || 0.15).toFixed(2)}</span>
+                            <span style="width:30px; text-align:right; font-family:monospace;">${t.minFill.toFixed(2)}</span>
                         </div>
                         <button class="btn btn-sm" style="width:100%; margin-top:4px; font-size:10px; padding:2px;"
                             onclick="UI.runAnalysisNow()">재분석</button>
@@ -743,18 +770,8 @@ const UI = {
         const idx = parseInt(checkbox.dataset.roi);
         const s = imgObj.rois[idx].settings;
         s.elongatedMode = checkbox.checked;
-        // 모드 전환 시 기본값 자동 적용
-        if (checkbox.checked) {
-            // 길쭉 버블: h/w 1.4~5.0, fill 0.15
-            s.elongatedMinHW = 1.4;
-            s.elongatedMaxHW = 5.0;
-            s.elongatedMinFill = 0.15;
-        } else {
-            // 동그란 버블: h/w 0.7~1.4, fill 0.3
-            s.elongatedMinHW = 0.7;
-            s.elongatedMaxHW = 1.4;
-            s.elongatedMinFill = 0.3;
-        }
+        // 모드에 맞는 기본 임계값으로 리셋
+        this.resetThresholdsForMode(s);
         imgObj.results = null; imgObj.gradeResult = null;
         ImageManager.updateList(); this.updateRightPanel();
     },
@@ -1084,10 +1101,13 @@ const UI = {
         if (el) el.remove();
     },
 
-    // 팝업에서 길쭉 모드 토글 시 자동감지 재실행
+    // 팝업에서 길쭉 모드 토글 시 임계값 리셋 + 자동감지 재실행
     onPopupElongatedToggle(roiIdx, checked) {
         const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[roiIdx]) return;
         const roi = imgObj.rois[roiIdx];
+        // 모드 전환 시 해당 모드의 기본 임계값으로 리셋
+        roi.settings.elongatedMode = checked;
+        this.resetThresholdsForMode(roi.settings);
         try {
             const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
             const detected = OmrEngine.autoDetect(imageData, roi.x, roi.y, 0, checked);
@@ -1129,7 +1149,10 @@ const UI = {
         s.orientation = newOrient;
         s.startNum = parseInt(document.getElementById('rp-start').value) || 1;
         s.numQuestions = parseInt(document.getElementById('rp-numq').value) || 0;
-        s.elongatedMode = document.getElementById('rp-elongated').checked;
+        const newElongated = document.getElementById('rp-elongated').checked;
+        const elongatedChanged = s.elongatedMode !== newElongated;
+        s.elongatedMode = newElongated;
+        if (elongatedChanged) this.resetThresholdsForMode(s);
 
         // 선택지 수 + 라벨 읽기
         const numc = parseInt(document.getElementById('rp-numc').value) || 5;
