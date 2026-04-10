@@ -35,7 +35,7 @@ const UI = {
             elongatedMinHW: 1.4,          // 길쭉 비율 하한
             elongatedMaxHW: 5.0,          // 길쭉 비율 상한
             elongatedMinFill: 0.15,       // 채움률 하한
-            elongatedMaxFill: 0.95,       // 채움률 상한
+            elongatedMaxFill: 1.0,        // 채움률 상한 (고정)
             type: 'subject_answer',       // 영역 타입
             answerKey: null,              // 영역별 정답 (과목답안용)
             answerSource: 'direct',       // 'direct' | 'subject_code'
@@ -260,17 +260,11 @@ const UI = {
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMaxHW" oninput="UI.onThresholdChange(this)">
                             <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMaxHW.toFixed(1)}</span>
                         </div>
-                        <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-bottom:3px;">
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
                             <span style="width:60px;">채움 하한</span>
                             <input type="range" min="0.05" max="0.5" step="0.01" value="${s.elongatedMinFill}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMinFill" oninput="UI.onThresholdChange(this)">
                             <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMinFill.toFixed(2)}</span>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
-                            <span style="width:60px;">채움 상한</span>
-                            <input type="range" min="0.5" max="1.0" step="0.01" value="${s.elongatedMaxFill}"
-                                style="flex:1;" data-roi="${idx}" data-field="elongatedMaxFill" oninput="UI.onThresholdChange(this)">
-                            <span style="width:30px; text-align:right; font-family:monospace;">${s.elongatedMaxFill.toFixed(2)}</span>
                         </div>
                         <button class="btn btn-sm" style="width:100%; margin-top:4px; font-size:10px; padding:2px;"
                             onclick="UI.runAnalysisNow()">재분석</button>
@@ -829,6 +823,8 @@ const UI = {
         if (s.name === undefined) s.name = '';
         if (!s.type) s.type = 'subject_answer';
         if (!s.answerSource) s.answerSource = 'direct';
+        // 채움 상한은 항상 1.0 고정
+        s.elongatedMaxFill = 1.0;
     },
 
     esc(str) {
@@ -1043,6 +1039,12 @@ const UI = {
                         <label>선택지</label>
                         <select id="rp-preset">${presetOptions}</select>
                     </div>
+                    <div class="roi-popup-field">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="checkbox" id="rp-elongated" ${s.elongatedMode ? 'checked' : ''} onchange="UI.onPopupElongatedToggle(${roiIdx}, this.checked)">
+                            길쭉 버블 분석
+                        </label>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-sm" onclick="UI.closeRoiSettingsPopup()">취소</button>
@@ -1059,6 +1061,33 @@ const UI = {
     closeRoiSettingsPopup() {
         const el = document.getElementById('roi-settings-popup');
         if (el) el.remove();
+    },
+
+    // 팝업에서 길쭉 모드 토글 시 자동감지 재실행
+    onPopupElongatedToggle(roiIdx, checked) {
+        const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[roiIdx]) return;
+        const roi = imgObj.rois[roiIdx];
+        try {
+            const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
+            const detected = OmrEngine.autoDetect(imageData, roi.x, roi.y, 0, checked);
+            if (detected) {
+                const nqInput = document.getElementById('rp-numq');
+                if (nqInput) nqInput.value = detected.numQuestions;
+                // 선택지 수는 preset에 따라 결정되므로 자동으로 안 건드림
+                const vertBtn = document.getElementById('rp-vert');
+                const horizBtn = document.getElementById('rp-horiz');
+                if (detected.orientation === 'vertical') {
+                    vertBtn.classList.add('active');
+                    horizBtn.classList.remove('active');
+                } else {
+                    horizBtn.classList.add('active');
+                    vertBtn.classList.remove('active');
+                }
+                console.log(`[팝업 재감지] 길쭉=${checked} → 문항=${detected.numQuestions} 선택지=${detected.numChoices} 방향=${detected.orientation}`);
+            }
+        } catch (e) {
+            console.warn('팝업 재감지 실패:', e);
+        }
     },
 
     deleteRoiFromPopup(roiIdx) {
@@ -1079,6 +1108,7 @@ const UI = {
         s.orientation = newOrient;
         s.startNum = parseInt(document.getElementById('rp-start').value) || 1;
         s.numQuestions = parseInt(document.getElementById('rp-numq').value) || 0;
+        s.elongatedMode = document.getElementById('rp-elongated').checked;
 
         const preset = document.getElementById('rp-preset').value;
         s.choicePreset = preset;
