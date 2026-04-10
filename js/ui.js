@@ -203,6 +203,12 @@ const UI = {
                 <strong>박스 모드(D)</strong>로 직접 드래그하세요.
             </div>`;
         } else {
+            // 과목명 자동완성 datalist
+            const subjectNames = new Set();
+            (App.state.subjects || []).forEach(s => { if (s.name) subjectNames.add(s.name); });
+            imgObj.rois.forEach(r => { if (r.settings && r.settings.name) subjectNames.add(r.settings.name); });
+            html += `<datalist id="subject-name-list">${[...subjectNames].map(n => `<option value="${this.esc(n)}">`).join('')}</datalist>`;
+
             // 영역별로 설정 + 결과를 묶어서 표시
             imgObj.rois.forEach((roi, idx) => {
                 this.ensureSettings(roi);
@@ -212,7 +218,7 @@ const UI = {
 
                 html += `<div class="roi-card ${isSelected ? 'roi-card-selected' : ''}" data-roi-index="${idx}">`;
 
-                // 헤더: 순서 이동 + 이름 편집
+                // 헤더: 순서 이동 + 이름 편집 (자동완성 datalist 연결)
                 html += `<div class="roi-card-header">
                     <div class="roi-order-btns">
                         <button class="roi-order-btn" onclick="UI.moveRoi(${idx},-1)" ${idx === 0 ? 'disabled' : ''} title="위로">▲</button>
@@ -220,7 +226,8 @@ const UI = {
                     </div>
                     <div class="roi-card-num">${idx + 1}</div>
                     <input class="roi-name-input" type="text" value="${this.esc(s.name)}"
-                        placeholder="영역 ${idx + 1}" data-roi="${idx}" onchange="UI.onNameChange(this)">
+                        placeholder="과목/영역명" data-roi="${idx}" onchange="UI.onNameChange(this)"
+                        list="subject-name-list">
                     <span class="roi-card-size">${Math.round(roi.w)}×${Math.round(roi.h)}</span>
                     ${s.bubbleSize ? `<span style="color:#22c55e;font-size:10px;font-weight:700;margin-left:4px;">버블${s.bubbleSize}px</span>` : ''}
                     <button class="roi-delete-btn" onclick="CanvasManager.deleteRoi(${idx}); UI.updateRightPanel();">✕</button>
@@ -1092,8 +1099,12 @@ const UI = {
                         ).join('')}</select>
                     </div>
                     <div class="roi-popup-field">
-                        <label>이름</label>
-                        <input type="text" id="rp-name" value="${this.esc(s.name)}" placeholder="영역 ${roiIdx + 1}">
+                        <label>과목/영역명</label>
+                        <input type="text" id="rp-name" value="${this.esc(s.name)}" placeholder="과목명 입력 또는 선택"
+                            list="rp-subject-list">
+                        <datalist id="rp-subject-list">
+                            ${(App.state.subjects || []).map(subj => `<option value="${this.esc(subj.name)}">${subj.code ? `[${this.esc(subj.code)}]` : ''}</option>`).join('')}
+                        </datalist>
                     </div>
                     <div class="roi-popup-field">
                         <label>방향</label>
@@ -1221,7 +1232,9 @@ const UI = {
         const orientChanged = s.orientation !== newOrient;
 
         s.type = document.getElementById('rp-type').value;
-        s.name = document.getElementById('rp-name').value;
+        const newName = document.getElementById('rp-name').value;
+        const nameChanged = s.name !== newName;
+        s.name = newName;
         s.orientation = newOrient;
         s.startNum = parseInt(document.getElementById('rp-start').value) || 1;
         s.numQuestions = parseInt(document.getElementById('rp-numq').value) || 0;
@@ -1239,6 +1252,9 @@ const UI = {
         while (newLabels.length < s.numChoices) newLabels.push(String(newLabels.length + 1));
         newLabels.length = s.numChoices;
         s.choiceLabels = newLabels;
+
+        // 이름 변경 시 과목 매칭/자동 로드
+        if (nameChanged) this._syncRoiNameAsSubject(imgObj.rois[roiIdx]);
 
         // 방향이 바뀌어도 사용자가 입력한 문항수/선택지수는 유지
         imgObj.results = null; imgObj.gradeResult = null;
