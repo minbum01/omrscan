@@ -944,32 +944,17 @@ const UI = {
         const imgObj = App.getCurrentImage(); if (!imgObj) return;
         const idx = parseInt(input.dataset.roi);
         const roi = imgObj.rois[idx];
-        const s = roi.settings;
-        s.answerKey = input.value.trim();
+        roi.settings.answerKey = input.value.trim();
 
-        // 영역 이름이 있으면 전역 과목으로 자동 저장/업데이트
-        if (s.name && s.name.trim() && typeof SubjectManager !== 'undefined') {
-            const name = s.name.trim();
-            const subjects = SubjectManager.getSubjects();
-            let subj = subjects.find(x => x.name === name);
-            if (subj) {
-                subj.answers = s.answerKey;
-                subj.numQuestions = s.numQuestions || subj.numQuestions;
-            } else {
-                subjects.push({
-                    code: '',
-                    name: name,
-                    numQuestions: s.numQuestions || 20,
-                    scorePerQuestion: 5,
-                    answers: s.answerKey
-                });
-            }
-            SubjectManager.saveToStorage();
-            // 같은 이름의 다른 ROI에도 전파
+        // 전역 과목에 슬라이스 저장 + 같은 이름 ROI에 전파
+        this._saveRoiAnswersToSubject(roi);
+        const name = (roi.settings.name || '').trim();
+        if (name) {
             App.state.images.forEach(img => {
                 img.rois.forEach(r => {
-                    if (r !== roi && r.settings && r.settings.type === 'subject_answer' && r.settings.name === name) {
-                        r.settings.answerKey = s.answerKey;
+                    if (r !== roi && r.settings && r.settings.type === 'subject_answer'
+                        && (r.settings.name || '').trim() === name) {
+                        this._loadAnswersFromSubject(r);
                         img.gradeResult = null;
                     }
                 });
@@ -981,19 +966,74 @@ const UI = {
         this.updateRightPanel();
     },
 
+    // ROI → 과목: ROI의 answerKey를 전역 과목의 해당 슬라이스에 저장
+    _saveRoiAnswersToSubject(roi) {
+        const s = roi.settings;
+        const name = (s.name || '').trim();
+        if (!name || s.type !== 'subject_answer' || !s.answerKey) return;
+        if (typeof SubjectManager === 'undefined') return;
+
+        const roiAnswers = s.answerKey.indexOf(',') >= 0
+            ? s.answerKey.split(',').map(t => t.trim())
+            : s.answerKey.split('');
+        const startIdx = (s.startNum || 1) - 1;
+
+        const subjects = SubjectManager.getSubjects();
+        let subj = subjects.find(x => x.name === name);
+
+        if (!subj) {
+            // 신규 과목 생성
+            const full = new Array(startIdx + roiAnswers.length).fill('');
+            for (let i = 0; i < roiAnswers.length; i++) full[startIdx + i] = roiAnswers[i];
+            subjects.push({
+                code: '', name,
+                numQuestions: full.length,
+                scorePerQuestion: 5,
+                answers: full.join(',')
+            });
+        } else {
+            // 기존 과목에 슬라이스 업데이트
+            const subjArray = subj.answers
+                ? (subj.answers.indexOf(',') >= 0 ? subj.answers.split(',') : subj.answers.split(''))
+                : [];
+            while (subjArray.length < startIdx + roiAnswers.length) subjArray.push('');
+            for (let i = 0; i < roiAnswers.length; i++) subjArray[startIdx + i] = roiAnswers[i];
+            subj.answers = subjArray.join(',');
+            subj.numQuestions = Math.max(subj.numQuestions || 0, subjArray.length);
+        }
+        SubjectManager.saveToStorage();
+    },
+
+    // 과목 → ROI: 전역 과목에서 startNum 기반 슬라이스를 ROI.answerKey에 로드
+    _loadAnswersFromSubject(roi) {
+        const s = roi.settings;
+        const name = (s.name || '').trim();
+        if (!name || typeof SubjectManager === 'undefined') return false;
+        const subj = SubjectManager.findByName(name);
+        if (!subj || !subj.answers) return false;
+
+        const subjArray = subj.answers.indexOf(',') >= 0
+            ? subj.answers.split(',').map(t => t.trim())
+            : subj.answers.split('');
+        const startIdx = (s.startNum || 1) - 1;
+        const endIdx = startIdx + (s.numQuestions || 20);
+        const slice = subjArray.slice(startIdx, endIdx);
+
+        if (slice.length > 0 && slice.some(x => x)) {
+            s.answerKey = slice.join(',');
+            return true;
+        }
+        return false;
+    },
+
     // subject_answer ROI 이름 변경 시 과목 매칭/자동 로드
     _syncRoiNameAsSubject(roi) {
         const s = roi.settings;
         if (!s || s.type !== 'subject_answer') return;
         const name = (s.name || '').trim();
         if (!name) return;
-        if (typeof SubjectManager === 'undefined') return;
-        const matched = SubjectManager.findByName(name);
-        if (matched) {
-            // 기존 과목이면 정답/문항수 자동 로드 (choiceLabels는 ROI 고유값 유지)
-            if (matched.answers) s.answerKey = matched.answers;
-            if (matched.numQuestions) s.numQuestions = matched.numQuestions;
-            Toast.info(`과목 "${name}" 자동 매칭됨`);
+        if (this._loadAnswersFromSubject(roi)) {
+            Toast.info(`과목 "${name}" 정답 자동 로드됨`);
         }
     },
 
@@ -1135,9 +1175,22 @@ const UI = {
             const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
             const detected = OmrEngine.autoDetect(imageData, roi.x, roi.y, 0, checked);
             if (detected) {
+                // 문항수
                 const nqInput = document.getElementById('rp-numq');
                 if (nqInput) nqInput.value = detected.numQuestions;
-                // 선택지 수는 preset에 따라 결정되므로 자동으로 안 건드림
+                // 선택지 수
+                const ncInput = document.getElementById('rp-numc');
+                if (ncInput) ncInput.value = detected.numChoices;
+                // 라벨 재생성 (1~N 기본값)
+                const labelsDiv = document.getElementById('rp-labels');
+                if (labelsDiv) {
+                    let newHtml = '';
+                    for (let i = 0; i < detected.numChoices; i++) {
+                        newHtml += `<input type="text" class="rp-label-input" data-idx="${i}" value="${i + 1}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`;
+                    }
+                    labelsDiv.innerHTML = newHtml;
+                }
+                // 방향
                 const vertBtn = document.getElementById('rp-vert');
                 const horizBtn = document.getElementById('rp-horiz');
                 if (detected.orientation === 'vertical') {

@@ -193,15 +193,8 @@ const Grading = {
 
         if (s.type !== 'subject_answer') return null;
 
-        // 영역 이름 = 과목 이름으로 전역 과목 찾기 (우선 적용)
-        if (s.name && s.name.trim() && App.state.subjects) {
-            const subj = App.state.subjects.find(x => x.name === s.name.trim());
-            if (subj && subj.answers) {
-                return this.parseAnswerString(subj.answers, s.numChoices || 5, s.choiceLabels);
-            }
-        }
-
-        if (s.answerSource === 'direct') {
+        // ROI의 answerKey 사용 (subject에서 이미 슬라이스 로드됨)
+        if (s.answerSource === 'direct' || !s.answerSource) {
             // 직접 입력된 정답
             if (!s.answerKey) return null;
             return this.parseAnswerString(s.answerKey, s.numChoices || 5, s.choiceLabels);
