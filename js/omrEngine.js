@@ -198,6 +198,139 @@ const OmrEngine = {
     },
 
     // ==========================================
+    // Stage 1 (길쭉 버블 전용): BFS + h/w >= 2 필터
+    // 기존 _stage1_findBubbles의 복사본 + 필터 조건만 변경
+    // ==========================================
+    _stage1_findBubbles_elongated(grayData, width, height, bubbleSize) {
+        const THRESHOLD = (() => {
+            let t = 0; for (let i = 0; i < grayData.length; i++) t += grayData[i];
+            return (t / grayData.length) * 0.75;
+        })();
+
+        // BFS
+        const visited = new Uint8Array(width * height);
+        const blobs = [];
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                if (grayData[idx] < THRESHOLD && !visited[idx]) {
+                    const queue = [{ x, y }]; visited[idx] = 1;
+                    let mnX = x, mxX = x, mnY = y, mxY = y, cnt = 0;
+                    while (queue.length > 0) {
+                        const p = queue.shift(); cnt++;
+                        if (p.x < mnX) mnX = p.x; if (p.x > mxX) mxX = p.x;
+                        if (p.y < mnY) mnY = p.y; if (p.y > mxY) mxY = p.y;
+                        for (const n of [{x:p.x+1,y:p.y},{x:p.x-1,y:p.y},{x:p.x,y:p.y+1},{x:p.x,y:p.y-1}]) {
+                            if (n.x >= 0 && n.x < width && n.y >= 0 && n.y < height) {
+                                const ni = n.y * width + n.x;
+                                if (grayData[ni] < THRESHOLD && !visited[ni]) { visited[ni] = 1; queue.push(n); }
+                            }
+                        }
+                    }
+                    const bw = mxX - mnX, bh = mxY - mnY;
+                    if (bw > 2 && bh > 4 && cnt > 5) blobs.push({ cx: mnX + bw/2, cy: mnY + bh/2, w: bw, h: bh, area: cnt });
+                }
+            }
+        }
+
+        if (blobs.length < 2) return null;
+
+        // 길쭉 버블 필터: h/w >= 2 (세로가 가로의 2배 이상)
+        // 채움률 하한은 유지, 상한만 길쭉 버블용으로 완화
+        const targetSize = bubbleSize || 0;
+        let filtered;
+
+        if (targetSize > 0) {
+            // targetSize는 긴 축(h) 기준
+            const minS = targetSize * 0.85;
+            const maxS = targetSize * 1.15;
+            filtered = blobs.filter(b => {
+                const hw = b.h / b.w; // 길쭉 비율
+                const fill = b.area / (b.w * b.h);
+                return b.h >= minS && b.h <= maxS && hw >= 2.0 && hw <= 5.0 && fill > 0.3 && fill < 0.95;
+            });
+            if (filtered.length < 4) {
+                filtered = blobs.filter(b => {
+                    const hw = b.h / b.w;
+                    const fill = b.area / (b.w * b.h);
+                    return b.h >= minS && b.h <= maxS && hw >= 2.0 && hw <= 5.0 && fill > 0.3;
+                });
+            }
+        } else {
+            // 자동 모드: 먼저 h/w >= 2인 블롭만 후보로
+            const candidates = blobs.filter(b => {
+                const hw = b.h / b.w;
+                return hw >= 2.0 && hw <= 5.0 && b.w >= 2;
+            });
+            if (candidates.length < 2) {
+                this._log(`[Stage1-길쭉] 후보 부족: ${candidates.length}`);
+                return null;
+            }
+            // 후보 중 높이 중앙값 기준 필터링
+            const heights = candidates.map(b => b.h).sort((a, b) => a - b);
+            const medH = heights[Math.floor(heights.length / 2)];
+            filtered = candidates.filter(b => {
+                const fill = b.area / (b.w * b.h);
+                return b.h >= medH * 0.6 && b.h <= medH * 1.6 && fill > 0.3;
+            });
+        }
+
+        this._log(`[Stage1-길쭉] BFS: ${blobs.length}블롭 → 길쭉필터: ${filtered.length}블롭`);
+        if (this.debugLog) {
+            filtered.forEach((b, i) => {
+                this._log(`  ✓ 블롭${i+1}: cx=${Math.round(b.cx)} cy=${Math.round(b.cy)} ${b.w}x${b.h} h/w=${(b.h/b.w).toFixed(2)} fill=${(b.area/(b.w*b.h)).toFixed(2)}`);
+            });
+            const rejected = blobs.filter(b => !filtered.includes(b));
+            rejected.forEach(b => {
+                const hw = b.h / b.w;
+                const fill = b.area / (b.w * b.h);
+                let reason = '';
+                if (hw < 2.0) reason += '종횡비(길쭉아님) ';
+                if (hw > 5.0) reason += '너무김 ';
+                if (fill <= 0.3) reason += '채움률↓ ';
+                if (fill >= 0.95) reason += '꽉참 ';
+                if (!reason) reason = '기타';
+                this._log(`  ✗ 탈락: cx=${Math.round(b.cx)} cy=${Math.round(b.cy)} ${b.w}x${b.h} h/w=${hw.toFixed(2)} fill=${fill.toFixed(2)} (${reason.trim()})`);
+            });
+        }
+        if (filtered.length < 2) return null;
+
+        this._debugBlobs = { all: blobs, filtered, threshold: THRESHOLD };
+
+        // 행/열 그룹핑 — 길쭉 버블은 h가 크므로 행 그룹핑은 medW 사용
+        const sortedY = [...filtered].sort((a, b) => a.cy - b.cy);
+        const medH = sortedY.map(b => b.h).sort((a, b) => a - b)[Math.floor(sortedY.length / 2)];
+
+        const sortedX = [...filtered].sort((a, b) => a.cx - b.cx);
+        const medW = sortedX.map(b => b.w).sort((a, b) => a - b)[Math.floor(sortedX.length / 2)];
+
+        // 행 그룹핑: medH 대신 medW * 1.5를 사용 (medH가 커서 행이 병합되는 문제 방지)
+        const rowThreshold = medW * 1.5;
+        const rowGroups = this._groupByAxis(sortedY, 'cy', rowThreshold);
+
+        // 열 그룹핑: medW 사용 (기존과 동일)
+        const colGroups = this._groupByAxis(sortedX, 'cx', medW);
+
+        // 노이즈 그룹 제거
+        const rowBlobCounts = rowGroups.map(r => r.length).sort((a, b) => a - b);
+        const medRowBlobs = rowBlobCounts[Math.floor(rowBlobCounts.length / 2)];
+        const minRowBlobs = Math.max(2, Math.round(medRowBlobs * 0.4));
+        const goodRows = rowGroups.filter(r => r.length >= minRowBlobs);
+
+        const colBlobCounts = colGroups.map(c => c.length).sort((a, b) => a - b);
+        const medColBlobs = colBlobCounts[Math.floor(colBlobCounts.length / 2)];
+        const minColBlobs = Math.max(2, Math.round(medColBlobs * 0.4));
+        const goodCols = colGroups.filter(c => c.length >= minColBlobs);
+
+        const finalRows = goodRows.length >= 2 ? goodRows : rowGroups;
+        const finalCols = goodCols.length >= 2 ? goodCols : colGroups;
+
+        this._log(`[Stage1-길쭉] 행=${finalRows.length} 열=${finalCols.length} (medW=${medW} rowThreshold=${Math.round(rowThreshold)})`);
+
+        return { rowGroups: finalRows, colGroups: finalCols, numRows: finalRows.length, numCols: finalCols.length };
+    },
+
+    // ==========================================
     // Stage 3: 열 위치 일관성으로 노이즈 필터링
     // ==========================================
     _stage3_filterByColumnConsistency(rowGroups, numC, sortProp) {
@@ -415,15 +548,18 @@ const OmrEngine = {
     // ==========================================
     // 메인 분석 (4단계 파이프라인)
     // ==========================================
-    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0) {
+    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0, elongatedMode = false) {
         const width = imageData.width, height = imageData.height;
         const grayData = this.preprocess(imageData);
         let isVert = orientation === 'vertical';
 
         // ──────────────────────────────────────
         // Stage 1: 빈 버블 위치 찾기
+        // 길쭉 모드 → 별도 함수, 일반 → 기존 함수
         // ──────────────────────────────────────
-        const grid = this._stage1_findBubbles(grayData, width, height, bubbleSize);
+        const grid = elongatedMode
+            ? this._stage1_findBubbles_elongated(grayData, width, height, bubbleSize)
+            : this._stage1_findBubbles(grayData, width, height, bubbleSize);
         if (!grid) return { rows: [], maxCols: 0 };
 
         if (!orientation || orientation === '') {
@@ -600,9 +736,11 @@ const OmrEngine = {
     // ==========================================
     // 자동 감지
     // ==========================================
-    autoDetect(imageData, offsetX, offsetY, bubbleSize) {
+    autoDetect(imageData, offsetX, offsetY, bubbleSize, elongatedMode = false) {
         const grayData = this.preprocess(imageData);
-        const grid = this._stage1_findBubbles(grayData, imageData.width, imageData.height, bubbleSize || 0);
+        const grid = elongatedMode
+            ? this._stage1_findBubbles_elongated(grayData, imageData.width, imageData.height, bubbleSize || 0)
+            : this._stage1_findBubbles(grayData, imageData.width, imageData.height, bubbleSize || 0);
         if (!grid) return null;
 
         const orientation = (grid.numCols > grid.numRows) ? 'horizontal' : 'vertical';

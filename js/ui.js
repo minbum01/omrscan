@@ -31,6 +31,7 @@ const UI = {
             choiceLabels: ['1','2','3','4','5'], customLabels: '',
             stretchRatio: 1.0,            // 가로 스트레칭 비율 (1.0=없음, 2.0=2배 늘림)
             showStretchPreview: false,    // 스트레칭 미리보기 표시 여부
+            elongatedMode: false,         // 길쭉 버블 분석 모드 (h/w >= 2 필터)
             type: 'subject_answer',       // 영역 타입
             answerKey: null,              // 영역별 정답 (과목답안용)
             answerSource: 'direct',       // 'direct' | 'subject_code'
@@ -234,7 +235,16 @@ const UI = {
                     </div>`;
                 }
 
-                // 가로 스트레칭 (세로 길쭉 버블용)
+                // 길쭉 버블 분석 모드
+                html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:11px; cursor:pointer;">
+                        <input type="checkbox" ${s.elongatedMode ? 'checked' : ''}
+                            data-roi="${idx}" onchange="UI.onElongatedModeChange(this)">
+                        길쭉 버블 분석 (h/w ≥ 2)
+                    </label>
+                </div>`;
+
+                // 가로 스트레칭 (세로 길쭉 버블용 — 백업)
                 html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
                     <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
                         <span class="roi-field-label" style="white-space:nowrap;">가로 스트레칭</span>
@@ -745,6 +755,14 @@ const UI = {
         const idx = parseInt(checkbox.dataset.roi);
         imgObj.rois[idx].settings.showStretchPreview = checkbox.checked;
         CanvasManager.render();
+    },
+
+    onElongatedModeChange(checkbox) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(checkbox.dataset.roi);
+        imgObj.rois[idx].settings.elongatedMode = checkbox.checked;
+        imgObj.results = null; imgObj.gradeResult = null;
+        ImageManager.updateList(); this.updateRightPanel();
     },
 
     ensureSettings(roi) {
