@@ -378,21 +378,8 @@ const CanvasManager = {
                     newSettings.numQuestions = detected.numQuestions;
                     newSettings.numChoices = detected.numChoices;
                     newSettings.orientation = detected.orientation;
-
-                    // 가로이고 선택지 10개면 1-0, 아니면 일반 매핑
-                    if (detected.orientation === 'horizontal' && detected.numChoices >= 9) {
-                        newSettings.choicePreset = '1-0';
-                        newSettings.choiceLabels = [...UI.CHOICE_PRESETS['1-0'].labels];
-                        newSettings.numChoices = 10;
-                    } else {
-                        const presetMap = { 4: '1-4', 5: '1-5', 9: '1-9', 10: '1-0' };
-                        if (presetMap[detected.numChoices]) {
-                            newSettings.choicePreset = presetMap[detected.numChoices];
-                            newSettings.choiceLabels = [...UI.CHOICE_PRESETS[newSettings.choicePreset].labels];
-                        } else {
-                            newSettings.choiceLabels = Array.from({ length: detected.numChoices }, (_, i) => String(i + 1));
-                        }
-                    }
+                    // 감지된 선택지 수에 맞춰 기본 라벨 생성 (사용자가 나중에 수정 가능)
+                    newSettings.choiceLabels = Array.from({ length: detected.numChoices }, (_, i) => String(i + 1));
                 }
             } catch (e) {
                 console.warn('자동 감지 실패:', e);

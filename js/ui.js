@@ -3,19 +3,6 @@
 // ============================================
 
 const UI = {
-    CHOICE_PRESETS: {
-        '1-5':   { labels: ['1','2','3','4','5'], desc: '1 ~ 5' },
-        '1-4':   { labels: ['1','2','3','4'], desc: '1 ~ 4' },
-        '1-9':   { labels: ['1','2','3','4','5','6','7','8','9'], desc: '1 ~ 9' },
-        '1-0':   { labels: ['1','2','3','4','5','6','7','8','9','0'], desc: '1 ~ 0' },
-        '0-4':   { labels: ['0','1','2','3','4'], desc: '0 ~ 4' },
-        '0-9':   { labels: ['0','1','2','3','4','5','6','7','8','9'], desc: '0 ~ 9' },
-        'A-E':   { labels: ['A','B','C','D','E'], desc: 'A ~ E' },
-        'A-D':   { labels: ['A','B','C','D'], desc: 'A ~ D' },
-        'a-e':   { labels: ['a','b','c','d','e'], desc: 'a ~ e' },
-        'custom': { labels: [], desc: '직접 입력' },
-    },
-
     // 영역 타입
     ROI_TYPES: {
         'subject_answer': { label: '과목 답안', icon: '📝' },
@@ -27,22 +14,70 @@ const UI = {
     defaultSettings() {
         return {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
-            orientation: 'vertical', choicePreset: '1-5',
-            choiceLabels: ['1','2','3','4','5'], customLabels: '',
-            elongatedMode: false,         // 길쭉 버블 분석 모드 (h/w >= minHW 필터)
-            elongatedMinHW: 1.4,          // 길쭉 비율 하한
-            elongatedMaxHW: 5.0,          // 길쭉 비율 상한
-            elongatedMinFill: 0.15,       // 채움률 하한
-            elongatedMaxFill: 1.0,        // 채움률 상한 (고정)
-            type: 'subject_answer',       // 영역 타입
-            answerKey: null,              // 영역별 정답 (과목답안용)
-            answerSource: 'direct',       // 'direct' | 'subject_code'
-            linkedCodeRoi: null,          // 연결된 과목코드 영역 인덱스
-            codeList: [],                 // 과목코드 목록 [{code:1, name:'경찰학', answers:'31423...'}]
+            orientation: 'vertical',
+            choiceLabels: ['1','2','3','4','5'],  // 사용자 직접 입력
+            elongatedMode: false,
+            elongatedMinHW: 1.4,
+            elongatedMaxHW: 5.0,
+            elongatedMinFill: 0.15,
+            elongatedMaxFill: 1.0,
+            type: 'subject_answer',
+            answerKey: null,
+            answerSource: 'direct',
+            linkedCodeRoi: null,
+            codeList: [],
         };
     },
 
     selectedCell: null,
+
+    // =========================================
+    // 선택지 입력 UI (직접 입력, 프리셋 없음)
+    // =========================================
+    renderChoicesUI(idx, s) {
+        const numC = s.numChoices || 5;
+        let html = `<div class="roi-choice-section">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                <span class="roi-field-label">선택지 개수</span>
+                <input type="number" class="roi-field-input" value="${numC}" min="2" max="20"
+                    data-roi="${idx}" onchange="UI.onNumChoicesChange(this)" style="width:55px; text-align:center;">
+            </div>
+            <div style="display:flex; gap:3px; flex-wrap:wrap; padding:4px 0;">`;
+        for (let i = 0; i < numC; i++) {
+            const label = (s.choiceLabels && s.choiceLabels[i] != null) ? s.choiceLabels[i] : String(i + 1);
+            html += `<input type="text" value="${this.esc(label)}" maxlength="10"
+                data-roi="${idx}" data-idx="${i}" onchange="UI.onChoiceLabelChange(this)"
+                style="width:36px; text-align:center; padding:4px 2px; border:1px solid var(--border); border-radius:4px; font-size:12px; font-weight:600;">`;
+        }
+        html += `</div></div>`;
+        return html;
+    },
+
+    onNumChoicesChange(input) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(input.dataset.roi);
+        const s = imgObj.rois[idx].settings;
+        const newNum = Math.max(2, Math.min(20, parseInt(input.value) || 5));
+        s.numChoices = newNum;
+        // choiceLabels 길이 조정
+        if (!s.choiceLabels) s.choiceLabels = [];
+        while (s.choiceLabels.length < newNum) s.choiceLabels.push(String(s.choiceLabels.length + 1));
+        if (s.choiceLabels.length > newNum) s.choiceLabels.length = newNum;
+        imgObj.results = null; imgObj.gradeResult = null;
+        ImageManager.updateList();
+        this.updateRightPanel();
+    },
+
+    onChoiceLabelChange(input) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(input.dataset.roi);
+        const lblIdx = parseInt(input.dataset.idx);
+        const s = imgObj.rois[idx].settings;
+        if (!s.choiceLabels) s.choiceLabels = [];
+        s.choiceLabels[lblIdx] = input.value;
+        imgObj.results = null; imgObj.gradeResult = null;
+        ImageManager.updateList();
+    },
 
     // =========================================
     // 패널 업데이트 (통합 뷰)
@@ -150,11 +185,6 @@ const UI = {
                 const isVert = s.orientation === 'vertical';
                 const isSelected = idx === (typeof CanvasManager !== 'undefined' ? CanvasManager.selectedRoiIdx : -1);
 
-                let presetOptions = '';
-                for (const [key, preset] of Object.entries(this.CHOICE_PRESETS)) {
-                    presetOptions += `<option value="${key}" ${s.choicePreset === key ? 'selected' : ''}>${preset.desc}</option>`;
-                }
-
                 html += `<div class="roi-card ${isSelected ? 'roi-card-selected' : ''}" data-roi-index="${idx}">`;
 
                 // 헤더: 순서 이동 + 이름 편집
@@ -207,10 +237,7 @@ const UI = {
                                 data-roi="${idx}" data-field="numQuestions" onchange="UI.onSettingChange(this)">
                         </div>
                     </div>`;
-                    html += `<div class="roi-choice-section">
-                        <span class="roi-field-label">선택지</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onPresetChange(this)">${presetOptions}</select>
-                    </div>`;
+                    html += this.renderChoicesUI(idx, s);
                 } else if (s.type === 'phone_exam') {
                     html += `<div class="roi-fields">
                         <div class="roi-field" style="flex:1;">
@@ -219,10 +246,7 @@ const UI = {
                                 data-roi="${idx}" data-field="numQuestions" onchange="UI.onSettingChange(this)">
                         </div>
                     </div>`;
-                    html += `<div class="roi-choice-section">
-                        <span class="roi-field-label">선택지</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onPresetChange(this)">${presetOptions}</select>
-                    </div>`;
+                    html += this.renderChoicesUI(idx, s);
                 } else if (s.type === 'subject_code') {
                     html += `<div class="roi-fields">
                         <div class="roi-field">
@@ -252,14 +276,7 @@ const UI = {
                                 data-roi="${idx}" data-field="numQuestions" onchange="UI.onSettingChange(this)">
                         </div>
                     </div>`;
-                    html += `<div class="roi-choice-section">
-                        <span class="roi-field-label">선택지 형식</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onPresetChange(this)">${presetOptions}</select>
-                        ${s.choicePreset === 'custom' ? `
-                            <input type="text" class="roi-custom-labels" placeholder="쉼표 구분"
-                                value="${this.esc(s.customLabels || '')}" data-roi="${idx}" onchange="UI.onCustomChange(this)">
-                        ` : ''}
-                    </div>`;
+                    html += this.renderChoicesUI(idx, s);
 
                     // 정답 소스
                     const codeRois = imgObj.rois.map((r, i) => ({ i, s: r.settings })).filter(r => r.s && r.s.type === 'subject_code');
@@ -271,8 +288,8 @@ const UI = {
                         </select>
                         ${s.answerSource === 'direct' ? `
                             <input type="text" class="roi-answer-input" data-roi="${idx}" onchange="UI.onDirectAnswerChange(this)"
-                                value="${this.esc(s.answerKey || '')}" placeholder="정답 연속입력 (31423...)"
-                                style="width:100%; margin-top:4px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:monospace; letter-spacing:2px;">
+                                value="${this.esc(s.answerKey || '')}" placeholder="정답 입력 (쉼표로 구분: 1,2,3,4 또는 ㄱ,ㄴ,ㄷ)"
+                                style="width:100%; margin-top:4px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:monospace;">
                         ` : ''}
                     </div>`;
                 }
@@ -448,94 +465,9 @@ const UI = {
     renderResultsTab(panel, imgObj) { this.renderCombinedPanel(panel, imgObj); },
 
     // =========================================
-    // 이전 탭 1 코드 (더 이상 직접 호출 안 됨, 참조용 유지)
+    // 탭 2: 결과 (분석 + 채점) — 내부적으로 사용됨
     // =========================================
-    _renderSettingsTab_legacy(panel, imgObj) {
-        let html = `
-            <div style="display:flex; gap:6px; margin-bottom:12px;">
-                <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
-                <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
-            </div>
-        `;
-
-        if (imgObj.rois.length === 0) {
-            html += `<div class="guide-text" style="padding:20px 16px;">
-                위의 <strong>"영역 추가"</strong> 버튼을 누르거나<br>
-                <strong>박스 모드(D)</strong>로 직접 드래그하세요.
-            </div>`;
-        } else {
-            imgObj.rois.forEach((roi, idx) => {
-                this.ensureSettings(roi);
-                const s = roi.settings;
-                const isVert = s.orientation === 'vertical';
-
-                let presetOptions = '';
-                for (const [key, preset] of Object.entries(this.CHOICE_PRESETS)) {
-                    presetOptions += `<option value="${key}" ${s.choicePreset === key ? 'selected' : ''}>${preset.desc}</option>`;
-                }
-
-                html += `
-                <div class="roi-card" data-roi-index="${idx}">
-                    <div class="roi-card-header">
-                        <div class="roi-card-num">${idx + 1}</div>
-                        <input class="roi-name-input" type="text" value="${this.esc(s.name)}"
-                            placeholder="영역 ${idx + 1}" data-roi="${idx}" onchange="UI.onNameChange(this)">
-                        <span class="roi-card-size">${Math.round(roi.w)}×${Math.round(roi.h)}</span>
-                        <button class="roi-delete-btn" onclick="CanvasManager.deleteRoi(${idx}); UI.updateRightPanel();">✕</button>
-                    </div>
-                    <div class="roi-orient-toggle">
-                        <button class="roi-orient-btn ${isVert ? 'active' : ''}" onclick="UI.setOrientation(${idx},'vertical')">
-                            <span class="roi-orient-icon">⬇</span><span>세로</span>
-                        </button>
-                        <button class="roi-orient-btn ${!isVert ? 'active' : ''}" onclick="UI.setOrientation(${idx},'horizontal')">
-                            <span class="roi-orient-icon">➡</span><span>가로</span>
-                        </button>
-                    </div>
-                    <div class="roi-fields">
-                        <div class="roi-field">
-                            <span class="roi-field-label">시작 문항</span>
-                            <input type="number" class="roi-field-input" value="${s.startNum}" min="1" max="200"
-                                data-roi="${idx}" data-field="startNum" onchange="UI.onSettingChange(this)">
-                        </div>
-                        <div class="roi-field">
-                            <span class="roi-field-label">문항 수</span>
-                            <input type="number" class="roi-field-input" value="${s.numQuestions}" min="1" max="100"
-                                data-roi="${idx}" data-field="numQuestions" onchange="UI.onSettingChange(this)">
-                        </div>
-                    </div>
-                    <div class="roi-choice-section">
-                        <span class="roi-field-label">선택지 형식</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onPresetChange(this)">${presetOptions}</select>
-                        ${s.choicePreset === 'custom' ? `
-                            <input type="text" class="roi-custom-labels" placeholder="쉼표 구분 (예: ㄱ,ㄴ,ㄷ)"
-                                value="${this.esc(s.customLabels || '')}" data-roi="${idx}" onchange="UI.onCustomChange(this)">
-                        ` : ''}
-                        <div class="roi-choice-preview">
-                            ${(s.choiceLabels || []).map(l => `<span class="choice-preview-item">${l}</span>`).join('')}
-                        </div>
-                    </div>
-                </div>`;
-            });
-
-            html += `
-                <div class="roi-actions">
-                    <div class="roi-actions-info">영역 ${imgObj.rois.length}개 설정됨</div>
-                    <button class="btn btn-primary roi-analyze-btn" onclick="CanvasManager.runAnalysis()">
-                        분석 실행 <span class="kbd" style="background:rgba(255,255,255,0.2);">Enter</span>
-                    </button>
-                    <div class="roi-actions-sub">
-                        <button class="btn btn-sm" onclick="TemplateManager.save()">양식 저장</button>
-                    </div>
-                </div>`;
-        }
-
-        panel.innerHTML = html;
-    },
-
-    // =========================================
-    // 탭 2: 결과 (분석 + 채점)
-    // =========================================
-    renderResultsTab(panel, imgObj) {
+    _legacyRenderResultsTab(panel, imgObj) {
         if (!imgObj || !imgObj.results) {
             panel.innerHTML = '<div class="guide-text">분석을 먼저 실행하세요.</div>';
             return;
@@ -821,13 +753,16 @@ const UI = {
         if (!roi.settings) roi.settings = this.defaultSettings();
         const s = roi.settings;
         if (!s.orientation) s.orientation = 'vertical';
-        if (!s.choicePreset) s.choicePreset = '1-5';
         if (!s.choiceLabels) s.choiceLabels = ['1','2','3','4','5'];
+        if (!s.numChoices) s.numChoices = s.choiceLabels.length || 5;
         if (s.name === undefined) s.name = '';
         if (!s.type) s.type = 'subject_answer';
         if (!s.answerSource) s.answerSource = 'direct';
         // 채움 상한은 항상 1.0 고정
         s.elongatedMaxFill = 1.0;
+        // 프리셋 관련 레거시 필드 제거
+        delete s.choicePreset;
+        delete s.customLabels;
     },
 
     esc(str) {
@@ -854,11 +789,8 @@ const UI = {
                 settings.numQuestions = detected.numQuestions;
                 settings.numChoices = detected.numChoices;
                 settings.orientation = detected.orientation;
-                const presetMap = { 4: '1-4', 5: '1-5', 9: '1-9', 10: '1-0' };
-                if (presetMap[detected.numChoices]) {
-                    settings.choicePreset = presetMap[detected.numChoices];
-                    settings.choiceLabels = [...UI.CHOICE_PRESETS[settings.choicePreset].labels];
-                }
+                // 자동감지된 선택지 수에 맞춰 기본 라벨 (1, 2, 3, ...)
+                settings.choiceLabels = Array.from({ length: detected.numChoices }, (_, i) => String(i + 1));
                 Toast.info(`자동 감지: ${detected.numQuestions}문항 × ${detected.numChoices}지선다 (${detected.orientation === 'vertical' ? '세로' : '가로'})`);
             }
         } catch (e) { console.warn('자동 감지 실패:', e); }
@@ -906,15 +838,15 @@ const UI = {
 
         // 타입별 기본값
         if (s.type === 'birthday') {
-            s.numQuestions = 6; s.choicePreset = '1-0';
-            s.choiceLabels = [...this.CHOICE_PRESETS['1-0'].labels];
+            s.numQuestions = 6;
+            s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';
         } else if (s.type === 'phone_exam') {
-            s.numQuestions = 11; s.choicePreset = '1-0';
-            s.choiceLabels = [...this.CHOICE_PRESETS['1-0'].labels];
+            s.numQuestions = 11;
+            s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';
         } else if (s.type === 'subject_code') {
-            s.numQuestions = 1; s.choicePreset = '1-5';
+            s.numQuestions = 1;
             s.choiceLabels = ['1','2','3','4','5']; s.numChoices = 5;
         }
 
@@ -999,11 +931,6 @@ const UI = {
         const old = document.getElementById('roi-settings-popup');
         if (old) old.remove();
 
-        let presetOptions = '';
-        for (const [key, preset] of Object.entries(this.CHOICE_PRESETS)) {
-            presetOptions += `<option value="${key}" ${s.choicePreset === key ? 'selected' : ''}>${preset.desc}</option>`;
-        }
-
         const overlay = document.createElement('div');
         overlay.id = 'roi-settings-popup';
         overlay.className = 'modal-overlay';
@@ -1039,8 +966,16 @@ const UI = {
                         <input type="number" id="rp-numq" value="${s.numQuestions || 20}" min="1" max="100" style="width:70px;flex:none;">
                     </div>
                     <div class="roi-popup-field">
+                        <label>선택지 수</label>
+                        <input type="number" id="rp-numc" value="${s.numChoices || 5}" min="2" max="20" style="width:70px;flex:none;">
+                    </div>
+                    <div class="roi-popup-field" id="rp-labels-field">
                         <label>선택지</label>
-                        <select id="rp-preset">${presetOptions}</select>
+                        <div id="rp-labels" style="display:flex; gap:3px; flex-wrap:wrap; flex:1;">
+                            ${(s.choiceLabels || []).slice(0, s.numChoices || 5).map((lbl, i) =>
+                                `<input type="text" class="rp-label-input" data-idx="${i}" value="${this.esc(lbl)}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`
+                            ).join('')}
+                        </div>
                     </div>
                     <div class="roi-popup-field">
                         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -1058,6 +993,25 @@ const UI = {
         `;
         document.body.appendChild(overlay);
         // 배경 클릭으로는 닫히지 않음 (취소/확인/ESC 만 허용)
+
+        // 팝업에서 선택지 수 변경 시 텍스트박스 재생성
+        const numcInput = document.getElementById('rp-numc');
+        if (numcInput) {
+            numcInput.addEventListener('input', () => {
+                const newNum = Math.max(2, Math.min(20, parseInt(numcInput.value) || 5));
+                // 현재 입력값 보존
+                const current = Array.from(document.querySelectorAll('.rp-label-input')).map(inp => inp.value);
+                const labelsDiv = document.getElementById('rp-labels');
+                if (labelsDiv) {
+                    let newHtml = '';
+                    for (let i = 0; i < newNum; i++) {
+                        const val = current[i] != null ? current[i] : (s.choiceLabels[i] != null ? s.choiceLabels[i] : String(i + 1));
+                        newHtml += `<input type="text" class="rp-label-input" data-idx="${i}" value="${this.esc(val)}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`;
+                    }
+                    labelsDiv.innerHTML = newHtml;
+                }
+            });
+        }
     },
 
     closeRoiSettingsPopup() {
@@ -1112,12 +1066,15 @@ const UI = {
         s.numQuestions = parseInt(document.getElementById('rp-numq').value) || 0;
         s.elongatedMode = document.getElementById('rp-elongated').checked;
 
-        const preset = document.getElementById('rp-preset').value;
-        s.choicePreset = preset;
-        if (preset !== 'custom' && this.CHOICE_PRESETS[preset]) {
-            s.choiceLabels = [...this.CHOICE_PRESETS[preset].labels];
-            s.numChoices = s.choiceLabels.length;
-        }
+        // 선택지 수 + 라벨 읽기
+        const numc = parseInt(document.getElementById('rp-numc').value) || 5;
+        s.numChoices = Math.max(2, Math.min(20, numc));
+        const labelInputs = document.querySelectorAll('.rp-label-input');
+        const newLabels = Array.from(labelInputs).map(inp => inp.value);
+        // 부족하면 기존값 또는 기본값으로 채움
+        while (newLabels.length < s.numChoices) newLabels.push(String(newLabels.length + 1));
+        newLabels.length = s.numChoices;
+        s.choiceLabels = newLabels;
 
         // 방향이 바뀌어도 사용자가 입력한 문항수/선택지수는 유지
         imgObj.results = null; imgObj.gradeResult = null;
@@ -1149,29 +1106,8 @@ const UI = {
         imgObj.results = null; imgObj.gradeResult = null; ImageManager.updateList();
     },
 
-    onPresetChange(select) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const idx = parseInt(select.dataset.roi);
-        const preset = select.value;
-        const s = imgObj.rois[idx].settings;
-        s.choicePreset = preset;
-        if (preset !== 'custom') {
-            s.choiceLabels = [...this.CHOICE_PRESETS[preset].labels];
-            s.numChoices = s.choiceLabels.length;
-        }
-        imgObj.results = null; imgObj.gradeResult = null;
-        ImageManager.updateList(); this.updateRightPanel();
-    },
-
-    onCustomChange(input) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const idx = parseInt(input.dataset.roi);
-        const s = imgObj.rois[idx].settings;
-        s.customLabels = input.value;
-        const labels = input.value.split(',').map(l => l.trim()).filter(l => l);
-        if (labels.length > 0) { s.choiceLabels = labels; s.numChoices = labels.length; }
-        imgObj.results = null; imgObj.gradeResult = null;
-        ImageManager.updateList(); this.updateRightPanel();
+    _unused_legacy_handlers_removed() {
+        // onPresetChange, onCustomChange 함수는 제거됨 (프리셋 시스템 폐기)
     },
 
     // =========================================

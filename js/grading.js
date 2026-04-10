@@ -157,8 +157,27 @@ const Grading = {
     },
 
     // 영역별 정답 문자열을 답 배열로 변환
-    parseAnswerString(str, numChoices) {
+    // 쉼표로 구분된 라벨 기반 (예: "1,2,3,4,5" 또는 "ㄱ,ㄴ,ㄷ,ㄹ,ㅁ")
+    // 또는 기존 숫자 연속 입력도 지원 (하위 호환)
+    parseAnswerString(str, numChoices, choiceLabels) {
         if (!str) return [];
+        // 쉼표가 있으면 라벨 기반으로 파싱
+        if (str.indexOf(',') >= 0) {
+            return str.split(',').map(token => {
+                const t = token.trim();
+                if (!t) return null;
+                // 라벨 배열에서 인덱스 찾기 (1-based)
+                if (choiceLabels && choiceLabels.length > 0) {
+                    const idx = choiceLabels.indexOf(t);
+                    if (idx >= 0) return idx + 1;
+                }
+                // fallback: 숫자 파싱
+                const num = parseInt(t);
+                if (!isNaN(num)) return num === 0 ? numChoices : num;
+                return null;
+            });
+        }
+        // 기존 숫자 연속 입력 방식 (하위 호환)
         return str.split('').map(ch => {
             const num = parseInt(ch);
             if (isNaN(num)) return null;
@@ -177,7 +196,7 @@ const Grading = {
         if (s.answerSource === 'direct') {
             // 직접 입력된 정답
             if (!s.answerKey) return null;
-            return this.parseAnswerString(s.answerKey, s.numChoices || 5);
+            return this.parseAnswerString(s.answerKey, s.numChoices || 5, s.choiceLabels);
         }
 
         if (s.answerSource && s.answerSource.startsWith('code_')) {
@@ -204,7 +223,7 @@ const Grading = {
                 : (App.state.subjects || []);
             const matched = codeList.find(c => c.code === detectedCode);
             if (!matched || !matched.answers) return null;
-            return this.parseAnswerString(matched.answers, s.numChoices || 5);
+            return this.parseAnswerString(matched.answers, s.numChoices || 5, s.choiceLabels);
         }
 
         // 전역 정답 (하위 호환)
