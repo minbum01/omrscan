@@ -3,8 +3,38 @@
 // ============================================
 
 const SubjectManager = {
+    STORAGE_KEY: 'omr_subjects_v1',
+
     init() {
         document.getElementById('btn-subject-manager').addEventListener('click', () => this.openModal());
+        this.loadFromStorage();
+    },
+
+    // localStorage에서 과목 목록 불러오기
+    loadFromStorage() {
+        try {
+            const raw = localStorage.getItem(this.STORAGE_KEY);
+            if (raw) {
+                App.state.subjects = JSON.parse(raw);
+            }
+        } catch (e) { console.warn('과목 불러오기 실패:', e); }
+    },
+
+    // localStorage에 저장
+    saveToStorage() {
+        try {
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(App.state.subjects || []));
+        } catch (e) { console.warn('과목 저장 실패:', e); }
+    },
+
+    // 이름으로 과목 찾기 (중복 방지, 휴먼오류 최소화)
+    findByName(name) {
+        return (App.state.subjects || []).find(s => s.name === name);
+    },
+
+    // 코드로 과목 찾기
+    findByCode(code) {
+        return (App.state.subjects || []).find(s => s.code === code);
     },
 
     // 과목 목록은 App.state에 저장
@@ -135,6 +165,7 @@ const SubjectManager = {
         });
 
         App.state.subjects = subjects;
+        this.saveToStorage();
 
         // 과목코드 영역의 codeList도 동기화
         App.state.images.forEach(img => {

@@ -16,10 +16,11 @@ const UI = {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical',
             choiceLabels: ['1','2','3','4','5'],  // 사용자 직접 입력
+            subjectName: '',              // 연결된 과목 이름 (전역 과목 관리와 매칭)
             elongatedMode: false,
-            elongatedMinHW: 1.4,
-            elongatedMaxHW: 5.0,
-            elongatedMinFill: 0.15,
+            elongatedMinHW: 0.7,          // 기본 원형 버블용
+            elongatedMaxHW: 1.4,
+            elongatedMinFill: 0.3,
             elongatedMaxFill: 1.0,
             type: 'subject_answer',
             answerKey: null,
@@ -277,6 +278,17 @@ const UI = {
                         </div>
                     </div>`;
                     html += this.renderChoicesUI(idx, s);
+
+                    // 과목 선택 (등록된 과목 중 선택 → 정답 자동 적용)
+                    const subjects = (typeof SubjectManager !== 'undefined' ? SubjectManager.getSubjects() : []) || [];
+                    html += `<div class="roi-choice-section" style="border-top:1px solid var(--border-light);">
+                        <span class="roi-field-label">과목</span>
+                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onSubjectChange(this)">
+                            <option value="">(선택 안함)</option>
+                            ${subjects.map(subj => `<option value="${this.esc(subj.name)}" ${s.subjectName === subj.name ? 'selected' : ''}>${subj.code ? `[${this.esc(subj.code)}] ` : ''}${this.esc(subj.name)}</option>`).join('')}
+                            <option value="__new__">+ 새 과목 추가</option>
+                        </select>
+                    </div>`;
 
                     // 정답 소스
                     const codeRois = imgObj.rois.map((r, i) => ({ i, s: r.settings })).filter(r => r.s && r.s.type === 'subject_code');
@@ -913,6 +925,33 @@ const UI = {
     },
 
     // 직접 정답 입력
+    // 과목 선택 변경
+    onSubjectChange(select) {
+        const imgObj = App.getCurrentImage(); if (!imgObj) return;
+        const idx = parseInt(select.dataset.roi);
+        const s = imgObj.rois[idx].settings;
+
+        if (select.value === '__new__') {
+            // 새 과목 추가 → 과목 관리 모달 열기
+            select.value = s.subjectName || '';
+            if (typeof SubjectManager !== 'undefined') SubjectManager.openModal();
+            return;
+        }
+
+        s.subjectName = select.value;
+        // 과목 이름으로 찾아서 정답 자동 적용
+        if (s.subjectName && typeof SubjectManager !== 'undefined') {
+            const subj = SubjectManager.findByName(s.subjectName);
+            if (subj) {
+                s.answerKey = subj.answers || '';
+                if (subj.numQuestions) s.numQuestions = subj.numQuestions;
+                Toast.info(`과목 "${subj.name}" 적용됨 (${subj.numQuestions}문항)`);
+            }
+        }
+        imgObj.results = null; imgObj.gradeResult = null;
+        ImageManager.updateList(); this.updateRightPanel();
+    },
+
     onDirectAnswerChange(input) {
         const imgObj = App.getCurrentImage(); if (!imgObj) return;
         const idx = parseInt(input.dataset.roi);

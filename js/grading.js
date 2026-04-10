@@ -193,6 +193,14 @@ const Grading = {
 
         if (s.type !== 'subject_answer') return null;
 
+        // 과목 이름으로 연결된 경우 우선 적용
+        if (s.subjectName && App.state.subjects) {
+            const subj = App.state.subjects.find(x => x.name === s.subjectName);
+            if (subj && subj.answers) {
+                return this.parseAnswerString(subj.answers, s.numChoices || 5, s.choiceLabels);
+            }
+        }
+
         if (s.answerSource === 'direct') {
             // 직접 입력된 정답
             if (!s.answerKey) return null;
