@@ -250,6 +250,22 @@ const UI = {
                     </select>
                 </div>`;
 
+                // 과목 선택 버튼 (기존 과목명 + 새 과목)
+                if (s.type === 'subject_answer') {
+                    const subjSet = new Set();
+                    (App.state.subjects || []).forEach(sub => { if (sub.name) subjSet.add(sub.name); });
+                    imgObj.rois.forEach(r => { if (r.settings && r.settings.type === 'subject_answer' && r.settings.name) subjSet.add(r.settings.name); });
+                    if (subjSet.size > 0) {
+                        html += `<div style="padding:4px 8px; display:flex; flex-wrap:wrap; gap:3px; border-bottom:1px solid var(--border-light);">`;
+                        [...subjSet].forEach(name => {
+                            const isActive = s.name === name;
+                            html += `<button class="btn btn-sm" style="font-size:10px; padding:2px 8px; ${isActive ? 'background:var(--blue); color:#fff;' : ''}"
+                                onclick="UI.selectSubjectForRoi(${idx}, '${this.esc(name)}')">${this.esc(name)}</button>`;
+                        });
+                        html += `</div>`;
+                    }
+                }
+
                 // 방향 토글 (모든 타입 공통)
                 html += `<div class="roi-orient-toggle">
                     <button class="roi-orient-btn ${isVert ? 'active' : ''}" onclick="UI.setOrientation(${idx},'vertical')">
@@ -947,6 +963,33 @@ const UI = {
     },
 
     // 직접 정답 입력
+    // 과목 버튼 클릭 → 이름 설정 + startNum 자동 계산
+    selectSubjectForRoi(idx, subjectName) {
+        const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[idx]) return;
+        const s = imgObj.rois[idx].settings;
+        s.name = subjectName;
+
+        // 같은 과목의 기존 영역 중 가장 뒤 번호 찾기 → 이어서 시작
+        let maxEnd = 0;
+        imgObj.rois.forEach((r, i) => {
+            if (i !== idx && r.settings && r.settings.type === 'subject_answer'
+                && (r.settings.name || '').trim() === subjectName) {
+                const end = (r.settings.startNum || 1) + (r.settings.numQuestions || 0);
+                if (end > maxEnd) maxEnd = end;
+            }
+        });
+        if (maxEnd > 0) s.startNum = maxEnd;
+
+        // 과목 정답 자동 로드
+        this._loadAnswersFromSubject(imgObj.rois[idx]);
+
+        imgObj.results = null; imgObj.gradeResult = null;
+        CanvasManager.render();
+        ImageManager.updateList();
+        this.updateRightPanel();
+        Toast.info(`"${subjectName}" 선택됨 (시작번호: ${s.startNum})`);
+    },
+
     onDirectAnswerChange(input) {
         const imgObj = App.getCurrentImage(); if (!imgObj) return;
         const idx = parseInt(input.dataset.roi);
