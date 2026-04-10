@@ -193,9 +193,9 @@ const Grading = {
 
         if (s.type !== 'subject_answer') return null;
 
-        // 과목 이름으로 연결된 경우 우선 적용
-        if (s.subjectName && App.state.subjects) {
-            const subj = App.state.subjects.find(x => x.name === s.subjectName);
+        // 영역 이름 = 과목 이름으로 전역 과목 찾기 (우선 적용)
+        if (s.name && s.name.trim() && App.state.subjects) {
+            const subj = App.state.subjects.find(x => x.name === s.name.trim());
             if (subj && subj.answers) {
                 return this.parseAnswerString(subj.answers, s.numChoices || 5, s.choiceLabels);
             }

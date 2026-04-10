@@ -44,7 +44,6 @@ const UI = {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical',
             choiceLabels: ['1','2','3','4','5'],
-            subjectName: '',
             elongatedMode: false,
             // 임계값은 getThresholds()가 모드별 기본값 반환 (필드 미포함)
             type: 'subject_answer',
@@ -304,16 +303,15 @@ const UI = {
                     </div>`;
                     html += this.renderChoicesUI(idx, s);
 
-                    // 과목 선택 (등록된 과목 중 선택 → 정답 자동 적용)
-                    const subjects = (typeof SubjectManager !== 'undefined' ? SubjectManager.getSubjects() : []) || [];
-                    html += `<div class="roi-choice-section" style="border-top:1px solid var(--border-light);">
-                        <span class="roi-field-label">과목</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onSubjectChange(this)">
-                            <option value="">(선택 안함)</option>
-                            ${subjects.map(subj => `<option value="${this.esc(subj.name)}" ${s.subjectName === subj.name ? 'selected' : ''}>${subj.code ? `[${this.esc(subj.code)}] ` : ''}${this.esc(subj.name)}</option>`).join('')}
-                            <option value="__new__">+ 새 과목 추가</option>
-                        </select>
-                    </div>`;
+                    // 과목 매칭 힌트 (영역 이름 = 과목 이름)
+                    const subjName = s.name || '';
+                    const matchedSubj = subjName && typeof SubjectManager !== 'undefined'
+                        ? SubjectManager.findByName(subjName) : null;
+                    if (subjName) {
+                        html += `<div style="padding:4px 8px; font-size:10px; color:${matchedSubj ? 'var(--green)' : 'var(--text-muted)'}; border-top:1px solid var(--border-light);">
+                            ${matchedSubj ? `✓ 과목 "${this.esc(subjName)}" 매칭됨 (${matchedSubj.answers ? '정답 ' + matchedSubj.answers.length + '자' : '정답 없음'})` : `• 이 영역 이름이 과목명으로 등록됩니다`}
+                        </div>`;
+                    }
 
                     // 정답 소스
                     const codeRois = imgObj.rois.map((r, i) => ({ i, s: r.settings })).filter(r => r.s && r.s.type === 'subject_code');
@@ -942,39 +940,61 @@ const UI = {
     },
 
     // 직접 정답 입력
-    // 과목 선택 변경
-    onSubjectChange(select) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const idx = parseInt(select.dataset.roi);
-        const s = imgObj.rois[idx].settings;
-
-        if (select.value === '__new__') {
-            // 새 과목 추가 → 과목 관리 모달 열기
-            select.value = s.subjectName || '';
-            if (typeof SubjectManager !== 'undefined') SubjectManager.openModal();
-            return;
-        }
-
-        s.subjectName = select.value;
-        // 과목 이름으로 찾아서 정답 자동 적용
-        if (s.subjectName && typeof SubjectManager !== 'undefined') {
-            const subj = SubjectManager.findByName(s.subjectName);
-            if (subj) {
-                s.answerKey = subj.answers || '';
-                if (subj.numQuestions) s.numQuestions = subj.numQuestions;
-                Toast.info(`과목 "${subj.name}" 적용됨 (${subj.numQuestions}문항)`);
-            }
-        }
-        imgObj.results = null; imgObj.gradeResult = null;
-        ImageManager.updateList(); this.updateRightPanel();
-    },
-
     onDirectAnswerChange(input) {
         const imgObj = App.getCurrentImage(); if (!imgObj) return;
         const idx = parseInt(input.dataset.roi);
-        imgObj.rois[idx].settings.answerKey = input.value.trim();
+        const roi = imgObj.rois[idx];
+        const s = roi.settings;
+        s.answerKey = input.value.trim();
+
+        // 영역 이름이 있으면 전역 과목으로 자동 저장/업데이트
+        if (s.name && s.name.trim() && typeof SubjectManager !== 'undefined') {
+            const name = s.name.trim();
+            const subjects = SubjectManager.getSubjects();
+            let subj = subjects.find(x => x.name === name);
+            if (subj) {
+                subj.answers = s.answerKey;
+                subj.numQuestions = s.numQuestions || subj.numQuestions;
+            } else {
+                subjects.push({
+                    code: '',
+                    name: name,
+                    numQuestions: s.numQuestions || 20,
+                    scorePerQuestion: 5,
+                    answers: s.answerKey
+                });
+            }
+            SubjectManager.saveToStorage();
+            // 같은 이름의 다른 ROI에도 전파
+            App.state.images.forEach(img => {
+                img.rois.forEach(r => {
+                    if (r !== roi && r.settings && r.settings.type === 'subject_answer' && r.settings.name === name) {
+                        r.settings.answerKey = s.answerKey;
+                        img.gradeResult = null;
+                    }
+                });
+            });
+        }
+
         imgObj.gradeResult = null;
         ImageManager.updateList();
+        this.updateRightPanel();
+    },
+
+    // subject_answer ROI 이름 변경 시 과목 매칭/자동 로드
+    _syncRoiNameAsSubject(roi) {
+        const s = roi.settings;
+        if (!s || s.type !== 'subject_answer') return;
+        const name = (s.name || '').trim();
+        if (!name) return;
+        if (typeof SubjectManager === 'undefined') return;
+        const matched = SubjectManager.findByName(name);
+        if (matched) {
+            // 기존 과목이면 정답/문항수 자동 로드 (choiceLabels는 ROI 고유값 유지)
+            if (matched.answers) s.answerKey = matched.answers;
+            if (matched.numQuestions) s.numQuestions = matched.numQuestions;
+            Toast.info(`과목 "${name}" 자동 매칭됨`);
+        }
     },
 
     onNameChange(input) {
@@ -982,10 +1002,11 @@ const UI = {
         const idx = parseInt(input.dataset.roi);
         if (imgObj.rois[idx]) {
             imgObj.rois[idx].settings.name = input.value;
+            this._syncRoiNameAsSubject(imgObj.rois[idx]);
+            imgObj.results = null; imgObj.gradeResult = null;
             CanvasManager.render();
-            // 영역 목록의 이름도 동기화
-            const listInput = document.querySelector(`#roi-list-items .roi-list-name-input[data-roi="${idx}"]`);
-            if (listInput && listInput !== input) listInput.value = input.value;
+            ImageManager.updateList();
+            this.updateRightPanel();
         }
     },
 
@@ -994,6 +1015,8 @@ const UI = {
         const idx = parseInt(input.dataset.roi);
         if (imgObj.rois[idx]) {
             imgObj.rois[idx].settings.name = input.value;
+            this._syncRoiNameAsSubject(imgObj.rois[idx]);
+            imgObj.gradeResult = null;
             CanvasManager.render();
             // 상세 카드의 이름도 동기화
             const cardInput = document.querySelector(`.roi-card[data-roi-index="${idx}"] .roi-name-input`);
