@@ -8,8 +8,30 @@ const Shortcuts = {
     },
 
     handle(e) {
+        // ESC: 열린 ROI 설정 팝업이 있으면 닫기 (인풋 포커스 상관없이)
+        if (e.key === 'Escape') {
+            const roiPopup = document.getElementById('roi-settings-popup');
+            if (roiPopup) {
+                e.preventDefault();
+                UI.closeRoiSettingsPopup();
+                return;
+            }
+        }
+
         const tag = e.target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        const isInputFocus = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
+
+        // Delete: 영역 선택되어 있으면 input 포커스와 무관하게 삭제 가능 (단, 텍스트 입력 중이 아닐 때)
+        // 텍스트 입력 중에는 기존대로 무시
+        if (e.key === 'Delete' && !isInputFocus && CanvasManager.selectedRoiIdx >= 0) {
+            e.preventDefault();
+            CanvasManager.deleteRoi(CanvasManager.selectedRoiIdx);
+            CanvasManager.selectedRoiIdx = -1;
+            UI.updateRightPanel();
+            return;
+        }
+
+        if (isInputFocus) return;
         if (document.querySelector('.modal-overlay')) return;
 
         const ctrl = e.ctrlKey || e.metaKey;
@@ -40,14 +62,7 @@ const Shortcuts = {
             CanvasManager.zoomFit();
         } else if (e.key === 'Delete') {
             e.preventDefault();
-            // 선택된 ROI 삭제
-            if (CanvasManager.selectedRoiIdx >= 0) {
-                CanvasManager.deleteRoi(CanvasManager.selectedRoiIdx);
-                CanvasManager.selectedRoiIdx = -1;
-                UI.updateRightPanel();
-                return;
-            }
-            // 선택된 이미지 삭제
+            // 선택된 이미지 삭제 (ROI가 없을 때만)
             if (App.state.currentIndex >= 0) {
                 ImageManager.deleteImage(App.state.currentIndex);
             }

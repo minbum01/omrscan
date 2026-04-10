@@ -186,6 +186,7 @@ const CanvasManager = {
             for (let i = imgObj.rois.length - 1; i >= 0; i--) {
                 const mode = this.hitTestRoi(pos, imgObj.rois[i]);
                 if (mode) {
+                    const wasSelected = this.selectedRoiIdx === i;
                     this.selectedRoiIdx = i;
                     this.roiDragMode = mode;
                     this.roiDragStartX = pos.x;
@@ -193,6 +194,11 @@ const CanvasManager = {
                     this.roiOriginal = { ...imgObj.rois[i] };
                     e.preventDefault();
                     this.render();
+                    // 새로 선택된 ROI면 우측 패널 리렌더 + 해당 카드로 스크롤
+                    if (!wasSelected) {
+                        UI.updateRightPanel();
+                        UI.scrollToRoiCard(i);
+                    }
                     return;
                 }
             }

@@ -686,8 +686,11 @@ const UI = {
         CanvasManager.selectedRoiIdx = idx;
         CanvasManager.render();
         this.updateRightPanel();
+        this.scrollToRoiCard(idx);
+    },
 
-        // 상세 카드로 스크롤
+    // 우측 패널에서 해당 ROI 카드로 스크롤
+    scrollToRoiCard(idx) {
         setTimeout(() => {
             const card = document.querySelector(`.roi-card[data-roi-index="${idx}"]`);
             if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1014,8 +1017,7 @@ const UI = {
             </div>
         `;
         document.body.appendChild(overlay);
-        // 배경 클릭으로 닫기
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) UI.closeRoiSettingsPopup(); });
+        // 배경 클릭으로는 닫히지 않음 (취소/확인/ESC 만 허용)
     },
 
     closeRoiSettingsPopup() {
@@ -1077,11 +1079,7 @@ const UI = {
             s.numChoices = s.choiceLabels.length;
         }
 
-        if (orientChanged) {
-            s.numQuestions = 0;
-            s.numChoices = 0;
-        }
-
+        // 방향이 바뀌어도 사용자가 입력한 문항수/선택지수는 유지
         imgObj.results = null; imgObj.gradeResult = null;
         this.closeRoiSettingsPopup();
         CanvasManager.render();
@@ -1094,13 +1092,10 @@ const UI = {
         const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[roiIdx]) return;
         const s = imgObj.rois[roiIdx].settings;
 
-        // 방향만 변경, 나머지는 재분석에서 새로 감지
+        // 방향만 변경, 문항수/선택지수는 유지 (사용자 입력값 보존)
         s.orientation = value;
-        s.numQuestions = 0; // 0 = 자동감지
-        s.numChoices = 0;
         imgObj.results = null; imgObj.gradeResult = null;
         CanvasManager.render(); ImageManager.updateList(); this.updateRightPanel();
-        // 새 방향으로 처음부터 분석
         setTimeout(() => CanvasManager.runAnalysis(), 100);
     },
 
