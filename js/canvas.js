@@ -436,51 +436,16 @@ const CanvasManager = {
                 const numQ = s.numQuestions || 0;
                 const numC = s.numChoices || 0;
                 const bSize = s.bubbleSize || this.bubbleSize || 0;
-                const stretch = s.stretchRatio || 1.0;
-                const useStretch = stretch > 1.0;
                 const elongatedMode = s.elongatedMode || false;
                 const elongatedThresholds = elongatedMode ? {
                     minHW: s.elongatedMinHW != null ? s.elongatedMinHW : 1.4,
                     maxHW: s.elongatedMaxHW != null ? s.elongatedMaxHW : 5.0,
                     minFill: s.elongatedMinFill != null ? s.elongatedMinFill : 0.15,
-                    maxFill: s.elongatedMaxFill != null ? s.elongatedMaxFill : 0.95,
+                    maxFill: 1.0,
                 } : null;
 
-                // 가로 스트레칭: 원본 ROI를 임시 캔버스에 늘려서 그리고 그 픽셀을 분석
-                let imageData;
-                if (useStretch) {
-                    const dstW = Math.round(roi.w * stretch);
-                    const dstH = Math.round(roi.h);
-                    const off = document.createElement('canvas');
-                    off.width = dstW; off.height = dstH;
-                    const offCtx = off.getContext('2d', { willReadFrequently: true });
-                    // 원본 이미지에서 ROI 영역만 늘려서 복사
-                    const srcImg = this._getIntensifiedImage(imgObj) || imgObj.imgElement;
-                    offCtx.drawImage(srcImg, roi.x, roi.y, roi.w, roi.h, 0, 0, dstW, dstH);
-                    imageData = offCtx.getImageData(0, 0, dstW, dstH);
-                } else {
-                    imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
-                }
-
-                // 스트레칭 시 offsetX/Y=0 (ROI 내부 상대좌표로 분석)
-                const analysisOffsetX = useStretch ? 0 : roi.x;
-                const analysisOffsetY = useStretch ? 0 : roi.y;
-                const analysis = OmrEngine.analyzeROI(imageData, analysisOffsetX, analysisOffsetY, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
-
-                // 스트레칭 역변환: 상대좌표 → 원본 절대좌표로 복원
-                if (useStretch) {
-                    analysis.rows.forEach(row => {
-                        if (row.blobs) {
-                            row.blobs.forEach(blob => {
-                                blob.cx = blob.cx / stretch + roi.x;
-                                blob.cy = blob.cy + roi.y;
-                                blob.w = Math.round(blob.w / stretch);
-                                blob.x = Math.round(blob.cx - blob.w / 2);
-                                blob.y = Math.round(blob.cy - blob.h / 2);
-                            });
-                        }
-                    });
-                }
+                const imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
 
                 // 버블 크기만 저장 (좌표는 이미지마다 새로 찾음)
                 if (bSize > 0) s.bubbleSize = bSize;
@@ -905,46 +870,6 @@ const CanvasManager = {
             ctx.fillText(text, labelX + 8, labelY + 18);
             // 라벨 영역 저장 (클릭 감지용)
             roi._labelRect = { x: labelX, y: labelY, w: labelW, h: labelH };
-
-            // 가로 스트레칭 미리보기
-            const s = roi.settings || {};
-            const stretch = s.stretchRatio || 1.0;
-            if (s.showStretchPreview && stretch > 1.0) {
-                try {
-                    // ROI 영역 픽셀을 임시 캔버스에 복사 → 가로로 늘림 → 원본 옆에 그림
-                    const srcImg = intensified || imgObj.imgElement;
-                    const dstW = Math.round(roi.w * stretch);
-                    const dstH = Math.round(roi.h);
-                    // 미리보기 위치: ROI 우측 옆 (10px 간격)
-                    const previewX = roi.x + roi.w + 10;
-                    const previewY = roi.y;
-
-                    // 원본 ROI → 늘려서 복사
-                    ctx.save();
-                    // 배경 박스
-                    ctx.fillStyle = '#FFFFFF';
-                    ctx.fillRect(previewX - 2, previewY - 2, dstW + 4, dstH + 4);
-                    // 스트레칭 그리기
-                    ctx.drawImage(srcImg, roi.x, roi.y, roi.w, roi.h, previewX, previewY, dstW, dstH);
-                    // 미리보기 테두리 (주황색)
-                    ctx.strokeStyle = '#f97316';
-                    ctx.lineWidth = 3;
-                    ctx.strokeRect(previewX, previewY, dstW, dstH);
-                    ctx.setLineDash([]);
-                    // 라벨
-                    ctx.font = 'bold 13px sans-serif';
-                    ctx.fillStyle = '#f97316';
-                    ctx.fillText(`미리보기 (×${stretch})`, previewX, previewY - 4);
-                    ctx.restore();
-
-                    // 미리보기 영역 좌표 저장 (분석 시 이 영역에 결과 표시)
-                    roi._previewRect = { x: previewX, y: previewY, w: dstW, h: dstH, stretch };
-                } catch (e) {
-                    console.warn('미리보기 렌더 실패:', e);
-                }
-            } else {
-                roi._previewRect = null;
-            }
         });
 
         // 드래그 중

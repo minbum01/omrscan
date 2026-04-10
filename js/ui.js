@@ -29,8 +29,6 @@ const UI = {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical', choicePreset: '1-5',
             choiceLabels: ['1','2','3','4','5'], customLabels: '',
-            stretchRatio: 1.0,            // 가로 스트레칭 비율 (1.0=없음, 2.0=2배 늘림)
-            showStretchPreview: false,    // 스트레칭 미리보기 표시 여부
             elongatedMode: false,         // 길쭉 버블 분석 모드 (h/w >= minHW 필터)
             elongatedMinHW: 1.4,          // 길쭉 비율 하한
             elongatedMaxHW: 5.0,          // 길쭉 비율 상한
@@ -272,27 +270,6 @@ const UI = {
                     ` : ''}
                 </div>`;
 
-                // 가로 스트레칭 (세로 길쭉 버블용 — 백업)
-                html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
-                    <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
-                        <span class="roi-field-label" style="white-space:nowrap;">가로 스트레칭</span>
-                        <input type="number" class="roi-field-input" value="${s.stretchRatio || 1.0}" min="1.0" max="5.0" step="0.1"
-                            style="width:55px; text-align:center;"
-                            data-roi="${idx}" data-field="stretchRatio" onchange="UI.onStretchChange(this)">
-                        <span style="font-size:10px; color:var(--text-muted);">배</span>
-                        <label style="display:flex; align-items:center; gap:3px; font-size:10px; cursor:pointer; margin-left:6px;">
-                            <input type="checkbox" ${s.showStretchPreview ? 'checked' : ''}
-                                data-roi="${idx}" onchange="UI.onPreviewChange(this)">
-                            미리보기
-                        </label>
-                    </div>
-                </div>`;
-
-                // 수동 그리드 버튼
-                html += `<div style="padding:4px 8px; border-top:1px solid var(--border-light);">
-                    <button class="btn btn-sm" style="width:100%; font-size:11px; padding:4px;"
-                        onclick="UI.createManualGrid(${idx})">균등 그리드 생성</button>
-                </div>`;
 
                 html += `</div>`; // roi-card-settings 닫기
 
@@ -768,23 +745,6 @@ const UI = {
         Toast.info(`영역 ${dragIdx + 1} → ${dropIdx + 1} 이동`);
     },
 
-    onStretchChange(input) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const idx = parseInt(input.dataset.roi);
-        const val = parseFloat(input.value) || 1.0;
-        imgObj.rois[idx].settings.stretchRatio = Math.max(1.0, Math.min(5.0, val));
-        imgObj.results = null; imgObj.gradeResult = null;
-        CanvasManager.render();
-        ImageManager.updateList(); this.updateRightPanel();
-    },
-
-    onPreviewChange(checkbox) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const idx = parseInt(checkbox.dataset.roi);
-        imgObj.rois[idx].settings.showStretchPreview = checkbox.checked;
-        CanvasManager.render();
-    },
-
     onElongatedModeChange(checkbox) {
         const imgObj = App.getCurrentImage(); if (!imgObj) return;
         const idx = parseInt(checkbox.dataset.roi);
@@ -1142,41 +1102,6 @@ const UI = {
         CanvasManager.render(); ImageManager.updateList(); this.updateRightPanel();
         // 새 방향으로 처음부터 분석
         setTimeout(() => CanvasManager.runAnalysis(), 100);
-    },
-
-    // 수동 그리드 생성: ROI를 numQ × numC로 균등 분할
-    createManualGrid(roiIdx) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const roi = imgObj.rois[roiIdx]; if (!roi) return;
-        const s = roi.settings || UI.defaultSettings();
-        const numQ = s.numQuestions || 5;
-        const numC = s.numChoices || 4;
-        const isVert = s.orientation === 'vertical';
-
-        const qSize = isVert ? roi.h : roi.w;
-        const cSize = isVert ? roi.w : roi.h;
-        const qPositions = Array.from({ length: numQ }, (_, i) => (i + 0.5) * qSize / numQ);
-        const cPositions = Array.from({ length: numC }, (_, i) => (i + 0.5) * cSize / numC);
-        const qGap = qSize / numQ;
-        const cGap = cSize / numC;
-
-        s.grid = { qPositions, cPositions, sampleW: cGap * 0.7, sampleH: qGap * 0.7 };
-        imgObj.results = null; imgObj.gradeResult = null;
-        console.log(`[수동그리드] 영역${roiIdx+1}: ${numQ}×${numC} 균등분할 생성`);
-
-        // 바로 분석 실행
-        this.updateRightPanel();
-        CanvasManager.runAnalysis();
-    },
-
-    // 그리드 초기화 (자동감지로 복귀)
-    clearGrid(roiIdx) {
-        const imgObj = App.getCurrentImage(); if (!imgObj) return;
-        const roi = imgObj.rois[roiIdx]; if (!roi) return;
-        delete roi.settings.grid;
-        imgObj.results = null; imgObj.gradeResult = null;
-        this.updateRightPanel();
-        CanvasManager.render();
     },
 
     onSettingChange(input) {
