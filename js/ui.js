@@ -65,10 +65,18 @@ const UI = {
 
         title.textContent = 'OMR 판독';
 
-        // 영역 목록 (상단 고정)
-        this.renderRoiListPanel(imgObj);
+        // 영역 목록 상단 패널 제거 (이제 탭으로 이동)
+        const oldListPanel = document.getElementById('roi-list-panel');
+        if (oldListPanel) oldListPanel.remove();
 
         this.renderCombinedPanel(panel, imgObj);
+    },
+
+    // 영역 목록 탭 펼침 상태
+    _roiListTabOpen: false,
+    toggleRoiListTab() {
+        this._roiListTabOpen = !this._roiListTabOpen;
+        this.updateRightPanel();
     },
 
     // =========================================
@@ -91,11 +99,43 @@ const UI = {
             </div>`;
         }
 
-        // 상단 버튼
-        html += `<div style="display:flex; gap:6px; margin-bottom:12px;">
+        // 상단 버튼 (영역 추가 / 영역 목록 / 양식 불러오기)
+        const listOpen = this._roiListTabOpen;
+        html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
             <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
+            <button class="btn btn-sm ${listOpen ? 'btn-primary' : ''}" onclick="UI.toggleRoiListTab()" style="flex:1;">
+                영역 목록 ${imgObj.rois.length > 0 ? `(${imgObj.rois.length})` : ''}
+            </button>
             <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
         </div>`;
+
+        // 영역 목록 탭 펼침 시 내용 표시
+        if (listOpen && imgObj.rois.length > 0) {
+            html += `<div style="margin-bottom:12px; padding:6px; background:var(--bg-input); border-radius:6px;">`;
+            imgObj.rois.forEach((roi, idx) => {
+                this.ensureSettings(roi);
+                const s = roi.settings;
+                const name = s.name || `영역 ${idx + 1}`;
+                const typeInfo = this.ROI_TYPES[s.type] || this.ROI_TYPES['subject_answer'];
+                const orient = s.orientation === 'horizontal' ? '가로' : '세로';
+                const isActive = idx === (typeof CanvasManager !== 'undefined' ? CanvasManager.selectedRoiIdx : -1);
+                html += `<div class="roi-list-item ${isActive ? 'active' : ''}" data-roi-idx="${idx}"
+                    draggable="true"
+                    ondragstart="UI.onRoiDragStart(event, ${idx})"
+                    ondragover="UI.onRoiDragOver(event, ${idx})"
+                    ondragleave="UI.onRoiDragLeave(event)"
+                    ondrop="UI.onRoiDrop(event, ${idx})">
+                    <span class="drag-handle">☰</span>
+                    <span class="roi-list-num">${idx + 1}</span>
+                    <input class="roi-list-name-input" type="text" value="${this.esc(s.name)}"
+                        placeholder="영역 ${idx + 1}" data-roi="${idx}"
+                        onclick="event.stopPropagation()"
+                        onchange="UI.onRoiListNameChange(this)">
+                    <span class="roi-list-meta" onclick="UI.onRoiListClick(${idx})">${typeInfo.icon} ${orient}·${s.numQuestions}</span>
+                </div>`;
+            });
+            html += `</div>`;
+        }
 
         if (imgObj.rois.length === 0) {
             html += `<div class="guide-text" style="padding:20px 16px;">
