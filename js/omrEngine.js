@@ -56,7 +56,8 @@ const OmrEngine = {
         }
         if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0 };
         const localMean = brightSum / total;
-        const localThreshold = localMean * 0.75;
+        // 절대 최소 기준 30 — 완전히 까맣게 칠한 영역이 상대 기준으로는 감지 안 되는 버그 방지
+        const localThreshold = Math.max(localMean * 0.75, 30);
         let darkCount = 0, centerDark = 0, centerTotal = 0;
         const cmx = Math.round(sw * 0.25), cmy = Math.round(sh * 0.25);
         for (let yy = 0; yy < sh; yy++) {
