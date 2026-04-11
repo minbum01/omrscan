@@ -252,18 +252,7 @@ const UI = {
 
                 // 과목 선택 버튼 (기존 과목명 + 새 과목)
                 if (s.type === 'subject_answer') {
-                    const subjSet = new Set();
-                    (App.state.subjects || []).forEach(sub => { if (sub.name) subjSet.add(sub.name); });
-                    imgObj.rois.forEach(r => { if (r.settings && r.settings.type === 'subject_answer' && r.settings.name) subjSet.add(r.settings.name); });
-                    if (subjSet.size > 0) {
-                        html += `<div style="padding:4px 8px; display:flex; flex-wrap:wrap; gap:3px; border-bottom:1px solid var(--border-light);">`;
-                        [...subjSet].forEach(name => {
-                            const isActive = s.name === name;
-                            html += `<button class="btn btn-sm" style="font-size:10px; padding:2px 8px; ${isActive ? 'background:var(--blue); color:#fff;' : ''}"
-                                onclick="UI.selectSubjectForRoi(${idx}, '${this.esc(name)}')">${this.esc(name)}</button>`;
-                        });
-                        html += `</div>`;
-                    }
+                    html += this._renderSubjectButtons(idx, s.name, imgObj);
                 }
 
                 // 방향 토글 (모든 타입 공통)
@@ -963,6 +952,26 @@ const UI = {
     },
 
     // 직접 정답 입력
+    // 과목 버튼 행 렌더 (카드 + 팝업 공용)
+    _renderSubjectButtons(roiIdx, currentName, imgObj) {
+        const subjSet = new Set();
+        (App.state.subjects || []).forEach(sub => { if (sub.name) subjSet.add(sub.name); });
+        if (imgObj) imgObj.rois.forEach(r => { if (r.settings && r.settings.type === 'subject_answer' && r.settings.name) subjSet.add(r.settings.name); });
+
+        let html = `<div style="padding:4px 8px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; border-bottom:1px solid var(--border-light);">`;
+        if (subjSet.size > 0) {
+            [...subjSet].forEach(name => {
+                const isActive = currentName === name;
+                html += `<button class="btn btn-sm" style="font-size:10px; padding:2px 8px; ${isActive ? 'background:var(--blue); color:#fff;' : ''}"
+                    onclick="UI.selectSubjectForRoi(${roiIdx}, '${this.esc(name)}')">${this.esc(name)}</button>`;
+            });
+        } else {
+            html += `<span style="font-size:10px; color:var(--text-muted);">과목 없음 — 이름 입력 시 자동 등록</span>`;
+        }
+        html += `</div>`;
+        return html;
+    },
+
     // 과목 버튼 클릭 → 이름 설정 + startNum 자동 계산
     selectSubjectForRoi(idx, subjectName) {
         const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[idx]) return;
@@ -983,10 +992,19 @@ const UI = {
         // 과목 정답 자동 로드
         this._loadAnswersFromSubject(imgObj.rois[idx]);
 
+        // 팝업이 열려있으면 팝업 필드도 갱신
+        const rpName = document.getElementById('rp-name');
+        if (rpName) rpName.value = subjectName;
+        const rpStart = document.getElementById('rp-start');
+        if (rpStart) rpStart.value = s.startNum;
+        const rpBtns = document.getElementById('rp-subject-btns');
+        if (rpBtns) rpBtns.innerHTML = this._renderSubjectButtons(idx, subjectName, imgObj);
+
         imgObj.results = null; imgObj.gradeResult = null;
         CanvasManager.render();
         ImageManager.updateList();
-        this.updateRightPanel();
+        // 팝업이 없을 때만 패널 전체 리렌더 (팝업 있으면 팝업 유지)
+        if (!document.getElementById('roi-settings-popup')) this.updateRightPanel();
         Toast.info(`"${subjectName}" 선택됨 (시작번호: ${s.startNum})`);
     },
 
@@ -1141,6 +1159,7 @@ const UI = {
                             `<option value="${k}" ${s.type === k ? 'selected' : ''}>${t.icon} ${t.label}</option>`
                         ).join('')}</select>
                     </div>
+                    <div id="rp-subject-btns">${this._renderSubjectButtons(roiIdx, s.name, imgObj)}</div>
                     <div class="roi-popup-field">
                         <label>과목/영역명</label>
                         <input type="text" id="rp-name" value="${this.esc(s.name)}" placeholder="과목명 입력 또는 선택"
