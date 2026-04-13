@@ -7,6 +7,8 @@ const Scoring = {
     _defaultMaxQ: 40,
     _showColumnSettings: false,
     _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 성적 내림차순
+    _currentSubject: null,   // OMR 결과표: 선택된 과목 (null = 자동으로 첫 과목 사용)
+    _itemSubject: null,      // 문항분석표: 선택된 과목
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
@@ -323,6 +325,8 @@ const Scoring = {
         const validRows = rows.filter(r => !r._noOmr);
         if (validRows.length === 0) return null;
         const N = validRows.length;
+
+        // 전체 합산 (기존 동작 유지: 단일 과목일 땐 r.score == totalScore)
         const scores = validRows.map(r => r.score);
         const mean = scores.reduce((s, v) => s + v, 0) / N;
         const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / N;
@@ -335,7 +339,24 @@ const Scoring = {
             r.percentile = ((N - r.rank) / N) * 100;
         });
 
-        return { N, mean, stdDev, max: Math.max(...scores), min: Math.min(...scores) };
+        // 과목별 독립 통계 (각 r.subjects[subj]에 rank/tScore/percentile 기록)
+        const subjectNames = this.getSubjectList(validRows);
+        subjectNames.forEach(subj => {
+            const subScores = validRows.map(r => (r.subjects[subj] ? r.subjects[subj].score : 0));
+            const subMean = subScores.reduce((s, v) => s + v, 0) / N;
+            const subVar = subScores.reduce((s, v) => s + (v - subMean) ** 2, 0) / N;
+            const subStd = Math.sqrt(subVar);
+            const subSorted = [...subScores].sort((a, b) => b - a);
+            validRows.forEach(r => {
+                const s = r.subjects[subj];
+                if (!s) return;
+                s.rank = subSorted.filter(v => v > s.score).length + 1;
+                s.tScore = subStd > 0 ? ((s.score - subMean) / subStd) * 20 + 100 : 100;
+                s.percentile = ((N - s.rank) / N) * 100;
+            });
+        });
+
+        return { N, mean, stdDev, max: Math.max(...scores), min: Math.min(...scores), subjects: subjectNames };
     },
 
     // ==========================================
@@ -408,28 +429,57 @@ const Scoring = {
         SubjectManager._downloadFile(csv, `${name}_${n}_${d}.csv`);
     },
 
-    downloadOMR(rows) {
-        if (!rows.length) return;
-        const maxQ = this._defaultMaxQ;
+    // rows + 선택 과목 → CSV 문자열
+    _buildOMRCsv(rows, subj) {
+        const proj = rows.map(r => r._noOmr ? r : this._projectRow(r, subj));
+        // 이 과목(또는 전체)에서 등장한 문항번호 추출
+        const qSet = new Set();
+        proj.forEach(r => (r.answers || []).forEach(a => qSet.add(a.q)));
+        const qNums = [...qSet].sort((a, b) => a - b);
+        const maxQ = qNums.length ? qNums[qNums.length - 1] : this._defaultMaxQ;
+        const qs = qNums.length ? qNums : Array.from({ length: maxQ }, (_, i) => i + 1);
+
         let csv = '응시번호,성명,점수';
-        for (let i = 1; i <= maxQ; i++) csv += `,${i}번`;
-        for (let i = 1; i <= maxQ; i++) csv += `,${i}번정오`;
+        qs.forEach(q => csv += `,${q}번`);
+        qs.forEach(q => csv += `,${q}번정오`);
         csv += '\n';
-        rows.forEach(r => {
+        proj.forEach(r => {
             csv += `${r.examNo},${r.name},${r._noOmr ? '' : r.score}`;
-            for (let i = 1; i <= maxQ; i++) {
-                if (r._noOmr) { csv += ','; continue; }
-                const a = r.answers.find(x => x.q === i);
+            qs.forEach(q => {
+                if (r._noOmr) { csv += ','; return; }
+                const a = r.answers.find(x => x.q === q);
                 csv += `,${a ? a.markedLabel : ''}`;
-            }
-            for (let i = 1; i <= maxQ; i++) {
-                if (r._noOmr) { csv += ','; continue; }
-                const a = r.answers.find(x => x.q === i);
+            });
+            qs.forEach(q => {
+                if (r._noOmr) { csv += ','; return; }
+                const a = r.answers.find(x => x.q === q);
                 csv += `,${a ? (a.isCorrect ? 'O' : 'X') : ''}`;
-            }
+            });
             csv += '\n';
         });
-        this._dl(csv, 'OMR결과표');
+        return csv;
+    },
+
+    // 현재 과목 CSV
+    downloadOMR(rows) {
+        if (!rows.length) return;
+        const subj = this._resolveSubject(rows, this._currentSubject);
+        const csv = this._buildOMRCsv(rows, subj);
+        this._dl(csv, subj ? `OMR결과표_${subj}` : 'OMR결과표');
+    },
+
+    // 전체 과목 CSV (과목별 파일)
+    downloadAllOMR(rows) {
+        if (!rows.length) return;
+        const list = this.getSubjectList(rows);
+        if (list.length === 0) {
+            this._dl(this._buildOMRCsv(rows, null), 'OMR결과표');
+            return;
+        }
+        list.forEach(subj => {
+            const csv = this._buildOMRCsv(rows, subj);
+            this._dl(csv, `OMR결과표_${subj}`);
+        });
     },
 
     downloadReport(rows) {
@@ -531,12 +581,63 @@ const Scoring = {
     // ==========================================
     // OMR 결과표
     // ==========================================
-    _renderOMR(rows) {
+    // 선택된 과목 기준으로 row의 값들을 투영 (score/answers/correctCount/rank/tScore/percentile)
+    _projectRow(r, subj) {
+        if (!subj || !r.subjects || !r.subjects[subj]) return r;
+        const s = r.subjects[subj];
+        return Object.assign({}, r, {
+            score: s.score,
+            correctCount: s.correctCount,
+            wrongCount: s.wrongCount,
+            totalPossible: s.totalPossible,
+            answers: s.answers,
+            rank: s.rank,
+            tScore: s.tScore,
+            percentile: s.percentile,
+        });
+    },
+
+    // OMR/문항분석용 현재 과목 결정 (없으면 첫 과목 자동 선택)
+    _resolveSubject(rows, stored) {
+        const list = this.getSubjectList(rows);
+        if (list.length === 0) return null;
+        if (stored && list.includes(stored)) return stored;
+        return list[0];
+    },
+
+    setCurrentSubject(name) {
+        this._currentSubject = name || null;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    setItemSubject(name) {
+        this._itemSubject = name || null;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    _subjectDropdown(rows, storedField, handler) {
+        const list = this.getSubjectList(rows);
+        if (list.length === 0) return '';
+        const current = this._resolveSubject(rows, this[storedField]);
+        const opts = list.map(s => `<option value="${s}" ${s === current ? 'selected' : ''}>${s}</option>`).join('');
+        return `<label style="font-size:11px; display:flex; align-items:center; gap:6px;">
+            <span style="font-weight:600; color:var(--text-muted);">과목:</span>
+            <select onchange="Scoring.${handler}(this.value)"
+                style="padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:6px; background:white; font-weight:600;">
+                ${opts}
+            </select>
+        </label>`;
+    },
+
+    _renderOMR(rowsOrig) {
         const cols = this._getOMRColumns().filter(c => c.visible);
+        const subj = this._resolveSubject(rowsOrig, this._currentSubject);
+        const rows = rowsOrig.map(r => r._noOmr ? r : this._projectRow(r, subj));
 
         // 상단 도구
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
             <div style="display:flex; align-items:center; gap:8px;">
+                ${this._subjectDropdown(rowsOrig, '_currentSubject', 'setCurrentSubject')}
                 <label style="font-size:11px;">문항수:
                     <input type="number" value="${this._defaultMaxQ}" min="1" max="100" style="width:50px; padding:3px; font-size:11px; border:1px solid var(--border); border-radius:4px;"
                         onchange="Scoring.setMaxQ(this.value)">
@@ -546,7 +647,10 @@ const Scoring = {
                     ${this._showColumnSettings ? '설정 닫기' : '열 설정'}
                 </button>
             </div>
-            <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
+            <div style="display:flex; gap:6px;">
+                <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">현재 과목 CSV</button>
+                <button class="btn btn-sm" onclick="Scoring.downloadAllOMR(Scoring.collectData())" style="font-size:11px;">전체 과목 CSV</button>
+            </div>
         </div>`;
 
         // 뱃지 영역 (공용 함수)
