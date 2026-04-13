@@ -23,7 +23,7 @@ const Scoring = {
         { id: 'rate_high', label: '정답률 이상', type: 'rate', op: '>=', value: 80, color: '#bbf7d0', on: false },
         { id: 'disc_low', label: '변별도 이하', type: 'disc', op: '<=', value: 0.1, color: '#fef08a', on: false },
         { id: 'disc_neg', label: '변별도 음수', type: 'disc', op: '<', value: 0, color: '#fecaca', on: false },
-        { id: 'attractive', label: '매력적 오답', type: 'attractive', color: '#fed7aa', on: false },
+        { id: 'attractive', label: '매력적 오답', type: 'attractive', color: '#fed7aa', on: false, desc: '정답보다 많이 선택된 오답 선택지' },
     ],
 
     // OMR 결과표 열 설정 (사용자 커스터마이징)
@@ -970,7 +970,7 @@ const Scoring = {
                 ${this._hlRules.map((rule, ri) => `
                 <div style="display:flex; align-items:center; gap:4px; padding:3px 8px; border:1px solid ${rule.on ? rule.color : 'var(--border)'}; border-radius:6px; background:${rule.on ? rule.color+'33' : 'white'}; font-size:10px;">
                     <input type="checkbox" ${rule.on ? 'checked' : ''} onchange="Scoring._hlRules[${ri}].on=this.checked; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
-                    <span style="font-weight:600;">${rule.label}</span>
+                    <span style="font-weight:600;" ${rule.desc ? `title="${rule.desc}"` : ''}>${rule.label}${rule.desc ? ' ℹ' : ''}</span>
                     ${rule.value !== undefined && rule.type !== 'attractive' ? `
                         <input type="number" value="${rule.value}" step="${rule.type==='disc' ? '0.01' : '1'}" style="width:45px; padding:1px 3px; font-size:10px; border:1px solid var(--border); border-radius:3px; text-align:center;"
                             onchange="Scoring._hlRules[${ri}].value=parseFloat(this.value); Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
