@@ -553,11 +553,12 @@ const Scoring = {
                     ondragleave="Scoring._onBadgeDragLeave(event);"
                     ondrop="Scoring._onBadgeDrop(event,'${toggleFn}','active');">
                     ${active.filter(c => c.type === 'info' || c.type === 'custom').map(c => `<span class="scoring-badge-item active ${this._highlightCol === c.id ? 'highlighted' : ''}"
-                        draggable="true" data-col-id="${c.id}"
+                        draggable="true" data-col-id="${c.id}" data-toggle-fn="${toggleFn}" tabindex="0"
                         ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
                         ondragend="this.classList.remove('dragging')"
                         onclick="Scoring._onBadgeClick('${c.id}')"
-                        ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${c.label}'); if(n){const col=Scoring.${fnName}().find(x=>x.id==='${c.id}'); if(col)col.label=n; Scoring.renderScoringPanel(document.getElementById('scoring-content'));}"
+                        ondblclick="Scoring._startBadgeRename(this,'${c.id}','${toggleFn}')"
+                        onkeydown="if(event.key==='Delete')Scoring._deleteBadge('${c.id}','${toggleFn}')"
                         >${c.label}</span>`).join('')}
                 </div>
             </div>
@@ -669,6 +670,53 @@ const Scoring = {
     _onBadgeClick(colId) {
         this._highlightCol = (this._highlightCol === colId) ? null : colId;
         this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // Delete 키로 뱃지 제거 (비활성화)
+    _deleteBadge(colId, toggleFn) {
+        const cols = this._getColsForToggleFn(toggleFn);
+        const col = cols.find(c => c.id === colId);
+        if (col && col.visible) {
+            col.visible = false;
+            if (this._highlightCol === colId) this._highlightCol = null;
+            this.renderScoringPanel(document.getElementById('scoring-content'));
+        }
+    },
+
+    // 더블클릭 → 인라인 이름 변경 (Electron prompt 미지원 대응)
+    _startBadgeRename(el, colId, toggleFn) {
+        event.stopPropagation();
+        const cols = this._getColsForToggleFn(toggleFn);
+        const col = cols.find(c => c.id === colId);
+        if (!col) return;
+
+        const oldLabel = col.label;
+        const rect = el.getBoundingClientRect();
+
+        // 뱃지를 input으로 교체
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = oldLabel;
+        input.style.cssText = `width:${Math.max(60, oldLabel.length * 12)}px; padding:3px 8px; border-radius:14px; border:2px solid var(--blue); font-size:11px; font-weight:600; text-align:center; outline:none;`;
+        el.textContent = '';
+        el.appendChild(input);
+        el.draggable = false;
+        input.focus();
+        input.select();
+
+        const finish = () => {
+            const newLabel = input.value.trim() || oldLabel;
+            col.label = newLabel;
+            el.draggable = true;
+            this.renderScoringPanel(document.getElementById('scoring-content'));
+        };
+
+        input.addEventListener('blur', finish);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.value = oldLabel; input.blur(); }
+            e.stopPropagation(); // Delete 키 등 전파 방지
+        });
     },
 
     // 성적일람표 열 토글
