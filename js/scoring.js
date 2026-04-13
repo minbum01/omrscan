@@ -129,27 +129,26 @@ const Scoring = {
     },
 
     // ==========================================
-    // 데이터 수집
+    // 데이터 수집 (시험인원 등록 순서 기준)
     // ==========================================
     collectData() {
         const images = App.state.images || [];
         const students = App.state.students || [];
-        const rows = [];
 
+        // 1단계: 이미지에서 OMR 데이터 추출
+        const omrRows = [];
         images.forEach((img, imgIdx) => {
             if (!img.results || !img.gradeResult) return;
 
             const row = {
-                imgIdx,
-                filename: img._originalName || img.name || '',
+                imgIdx, filename: img._originalName || img.name || '',
                 examNo: '', name: '', birthday: '', phone: '', subjectCode: '',
                 etcFields: {},
-                // gradeResult 필드명 매칭
                 score: img.gradeResult.score || 0,
                 totalPossible: img.gradeResult.totalPossible || 0,
                 correctCount: img.gradeResult.correctCount || 0,
                 wrongCount: img.gradeResult.wrongCount || 0,
-                answers: [],
+                answers: [], _matched: false,
             };
 
             img.rois.forEach((roi, roiIdx) => {
@@ -157,7 +156,6 @@ const Scoring = {
                 const res = img.results[roiIdx];
                 if (!res) return;
                 const type = roi.settings.type;
-
                 const digits = (res.rows || []).map(r => {
                     if (r.markedAnswer !== null) {
                         const labels = roi.settings.choiceLabels;
@@ -188,22 +186,53 @@ const Scoring = {
                     if (ans) { ans.isCorrect = d.isCorrect; ans.correctAnswer = d.correctAnswer; }
                 });
             }
-
-            // 시험인원 매칭
-            if (students.length > 0) {
-                const matched = students.find(st =>
-                    (row.examNo && st.examNo && st.examNo === row.examNo) ||
-                    (row.phone && st.phone && st.phone === row.phone)
-                );
-                if (matched) {
-                    row.name = matched.name || '';
-                    if (!row.birthday && matched.birth) row.birthday = matched.birth;
-                    if (!row.phone && matched.phone) row.phone = matched.phone;
-                    if (!row.examNo && matched.examNo) row.examNo = matched.examNo;
-                }
-            }
-            rows.push(row);
+            omrRows.push(row);
         });
+
+        // 2단계: 시험인원 등록 순서 기준으로 정렬
+        if (students.length === 0) return omrRows; // 인원 미등록 시 이미지 순
+
+        const rows = [];
+        const usedOmr = new Set();
+
+        students.forEach(st => {
+            // 인원 → OMR 매칭
+            const matched = omrRows.find((r, i) => {
+                if (usedOmr.has(i)) return false;
+                if (st.examNo && r.examNo && st.examNo === r.examNo) return true;
+                if (st.phone && r.phone && st.phone === r.phone) return true;
+                if (st.birth && r.birthday && st.birth === r.birthday) return true;
+                return false;
+            });
+
+            if (matched) {
+                const idx = omrRows.indexOf(matched);
+                usedOmr.add(idx);
+                // 인원 정보로 보완
+                matched.name = st.name || matched.name;
+                if (!matched.birthday && st.birth) matched.birthday = st.birth;
+                if (!matched.phone && st.phone) matched.phone = st.phone;
+                if (!matched.examNo && st.examNo) matched.examNo = st.examNo;
+                matched._matched = true;
+                rows.push(matched);
+            } else {
+                // OMR 없는 인원 → 공란 행
+                rows.push({
+                    imgIdx: -1, filename: '',
+                    examNo: st.examNo || '', name: st.name || '',
+                    birthday: st.birth || '', phone: st.phone || '',
+                    subjectCode: '', etcFields: {},
+                    score: '', totalPossible: '', correctCount: '', wrongCount: '',
+                    answers: [], _matched: false, _noOmr: true,
+                });
+            }
+        });
+
+        // 매칭 안 된 OMR도 추가 (미등록 인원)
+        omrRows.forEach((r, i) => {
+            if (!usedOmr.has(i)) rows.push(r);
+        });
+
         return rows;
     },
 
@@ -211,15 +240,16 @@ const Scoring = {
     // 통계 계산
     // ==========================================
     calcStats(rows) {
-        if (rows.length === 0) return null;
-        const N = rows.length;
-        const scores = rows.map(r => r.score);
+        const validRows = rows.filter(r => !r._noOmr);
+        if (validRows.length === 0) return null;
+        const N = validRows.length;
+        const scores = validRows.map(r => r.score);
         const mean = scores.reduce((s, v) => s + v, 0) / N;
         const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / N;
         const stdDev = Math.sqrt(variance);
 
         const sorted = [...scores].sort((a, b) => b - a);
-        rows.forEach(r => {
+        validRows.forEach(r => {
             r.rank = sorted.filter(s => s > r.score).length + 1;
             r.tScore = stdDev > 0 ? ((r.score - mean) / stdDev) * 20 + 100 : 100;
             r.percentile = ((N - r.rank) / N) * 100;
@@ -232,6 +262,7 @@ const Scoring = {
     // 문항분석
     // ==========================================
     calcItemAnalysis(rows) {
+        rows = rows.filter(r => !r._noOmr);
         if (rows.length === 0) return [];
         const N = rows.length;
         const uPct = this._upperPct / 100;
@@ -463,10 +494,12 @@ const Scoring = {
 
         rows.forEach((r, ri) => {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            html += `<tr style="${bg}">`;
+            const noOmr = r._noOmr;
+            html += `<tr style="${bg} ${noOmr ? 'opacity:0.5;' : ''}">`;
             cols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
                 let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
+                if (noOmr && col.type !== 'info') { val = ''; html += `<td style="${style}">${val}</td>`; return; }
                 if (col.id === 'examNo') val = r.examNo;
                 else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
                 else if (col.id === 'score') { val = r.score; style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
