@@ -242,6 +242,8 @@ const SessionManager = {
                         const imgObj = {
                             name: imgFile.filename,
                             _originalName: imgFile.filename,
+                            // 원본(pristine) 파일명 — 재저장 시 prefix 적용 기준
+                            _pristineName: (savedResult && savedResult.pristineFilename) || imgFile.filename,
                             imgElement: img,
                             thumb,
                             rois: savedResult ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null })) : [],
@@ -291,9 +293,43 @@ const SessionManager = {
 
         const name = this.currentSessionName;
 
+        // 매칭된 값 수집 (파일명 renaming용)
+        // imgIdx → { name, examNo, phone, birthday }
+        const rowByImgIdx = new Map();
+        try {
+            if (typeof Scoring !== 'undefined') {
+                const rows = Scoring.collectData() || [];
+                rows.forEach(r => {
+                    if (typeof r.imgIdx === 'number' && r.imgIdx >= 0) rowByImgIdx.set(r.imgIdx, r);
+                });
+            }
+        } catch (_) { /* 매칭 실패해도 저장은 진행 */ }
+
+        // FS 안전 문자만 유지 (한글 허용)
+        const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, '').trim();
+
+        // pristine 파일명 (원본) 가져오기
+        const getPristine = (img) => img._pristineName || img._originalName || img.name || '';
+
+        // 활성 이미지 파일명 = {이름}_{연락처}_{수험번호}_{생년월일}_원본
+        const buildFilename = (img, imgIdx) => {
+            const pristine = getPristine(img);
+            if (imgIdx === undefined || imgIdx < 0) return pristine;
+            const r = rowByImgIdx.get(imgIdx);
+            if (!r || r._noOmr) return pristine;
+            const parts = [];
+            if (r.name) parts.push(sanitize(r.name));
+            if (r.phone) parts.push(sanitize(r.phone));
+            if (r.examNo) parts.push(sanitize(r.examNo));
+            if (r.birthday) parts.push(sanitize(r.birthday));
+            const prefix = parts.filter(Boolean).join('_');
+            return prefix ? `${prefix}_${pristine}` : pristine;
+        };
+
         // 이미지 1개 → 저장용 메타로 변환
-        const serializeImage = (img) => ({
-            filename: img._originalName || img.name || '',
+        const serializeImage = (img, overrideFilename) => ({
+            filename: overrideFilename || getPristine(img),
+            pristineFilename: getPristine(img),
             rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
             gradeResult: img.gradeResult || null,
             results: (img.results || []).map(res => ({
@@ -313,6 +349,13 @@ const SessionManager = {
             })),
         });
 
+        // 활성 이미지의 최종 파일명 (매칭 prefix 포함)
+        const activeImages = App.state.images || [];
+        const activeFilenames = activeImages.map((img, idx) => buildFilename(img, idx));
+        // 삭제 이미지는 pristine 유지
+        const deletedImages = App.state.deletedImages || [];
+        const deletedFilenames = deletedImages.map(img => getPristine(img));
+
         const data = {
             sessionName: name,
             examName: this.currentExamName || null,
@@ -323,29 +366,27 @@ const SessionManager = {
             students: App.state.students || [],
             matchFields: App.state.matchFields || {},
             answerKey: App.state.answerKey || null,
-            imageCount: (App.state.images || []).length,
-            imageResults: (App.state.images || []).map(serializeImage),
+            imageCount: activeImages.length,
+            imageResults: activeImages.map((img, idx) => serializeImage(img, activeFilenames[idx])),
             // 삭제된 이미지도 세션에 보존 (복원 가능)
-            deletedImageResults: (App.state.deletedImages || []).map(serializeImage),
+            deletedImageResults: deletedImages.map((img, idx) => serializeImage(img, deletedFilenames[idx])),
         };
 
         try {
             if (this.isElectron) {
                 // 이미지 → base64 변환 (활성 + 삭제 모두 저장하여 복원 가능)
-                const imgToData = (img) => {
+                // filename은 매칭값으로 prefix된 이름을 사용 (disk와 metadata 일치)
+                const imgToData = (img, filename) => {
                     try {
                         const c = document.createElement('canvas');
                         c.width = img.imgElement.naturalWidth || img.imgElement.width;
                         c.height = img.imgElement.naturalHeight || img.imgElement.height;
                         c.getContext('2d').drawImage(img.imgElement, 0, 0);
-                        return {
-                            filename: img._originalName || img.name || `image_${Date.now()}.jpg`,
-                            dataUrl: c.toDataURL('image/jpeg', 0.9)
-                        };
+                        return { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
                     } catch (e) { return null; }
                 };
-                const activeArr = (App.state.images || []).map(imgToData).filter(Boolean);
-                const deletedArr = (App.state.deletedImages || []).map(imgToData).filter(Boolean);
+                const activeArr = activeImages.map((img, idx) => imgToData(img, activeFilenames[idx])).filter(Boolean);
+                const deletedArr = deletedImages.map((img, idx) => imgToData(img, deletedFilenames[idx])).filter(Boolean);
                 const imageDataArr = [...activeArr, ...deletedArr];
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);

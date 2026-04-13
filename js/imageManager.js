@@ -44,6 +44,8 @@ const ImageManager = {
 
                             App.state.images.push({
                                 name: file.name,
+                                _originalName: file.name,
+                                _pristineName: file.name,
                                 imgElement: resized,
                                 thumb,
                                 rois: [],
