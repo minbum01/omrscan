@@ -54,23 +54,45 @@ const OmrEngine = {
                 if (px >= 0 && px < imgW && py >= 0 && py < imgH) { brightSum += gray[py * imgW + px]; total++; }
             }
         }
-        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0 };
+        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0, erodedFill: 0 };
         const localMean = brightSum / total;
         // 절대 최소 기준 30 — 완전히 까맣게 칠한 영역이 상대 기준으로는 감지 안 되는 버그 방지
         const localThreshold = Math.max(localMean * 0.75, 30);
         let darkCount = 0, centerDark = 0, centerTotal = 0;
         const cmx = Math.round(sw * 0.25), cmy = Math.round(sh * 0.25);
+        // 이진화 마스크 (1=어두움) — 침식 계산을 위해 박스 전체 보관
+        const mask = new Uint8Array(sw * sh);
         for (let yy = 0; yy < sh; yy++) {
             for (let xx = 0; xx < sw; xx++) {
                 const px = sx + xx, py = sy + yy;
                 if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
                     const val = gray[py * imgW + px];
-                    if (val < localThreshold) darkCount++;
+                    if (val < localThreshold) { darkCount++; mask[yy * sw + xx] = 1; }
                     if (xx >= cmx && xx < sw - cmx && yy >= cmy && yy < sh - cmy) { centerTotal++; if (val < localThreshold) centerDark++; }
                 }
             }
         }
-        return { brightness: localMean, darkRatio: darkCount / total, centerFill: centerTotal > 0 ? centerDark / centerTotal : 0 };
+        // 침식(4-neighbor erosion): 어두운 픽셀이 4방향 모두 어두울 때만 살아남음
+        // → 얇은 선(테두리·숫자)은 사라지고, 두꺼운 마킹 덩어리만 남음
+        // 중앙 영역에서만 침식 결과 카운트 (기존 centerFill과 동일 영역)
+        let erodedDark = 0;
+        for (let yy = cmy; yy < sh - cmy; yy++) {
+            for (let xx = cmx; xx < sw - cmx; xx++) {
+                const i = yy * sw + xx;
+                if (!mask[i]) continue;
+                const up    = yy > 0       ? mask[(yy - 1) * sw + xx] : 0;
+                const down  = yy < sh - 1  ? mask[(yy + 1) * sw + xx] : 0;
+                const left  = xx > 0       ? mask[yy * sw + (xx - 1)] : 0;
+                const right = xx < sw - 1  ? mask[yy * sw + (xx + 1)] : 0;
+                if (up && down && left && right) erodedDark++;
+            }
+        }
+        return {
+            brightness: localMean,
+            darkRatio: darkCount / total,
+            centerFill: centerTotal > 0 ? centerDark / centerTotal : 0,
+            erodedFill: centerTotal > 0 ? erodedDark / centerTotal : 0,
+        };
     },
 
     // ==========================================
@@ -473,7 +495,7 @@ const OmrEngine = {
             blob.inkRatio = sample.darkRatio;
             blob.centerFillRatio = sample.centerFill;
             blob.isMarked = false;
-            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill });
+            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill });
         });
 
         // 마킹 재판별
@@ -502,6 +524,11 @@ const OmrEngine = {
             const maxFill = Math.max(...cellScores.map(c => c.centerFill));
             const minFill = Math.min(...cellScores.map(c => c.centerFill));
             if (maxFill < 0.5 && (maxFill - minFill) < 0.15) primaryMarked = -1; // 백지
+
+            // 침식 필터: 얇은 선(테두리·숫자)은 침식되어 사라짐 → 진짜 마킹만 통과
+            if (primaryMarked !== -1 && cellScores[primaryMarked].erodedFill < 0.30) {
+                primaryMarked = -1;
+            }
         }
 
         // 갱신
@@ -641,7 +668,7 @@ const OmrEngine = {
                 const sample = this.sampleCell(grayData, width, height, cx, cy, sw, sh);
                 const score = (sample.darkRatio * 300) + (255 - sample.brightness) + (sample.centerFill * 800);
 
-                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill });
+                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill });
                 blobs.push({
                     x: Math.round(cx - sw / 2) + offsetX, y: Math.round(cy - sh / 2) + offsetY,
                     w: Math.round(sw), h: Math.round(sh),
@@ -702,7 +729,19 @@ const OmrEngine = {
                 }
             } else if (numC === 1) primaryMarked = 0;
 
-            this._log(`  Q${q + 1}: ${cellScores.map(c => `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)}`).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
+            // ─────────────────────────────────────────────────
+            // 침식 필터 (Morphological Erosion):
+            // 얇은 선(테두리·인쇄 숫자)은 침식되어 사라지므로,
+            // 침식 후에도 충분히 살아남은 셀만 진짜 마킹으로 인정
+            // ─────────────────────────────────────────────────
+            const ERODED_THRESHOLD = 0.30;
+            if (primaryMarked !== -1) {
+                if (cellScores[primaryMarked].erodedFill < ERODED_THRESHOLD) {
+                    primaryMarked = -1;
+                }
+            }
+
+            this._log(`  Q${q + 1}: ${cellScores.map(c => `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)}`).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
             // 중복 감지
             const markedIndices = [];
