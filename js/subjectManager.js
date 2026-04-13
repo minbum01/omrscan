@@ -419,55 +419,81 @@ const SubjectManager = {
             try {
                 const text = e.target.result;
                 const allLines = text.split('\n').map(l => l.trim());
-                // 21행 이전은 설명 영역 → 스킵, 빈 줄/주석도 스킵
-                const lines = allLines.slice(20).filter(l => l && !l.startsWith('#') && !l.startsWith('='));
-                if (lines.length === 0) {
-                    // 20행 이하 파일이면 전체에서 데이터 행 찾기 (하위호환)
-                    const fallback = allLines.filter(l => l && !l.startsWith('#') && !l.startsWith('=') && l.indexOf(',') >= 0);
-                    if (fallback.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
-                    lines.push(...fallback);
+                // 21행 이전은 설명 영역 → 스킵
+                let dataRows = allLines.slice(20).filter(l => l && l.indexOf(',') >= 0);
+                if (dataRows.length === 0) {
+                    // 20행 이하 파일 → 쉼표 있는 행만 추출 (하위호환)
+                    dataRows = allLines.filter(l => l && l.indexOf(',') >= 0 && !l.startsWith('#') && !l.startsWith('='));
+                    // 설명 행 제거: 숫자로 시작하거나 빈 코드(,이름)로 시작하는 행만
+                    dataRows = dataRows.filter(l => {
+                        const first = l.split(',')[0].trim();
+                        return first === '' || /^\d/.test(first);
+                    });
                 }
-
-                const firstCells = this._parseCSVLine(lines[0]);
-                const hasHeader = isNaN(parseInt(firstCells[0])) && firstCells[0] !== '' && /[가-힣a-zA-Z]/.test(firstCells[0]);
-                const dataLines = hasHeader ? lines.slice(1) : lines;
+                if (dataRows.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
 
                 let imported = 0;
                 const subjects = this.getSubjects();
 
-                dataLines.forEach(line => {
+                dataRows.forEach(line => {
                     const cells = this._parseCSVLine(line);
-                    if (cells.length < 6) return;
+                    // 최소 2열(이름 + 답 1개 이상) 필요
+                    if (cells.length < 2) return;
 
-                    const code = cells[0].trim();
-                    const name = cells[1].trim();
-                    const numChoices = parseInt(cells[2]) || 5;
-                    const scoreField = cells[3].trim();
-                    const totalScore = parseFloat(cells[4]) || 100;
+                    // 과목코드 사용 여부 자동 판별:
+                    // 첫 셀이 숫자면 코드+이름 구조 (코드,이름,선택지,배점,총점,답...)
+                    // 첫 셀이 빈칸이면 코드 없음 (빈칸,이름,선택지,배점,총점,답...)
+                    // 첫 셀이 한글이면 코드 없이 이름부터 시작 (이름,선택지,배점,총점,답...)
+                    const firstCell = cells[0].trim();
+                    let code, name, numChoices, scoreField, totalScore, dataCells;
+
+                    if (/^\d+$/.test(firstCell) || firstCell === '') {
+                        // 코드+이름 구조 (또는 빈 코드)
+                        code = firstCell;
+                        name = (cells[1] || '').trim();
+                        numChoices = parseInt(cells[2]) || 5;
+                        scoreField = (cells[3] || '4').trim();
+                        totalScore = parseFloat(cells[4]) || 100;
+                        dataCells = cells.slice(5);
+                    } else {
+                        // 코드 없이 이름부터 시작
+                        code = '';
+                        name = firstCell;
+                        numChoices = parseInt(cells[1]) || 5;
+                        scoreField = (cells[2] || '4').trim();
+                        totalScore = parseFloat(cells[3]) || 100;
+                        dataCells = cells.slice(4);
+                    }
+
+                    if (!name || dataCells.length === 0) return;
+
                     const isCustomScore = (scoreField === '차등');
-                    const dataCells = cells.slice(5);
-
                     let answers, scoreMap = [];
                     if (isCustomScore) {
                         const half = Math.floor(dataCells.length / 2);
                         answers = dataCells.slice(0, half).map(c => c.trim());
                         scoreMap = dataCells.slice(half).map(c => parseFloat(c) || 0);
                     } else {
-                        answers = dataCells.map(c => c.trim());
+                        answers = dataCells.map(c => c.trim()).filter(c => c !== '');
                     }
 
                     const numQ = answers.length;
-                    const baseScore = isCustomScore ? 0 : (parseFloat(scoreField) || (numQ > 0 ? Math.round((totalScore / numQ) * 100) / 100 : 4));
+                    if (numQ === 0) return;
+                    const baseScore = isCustomScore ? (numQ > 0 ? totalScore / numQ : 0) : (parseFloat(scoreField) || (numQ > 0 ? Math.round((totalScore / numQ) * 100) / 100 : 4));
 
                     const subj = {
                         code, name, numChoices, numQuestions: numQ,
-                        scorePerQuestion: isCustomScore ? (totalScore / numQ) : baseScore,
+                        useCode: code !== '',
+                        scorePerQuestion: baseScore,
                         totalScore,
                         useCustomScore: isCustomScore, scoreMap,
                         answers: answers.join(',')
                     };
 
-                    const existIdx = subjects.findIndex(s => s.code && s.code === code);
+                    // 중복 체크: 코드가 있으면 코드로, 없으면 이름으로
+                    const existIdx = code
+                        ? subjects.findIndex(s => s.code === code)
+                        : subjects.findIndex(s => s.name === name);
                     if (existIdx >= 0) subjects[existIdx] = subj;
                     else subjects.push(subj);
                     imported++;
@@ -557,22 +583,24 @@ const SubjectManager = {
         const lines = [
             '과목/정답 CSV 양식',
             '',
-            '[열 순서]',
+            '[열 순서] 과목코드 있을 때',
             '과목코드 / 과목명 / 선택지수 / 배점 / 총점 / 1번답 / 2번답 / ...',
+            '[열 순서] 과목코드 없을 때',
+            '과목명 / 선택지수 / 배점 / 총점 / 1번답 / 2번답 / ...',
             '',
-            '[배점 입력 방법]',
-            '숫자(예: 4) 입력 시 일괄배점',
-            '차등 입력 시 정답 뒤에 문항별 배점이 이어짐',
+            '[배점] 숫자 = 일괄배점 / 차등 = 정답 뒤에 문항별 배점',
+            '[참고] 과목별 문항수 달라도 됨 / 헤더 불필요',
+            '이 설명(1~20행)은 자동 무시됩니다',
             '',
-            '[참고사항]',
-            '과목별 문항수가 달라도 됨',
-            '헤더 행은 불필요',
-            '이 설명 영역(1~20행)은 자동으로 무시됩니다',
-            '',
-            '[일괄배점 예시] 20문항',
+            '[코드있음 일괄배점 예시]',
             '01 / 국어 / 5 / 5 / 100 / 1 / 2 / 3 / ... / 5',
-            '[차등배점 예시] 10문항 (정답10개 + 배점10개)',
-            '03 / 수학 / 5 / 차등 / 100 / 1 / 2 / ... / 5 / 8 / 8 / ... / 12',
+            '[코드없음 일괄배점 예시]',
+            '영어 / 5 / 4 / 100 / 3 / 1 / 4 / ... / 2',
+            '[차등배점 예시] 정답 뒤에 배점이 이어짐',
+            '03 / 수학 / 5 / 차등 / 100 / 1 / 2 / ... / 5 / 8 / ... / 12',
+            '',
+            '',
+            '',
             '',
             '21행부터 입력하세요',
         ];
