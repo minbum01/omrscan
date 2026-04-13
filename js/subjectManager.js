@@ -800,16 +800,26 @@ const SubjectManager = {
             try {
                 const delimiter = this._detectDelimiter(text);
                 const allLines = text.split('\n').map(l => l.trim());
+
                 // 21행(index 20)부터 읽기
                 let dataLines = allLines.slice(20).filter(l => l);
+
                 if (dataLines.length === 0) {
-                    // 하위호환: 20행 이하 파일
-                    dataLines = allLines.filter(l => l && !/열 순서|참고|양식|예시|입력하세요|CSV|설명|핸드폰번호\(/.test(l));
+                    // 하위호환: 20행 이하 파일 → 구분자가 있는 행만 (설명 텍스트 제외)
+                    dataLines = allLines.filter(l => {
+                        if (!l) return false;
+                        // 구분자가 있어야 데이터
+                        if (l.indexOf(delimiter) < 0) return false;
+                        // 설명 키워드 포함하면 제외
+                        if (/열 순서|참고|양식|예시|입력하세요|CSV|설명|핸드폰번호\(|채우지|보존|불필요|무시/.test(l)) return false;
+                        return true;
+                    });
                 }
+
                 if (dataLines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
 
                 // 헤더 판별
-                if (/이름|생년월일|수험번호|핸드폰/.test(dataLines[0])) dataLines.shift();
+                if (/^이름|^생년월일|^수험번호|^핸드폰/.test(dataLines[0].split(delimiter)[0].trim())) dataLines.shift();
 
                 const students = this.getStudents();
                 let imported = 0;
