@@ -119,8 +119,11 @@
                 <div class="dropdown" style="margin-left:4px;">
                     <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">일괄 채점 ▾</button>
                     <div class="dropdown-menu">
-                        <button class="dropdown-item" onclick="BatchProcess.run(false)">일괄 채점 (개별수정 유지)</button>
-                        <button class="dropdown-item" onclick="BatchProcess.run(true)">전체 영역 재설정 후 채점</button>
+                        <button class="dropdown-item" onclick="BatchProcess.run(false)">현재 교시 일괄 채점</button>
+                        <button class="dropdown-item" onclick="BatchProcess.run(true)">현재 교시 재설정 후 채점</button>
+                        <div class="dropdown-divider"></div>
+                        <button class="dropdown-item" onclick="BatchProcess.runAllPeriods(false)">전체 교시 일괄 채점</button>
+                        <button class="dropdown-item" onclick="BatchProcess.runAllPeriods(true)">전체 교시 재설정 후 채점</button>
                     </div>
                 </div>
             </div>
