@@ -445,9 +445,9 @@ const SubjectManager = {
                     const firstCell = cells[0].trim();
                     let code, name, numChoices, scoreField, totalScore, dataCells;
 
-                    if (/^\d+$/.test(firstCell) || firstCell === '') {
-                        // 코드+이름 구조 (또는 빈 코드)
-                        code = firstCell;
+                    if (/^\d+$/.test(firstCell) || firstCell === '' || firstCell === '-') {
+                        // 코드+이름 구조 (또는 빈 코드 / - 표시)
+                        code = (firstCell === '-') ? '' : firstCell;
                         name = (cells[1] || '').trim();
                         numChoices = parseInt(cells[2]) || 5;
                         scoreField = (cells[3] || '4').trim();
@@ -591,15 +591,15 @@ const SubjectManager = {
             '',
             '[코드있음 일괄배점 예시]',
             '01 / 국어 / 5 / 5 / 100 / 1 / 2 / 3 / ... / 5',
-            '[코드없음 일괄배점 예시]',
-            '영어 / 5 / 4 / 100 / 3 / 1 / 4 / ... / 2',
+            '[코드없음 일괄배점 예시]  코드 자리에 - 입력',
+            '- / 영어 / 5 / 4 / 100 / 3 / 1 / 4 / ... / 2',
             '[차등배점 예시] 정답 뒤에 배점이 이어짐',
             '03 / 수학 / 5 / 차등 / 100 / 1 / 2 / ... / 5 / 8 / ... / 12',
             '',
             '',
             '',
-            '',
             '21행부터 입력하세요',
+            '',
         ];
         this._downloadFile(lines.join('\n'), '과목_CSV_양식.csv');
     },
@@ -773,8 +773,8 @@ const SubjectManager = {
             '',
             '',
             '',
-            '',
             '21행부터 입력하세요',
+            '',
         ];
         this._downloadFile(lines.join('\n'), '시험인원_CSV_양식.csv');
     },
