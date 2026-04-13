@@ -14,15 +14,6 @@ const BatchProcess = {
             return;
         }
 
-        // 수기 교정 기록이 있으면 경고
-        const hasCorrected = images.some(img =>
-            img.results && img.results.some(res =>
-                res.rows.some(r => r.corrected)
-            )
-        );
-        if (hasCorrected) {
-            if (!confirm('수기 교정한 기록이 있습니다.\n일괄 채점하면 교정 내용이 초기화됩니다.\n계속하시겠습니까?')) return;
-        }
 
         // 현재 선택된 이미지를 템플릿으로 (ROI가 있는 경우)
         const currentImg = App.getCurrentImage();
@@ -212,13 +203,6 @@ const BatchProcess = {
             if (t) templateByPeriod[p.id] = t;
         });
 
-        const hasCorrected = tasks.some(({ imgObj }) =>
-            imgObj.results && imgObj.results.some(res =>
-                res.rows && res.rows.some(r => r.corrected)
-            )
-        );
-        if (hasCorrected &&
-            !confirm('수기 교정한 기록이 있습니다.\n전체 교시 일괄 채점하면 교정 내용이 초기화됩니다.\n계속하시겠습니까?')) return;
 
         const overlay = this.createModal(tasks.length);
         const txt = overlay.querySelector('#batch-text');
