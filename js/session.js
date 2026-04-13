@@ -251,11 +251,11 @@ const SessionManager = {
                         // 교시 분배: savedResult.periodId → 해당 period.images 에 push
                         const periodId = (savedResult && savedResult.periodId) || 'p1';
 
-                        // 저장 시 붙인 교시 접두사 제거: 표시명은 원본 파일명으로
                         const pristine = (savedResult && savedResult.pristineFilename) || imgFile.filename;
                         const imgObj = {
-                            name:          pristine,
-                            _originalName: pristine,
+                            // 디스크 파일명(학생이름_수험번호_ 접두사 포함)을 표시명으로 사용
+                            name:          imgFile.filename,
+                            _originalName: imgFile.filename,
                             _pristineName: pristine,
                             imgElement:    img,
                             thumb,

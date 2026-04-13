@@ -40,8 +40,8 @@ const BatchProcess = {
             const imgObj = images[processed];
 
             const template = this._template;
-            // ROI가 없거나 전체 재설정이면 템플릿 적용
-            if (imgObj.rois.length === 0 || (this._forceReset && imgObj !== template)) {
+            // ROI가 없는 경우에만 템플릿 적용 (forceReset 이더라도 기존 ROI 유지)
+            if (imgObj.rois.length === 0) {
                 imgObj.rois = template.rois.map(r => ({
                     x: r.x, y: r.y, w: r.w, h: r.h,
                     settings: r.settings
@@ -144,6 +144,15 @@ const BatchProcess = {
                                 row.markedIndices = correctedBackup[key].markedIndices;
                                 row.corrected = true;
                                 row._userCorrected = true;
+                                row.undetected = false;
+                                // blob isMarked 동기화 (오버레이 색상 반영)
+                                if (row.blobs) {
+                                    row.blobs.forEach((b, bi) => {
+                                        b.isMarked = Array.isArray(row.markedIndices)
+                                            ? row.markedIndices.includes(bi + 1)
+                                            : (row.markedAnswer === bi + 1);
+                                    });
+                                }
                             }
                         });
                     }
@@ -240,8 +249,8 @@ const BatchProcess = {
                 return;
             }
 
-            // ROI 적용
-            if (imgObj.rois.length === 0 || (forceResetAll && imgObj !== template)) {
+            // ROI 적용 (ROI 없는 이미지에만 템플릿 적용, forceReset이어도 기존 ROI 유지)
+            if (imgObj.rois.length === 0) {
                 imgObj.rois = template.rois.map(r => ({
                     x: r.x, y: r.y, w: r.w, h: r.h,
                     settings: r.settings
@@ -316,7 +325,20 @@ const BatchProcess = {
                     if (res && res.rows) {
                         res.rows.forEach(row => {
                             const k = `${ri}_${row.questionNumber}`;
-                            if (correctedBackup[k]) { row.markedAnswer = correctedBackup[k].markedAnswer; row.markedIndices = correctedBackup[k].markedIndices; row.corrected = true; row._userCorrected = true; }
+                            if (correctedBackup[k]) {
+                                    row.markedAnswer  = correctedBackup[k].markedAnswer;
+                                    row.markedIndices = correctedBackup[k].markedIndices;
+                                    row.corrected     = true;
+                                    row._userCorrected = true;
+                                    row.undetected    = false;
+                                    if (row.blobs) {
+                                        row.blobs.forEach((b, bi) => {
+                                            b.isMarked = Array.isArray(row.markedIndices)
+                                                ? row.markedIndices.includes(bi + 1)
+                                                : (row.markedAnswer === bi + 1);
+                                        });
+                                    }
+                                }
                         });
                     }
                 });
