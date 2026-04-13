@@ -6,7 +6,7 @@ const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
     _showColumnSettings: false,
-    _sortMode: 'student', // 'student' = 인원명단순, 'score_asc' = 성적 오름차순
+    _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 성적 내림차순
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
@@ -235,12 +235,12 @@ const Scoring = {
         });
 
         // 정렬 적용
-        if (this._sortMode === 'score_asc') {
+        if (this._sortMode === 'score_desc') {
             rows.sort((a, b) => {
                 if (a._noOmr && !b._noOmr) return 1;
                 if (!a._noOmr && b._noOmr) return -1;
                 if (a._noOmr && b._noOmr) return 0;
-                return (a.score || 0) - (b.score || 0);
+                return (b.score || 0) - (a.score || 0);
             });
         }
         // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
@@ -563,12 +563,12 @@ const Scoring = {
     // 정렬 버튼
     _renderSortButtons() {
         const isStudent = this._sortMode === 'student';
-        const isScore = this._sortMode === 'score_asc';
+        const isScore = this._sortMode === 'score_desc';
         return `
             <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isStudent ? 'background:var(--blue); color:#fff;' : ''}"
                 onclick="Scoring._sortMode='student'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">인원명단순</button>
             <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isScore ? 'background:var(--blue); color:#fff;' : ''}"
-                onclick="Scoring._sortMode='score_asc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 오름차순</button>`;
+                onclick="Scoring._sortMode='score_desc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 내림차순</button>`;
     },
 
     // 셀 별색 토글 (수동)
