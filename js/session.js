@@ -151,9 +151,13 @@ const SessionManager = {
         try {
             let data = null;
 
+            let imageFiles = [];
             if (this.isElectron) {
                 const result = await window.electronAPI.loadSession(name);
-                if (result.success) data = result.data;
+                if (result.success) {
+                    data = result.data;
+                    imageFiles = result.imageFiles || [];
+                }
             } else {
                 const raw = localStorage.getItem(this.STORAGE_PREFIX + name);
                 if (raw) data = JSON.parse(raw);
@@ -181,11 +185,48 @@ const SessionManager = {
             this.currentSessionName = name;
             this._hasUnsavedChanges = false;
             this._updateHeader();
-            if (typeof ImageManager !== 'undefined') ImageManager.updateList();
-            if (typeof UI !== 'undefined') UI.updateRightPanel();
 
-            const imgCount = data.imageCount || 0;
-            Toast.success(`세션 "${name}" 로드됨${imgCount > 0 ? ` (이미지 ${imgCount}장 재업로드 필요)` : ''}`);
+            // 이미지 자동 로드 (Electron)
+            if (imageFiles.length > 0) {
+                Toast.info(`이미지 ${imageFiles.length}장 로딩 중...`);
+                let loaded = 0;
+                imageFiles.forEach((imgFile, idx) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const thumb = typeof ImageManager !== 'undefined' ? ImageManager.createThumbnail(img) : null;
+                        // ROI 설정 복원 (저장된 imageResults에서)
+                        const savedResult = data.imageResults && data.imageResults[idx] ? data.imageResults[idx] : null;
+                        App.state.images.push({
+                            name: imgFile.filename,
+                            _originalName: imgFile.filename,
+                            imgElement: img,
+                            thumb,
+                            rois: savedResult ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null })) : [],
+                            results: null,
+                            gradeResult: savedResult ? savedResult.gradeResult : null,
+                        });
+                        loaded++;
+                        if (loaded === imageFiles.length) {
+                            if (typeof ImageManager !== 'undefined') {
+                                ImageManager.updateList();
+                                if (App.state.images.length > 0) ImageManager.select(0);
+                            }
+                            if (typeof UI !== 'undefined') UI.updateRightPanel();
+                            Toast.success(`세션 "${name}" 로드 완료 (${loaded}장)`);
+                        }
+                    };
+                    img.onerror = () => {
+                        loaded++;
+                        console.warn(`이미지 로드 실패: ${imgFile.filename}`);
+                    };
+                    img.src = imgFile.url;
+                });
+            } else {
+                if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+                if (typeof UI !== 'undefined') UI.updateRightPanel();
+                const imgCount = data.imageCount || 0;
+                Toast.success(`세션 "${name}" 로드됨${imgCount > 0 ? ` (이미지 재업로드 필요)` : ''}`);
+            }
         } catch (e) {
             console.error('세션 로드 실패:', e);
             Toast.error('세션 로드 실패: ' + e.message);
@@ -220,9 +261,23 @@ const SessionManager = {
 
         try {
             if (this.isElectron) {
-                const result = await window.electronAPI.saveSession(name, data);
+                // 이미지 데이터 추출 (base64)
+                const imageDataArr = (App.state.images || []).map(img => {
+                    try {
+                        const c = document.createElement('canvas');
+                        c.width = img.imgElement.naturalWidth || img.imgElement.width;
+                        c.height = img.imgElement.naturalHeight || img.imgElement.height;
+                        c.getContext('2d').drawImage(img.imgElement, 0, 0);
+                        return {
+                            filename: img._originalName || img.name || `image_${Date.now()}.jpg`,
+                            dataUrl: c.toDataURL('image/jpeg', 0.9)
+                        };
+                    } catch (e) { return null; }
+                }).filter(Boolean);
+
+                const result = await window.electronAPI.saveSession(name, data, imageDataArr);
                 if (!result.success) throw new Error(result.error);
-                console.log(`[세션] 파일 저장: ${result.path}`);
+                console.log(`[세션] 파일 저장: ${result.path} (이미지 ${imageDataArr.length}장)`);
             } else {
                 localStorage.setItem(this.STORAGE_PREFIX + name, JSON.stringify(data));
                 this._updateSessionMeta(name, {

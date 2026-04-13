@@ -61,26 +61,65 @@ function getTemplatesPath() {
     return p;
 }
 
-// 세션 저장
-ipcMain.handle('session:save', async (event, sessionName, data) => {
+// 세션 저장 (JSON + 이미지)
+ipcMain.handle('session:save', async (event, sessionName, data, images) => {
     try {
         const sessionDir = path.join(getSessionsPath(), sessionName);
         if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
-        const filePath = path.join(sessionDir, 'session.json');
+
+        // 세션 JSON (파일명 = 세션명.json)
+        const filePath = path.join(sessionDir, sessionName + '.json');
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+        // 이미지 저장
+        if (images && images.length > 0) {
+            const imgDir = path.join(sessionDir, 'images');
+            if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+
+            images.forEach(img => {
+                if (img.dataUrl && img.filename) {
+                    // base64 → 파일
+                    const base64 = img.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+                    const ext = img.dataUrl.match(/^data:image\/(\w+);/);
+                    const filename = img.filename.replace(/[\\/:*?"<>|]/g, '_');
+                    fs.writeFileSync(path.join(imgDir, filename), Buffer.from(base64, 'base64'));
+                }
+            });
+        }
+
         return { success: true, path: filePath };
     } catch (e) {
         return { success: false, error: e.message };
     }
 });
 
-// 세션 로드
+// 세션 로드 (JSON + 이미지 목록)
 ipcMain.handle('session:load', async (event, sessionName) => {
     try {
-        const filePath = path.join(getSessionsPath(), sessionName, 'session.json');
+        const sessionDir = path.join(getSessionsPath(), sessionName);
+        // 세션명.json 우선, 없으면 session.json (하위호환)
+        let filePath = path.join(sessionDir, sessionName + '.json');
+        if (!fs.existsSync(filePath)) filePath = path.join(sessionDir, 'session.json');
         if (!fs.existsSync(filePath)) return { success: false, error: '파일 없음' };
+
         const raw = fs.readFileSync(filePath, 'utf-8');
-        return { success: true, data: JSON.parse(raw) };
+        const data = JSON.parse(raw);
+
+        // 이미지 파일 목록 로드
+        const imgDir = path.join(sessionDir, 'images');
+        let imageFiles = [];
+        if (fs.existsSync(imgDir)) {
+            imageFiles = fs.readdirSync(imgDir)
+                .filter(f => /\.(jpg|jpeg|png|bmp|gif|webp)$/i.test(f))
+                .map(f => ({
+                    filename: f,
+                    path: path.join(imgDir, f),
+                    // file:// URL로 변환 (렌더러에서 로드 가능)
+                    url: 'file:///' + path.join(imgDir, f).replace(/\\/g, '/')
+                }));
+        }
+
+        return { success: true, data, imageFiles };
     } catch (e) {
         return { success: false, error: e.message };
     }
@@ -94,8 +133,10 @@ ipcMain.handle('session:list', async () => {
             fs.statSync(path.join(sessionsDir, d)).isDirectory()
         );
         const sessions = dirs.map(d => {
-            const jsonPath = path.join(sessionsDir, d, 'session.json');
+            let jsonPath = path.join(sessionsDir, d, d + '.json');
             let meta = { name: d };
+            // 세션명.json 우선, 없으면 session.json
+            if (!fs.existsSync(jsonPath)) jsonPath = path.join(sessionsDir, d, 'session.json');
             if (fs.existsSync(jsonPath)) {
                 try {
                     const raw = fs.readFileSync(jsonPath, 'utf-8');
