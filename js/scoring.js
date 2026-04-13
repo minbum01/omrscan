@@ -11,12 +11,44 @@ const Scoring = {
     _omrColumns: null, // null이면 기본값 사용
     _getOMRColumns() {
         if (this._omrColumns) return this._omrColumns;
-        // 기본 열 구성
+
+        // 기본 열 (디폴트 표시)
         const cols = [
             { id: 'examNo', label: '응시번호', type: 'info', visible: true },
             { id: 'name', label: '성명', type: 'info', visible: true },
             { id: 'score', label: '점수', type: 'info', visible: true },
         ];
+
+        // OMR 영역에서 가져올 수 있는 추가 열 (디폴트 비표시)
+        const roiCols = [
+            { id: 'birthday', label: '생년월일', type: 'info', visible: false },
+            { id: 'phone', label: '전화번호', type: 'info', visible: false },
+            { id: 'subjectCode', label: '과목코드', type: 'info', visible: false },
+            { id: 'correctCount', label: '맞은개수', type: 'info', visible: false },
+            { id: 'wrongCount', label: '틀린개수', type: 'info', visible: false },
+            { id: 'totalPossible', label: '만점', type: 'info', visible: false },
+            { id: 'rank', label: '석차', type: 'info', visible: false },
+            { id: 'tScore', label: '표준점수', type: 'info', visible: false },
+            { id: 'percentile', label: '백분위', type: 'info', visible: false },
+            { id: 'filename', label: '파일명', type: 'info', visible: false },
+        ];
+
+        // 기타(etc) ROI 영역들도 추가
+        const etcNames = new Set();
+        (App.state.images || []).forEach(img => {
+            (img.rois || []).forEach(roi => {
+                if (roi.settings && roi.settings.type === 'etc' && roi.settings.name) {
+                    etcNames.add(roi.settings.name);
+                }
+            });
+        });
+        etcNames.forEach(name => {
+            roiCols.push({ id: 'etc_' + name, label: name, type: 'info', visible: false, etcName: name });
+        });
+
+        cols.push(...roiCols);
+
+        // 마킹 + 정오
         for (let i = 1; i <= this._defaultMaxQ; i++) {
             cols.push({ id: `q${i}`, label: `${i}번`, type: 'answer', qNum: i, visible: true });
         }
@@ -91,7 +123,7 @@ const Scoring = {
             const row = {
                 imgIdx,
                 filename: img._originalName || img.name || '',
-                examNo: '', name: '', birthday: '', phone: '',
+                examNo: '', name: '', birthday: '', phone: '', subjectCode: '',
                 etcFields: {},
                 // gradeResult 필드명 매칭
                 score: img.gradeResult.score || 0,
@@ -118,6 +150,7 @@ const Scoring = {
                 if (type === 'exam_no' || type === 'phone_exam') row.examNo = digits;
                 else if (type === 'phone') row.phone = digits;
                 else if (type === 'birthday') row.birthday = digits;
+                else if (type === 'subject_code') row.subjectCode = digits;
                 else if (type === 'etc') row.etcFields[roi.settings.name || '기타'] = digits;
                 else if (type === 'subject_answer') {
                     (res.rows || []).forEach(r => {
@@ -430,6 +463,17 @@ const Scoring = {
                 if (col.id === 'examNo') val = r.examNo;
                 else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
                 else if (col.id === 'score') { val = r.score; style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
+                else if (col.id === 'birthday') val = r.birthday;
+                else if (col.id === 'phone') val = r.phone;
+                else if (col.id === 'subjectCode') val = r.subjectCode || '';
+                else if (col.id === 'correctCount') { val = r.correctCount; style += 'color:#22c55e; font-weight:600;'; }
+                else if (col.id === 'wrongCount') { val = r.wrongCount; style += 'color:#ef4444;'; }
+                else if (col.id === 'totalPossible') val = r.totalPossible;
+                else if (col.id === 'rank') { val = r.rank || ''; style += 'font-weight:700;'; }
+                else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
+                else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
+                else if (col.id === 'filename') val = r.filename;
+                else if (col.id && col.id.startsWith('etc_')) { val = r.etcFields[col.etcName || col.id.replace('etc_','')] || ''; }
                 else if (col.type === 'answer') {
                     const a = r.answers.find(x => x.q === col.qNum);
                     val = a ? a.markedLabel : '';
@@ -439,7 +483,7 @@ const Scoring = {
                     if (val === 'O') style += 'color:#22c55e; font-weight:700;';
                     else if (val === 'X') style += 'color:#ef4444; font-weight:700;';
                 } else if (col.type === 'custom') {
-                    val = ''; // 커스텀 열은 비어있음
+                    val = '';
                 }
                 html += `<td style="${style}">${val}</td>`;
             });
@@ -448,6 +492,78 @@ const Scoring = {
 
         html += `</tbody></table></div>`;
         return html;
+    },
+
+    // 성적일람표 열 설정
+    _reportColumns: null,
+    _getReportColumns() {
+        if (this._reportColumns) return this._reportColumns;
+        const cols = [
+            { id: 'examNo', label: '응시번호', type: 'info', visible: true },
+            { id: 'name', label: '성명', type: 'info', visible: true },
+            { id: 'birthday', label: '생년월일', type: 'info', visible: true },
+            { id: 'phone', label: '전화번호', type: 'info', visible: false },
+            { id: 'subjectCode', label: '과목코드', type: 'info', visible: false },
+            { id: 'filename', label: '파일명', type: 'info', visible: false },
+        ];
+        // 기타 ROI
+        const etcNames = new Set();
+        (App.state.images || []).forEach(img => {
+            (img.rois || []).forEach(roi => {
+                if (roi.settings && roi.settings.type === 'etc' && roi.settings.name) etcNames.add(roi.settings.name);
+            });
+        });
+        etcNames.forEach(name => cols.push({ id: 'etc_' + name, label: name, type: 'info', visible: true, etcName: name }));
+
+        // 성적 열
+        cols.push(
+            { id: 'correctCount', label: '맞은개수', type: 'info', visible: true },
+            { id: 'score', label: '점수', type: 'info', visible: true },
+            { id: 'tScore', label: '표준점수', type: 'info', visible: true },
+            { id: 'rank', label: '석차', type: 'info', visible: true },
+            { id: 'percentile', label: '백분위', type: 'info', visible: true },
+            { id: 'wrongCount', label: '틀린개수', type: 'info', visible: false },
+            { id: 'totalPossible', label: '만점', type: 'info', visible: false },
+        );
+        this._reportColumns = cols;
+        return cols;
+    },
+
+    // 공용 뱃지 UI 렌더
+    _renderBadgeBar(columnsGetter, toggleFn, prefix) {
+        const allCols = columnsGetter.call(this);
+        const active = allCols.filter(c => c.visible);
+        const inactive = allCols.filter(c => !c.visible);
+
+        let html = `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+            <div style="margin-bottom:6px;">
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:3px;">사용 가능한 항목 (클릭하여 추가)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                    ${inactive.map(c => `<span onclick="Scoring.${toggleFn}('${c.id}')"
+                        style="padding:3px 10px; border-radius:12px; font-size:10px; cursor:pointer; border:1px dashed var(--border); color:var(--text-muted); background:white; transition:all 0.15s; user-select:none;"
+                        onmouseover="this.style.borderColor='var(--blue)'; this.style.color='var(--blue)';"
+                        onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text-muted)';">${c.label}</span>`).join('')}
+                    ${inactive.length === 0 ? '<span style="font-size:10px; color:var(--text-muted);">모든 항목 추가됨</span>' : ''}
+                </div>
+            </div>
+            <div>
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:3px;">현재 표 헤더 (클릭으로 제거 · 더블클릭으로 이름 변경)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px; min-height:28px; padding:4px; border:1px solid var(--border); border-radius:6px; background:white;">
+                    ${active.map(c => `<span onclick="Scoring.${toggleFn}('${c.id}')"
+                        ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${c.label}'); if(n){const col=Scoring.${columnsGetter.name.replace('bound ','')}().find(x=>x.id==='${c.id}'); if(col)col.label=n; Scoring.renderScoringPanel(document.getElementById('scoring-content'));}"
+                        style="padding:3px 10px; border-radius:12px; font-size:10px; cursor:pointer; border:1px solid var(--blue); color:var(--blue); background:#eff6ff; font-weight:600; user-select:none; transition:all 0.15s;">${c.label}</span>`).join('')}
+                </div>
+            </div>
+        </div>`;
+        return html;
+    },
+
+    // 성적일람표 열 토글
+    toggleReportColumn(colId) {
+        const cols = this._getReportColumns();
+        const col = cols.find(c => c.id === colId);
+        if (col) col.visible = !col.visible;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
     // 드래그 앤 드롭
@@ -502,41 +618,55 @@ const Scoring = {
     // 성적일람표
     // ==========================================
     _renderReport(rows) {
-        const etcKeys = [...new Set(rows.flatMap(r => Object.keys(r.etcFields)))];
+        const cols = this._getReportColumns().filter(c => c.visible);
 
         let html = `<div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
             <button class="btn btn-sm" onclick="Scoring.downloadReport(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
+        // 뱃지 바
+        html += this._renderBadgeBar(this._getReportColumns, 'toggleReportColumn', 'report');
+
         const th = 'style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap;"';
         const td = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9;"';
 
+        // 열별 특수 스타일
+        const colStyle = {
+            score: 'background:#eff6ff;', correctCount: 'background:#ecfdf5;',
+            tScore: 'background:#f5f3ff;', rank: 'background:#fef3c7;', percentile: 'background:#fce7f3;',
+        };
+
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
-        <thead><tr>
-            <th ${th}>응시번호</th><th ${th}>성명</th><th ${th}>생년월일</th><th ${th}>수험번호</th>`;
-        etcKeys.forEach(k => html += `<th ${th}>${k}</th>`);
-        html += `<th ${th} style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#ecfdf5; position:sticky; top:0;">맞은수</th>
-            <th ${th} style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#eff6ff; position:sticky; top:0;">점수</th>
-            <th ${th} style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f5f3ff; position:sticky; top:0;">표준점수</th>
-            <th ${th} style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#fef3c7; position:sticky; top:0;">석차</th>
-            <th ${th} style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#fce7f3; position:sticky; top:0;">백분위</th>
-        </tr></thead><tbody>`;
+        <thead><tr>`;
+        cols.forEach(col => {
+            const extra = colStyle[col.id] || '';
+            html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${extra}">${col.label}</th>`;
+        });
+        html += `</tr></thead><tbody>`;
 
         rows.forEach((r, ri) => {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            html += `<tr style="${bg}">
-                <td ${td}>${r.examNo}</td>
-                <td ${td} style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9;">${r.name}</td>
-                <td ${td}>${r.birthday}</td>
-                <td ${td}>${r.examNo}</td>`;
-            etcKeys.forEach(k => html += `<td ${td}>${r.etcFields[k] || ''}</td>`);
-            html += `<td ${td} style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600;">${r.correctCount}</td>
-                <td ${td} style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700;">${r.score}</td>
-                <td ${td}>${r.tScore ? r.tScore.toFixed(1) : ''}</td>
-                <td ${td} style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700;">${r.rank || ''}</td>
-                <td ${td}>${r.percentile ? r.percentile.toFixed(1) : ''}%</td>
-            </tr>`;
+            html += `<tr style="${bg}">`;
+            cols.forEach(col => {
+                let val = '', style = td;
+                if (col.id === 'examNo') val = r.examNo;
+                else if (col.id === 'name') { val = r.name; style = 'style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9;"'; }
+                else if (col.id === 'birthday') val = r.birthday;
+                else if (col.id === 'phone') val = r.phone;
+                else if (col.id === 'subjectCode') val = r.subjectCode || '';
+                else if (col.id === 'filename') val = r.filename;
+                else if (col.id === 'correctCount') { val = r.correctCount; style = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600;"'; }
+                else if (col.id === 'score') { val = r.score; style = 'style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700;"'; }
+                else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
+                else if (col.id === 'rank') { val = r.rank || ''; style = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700;"'; }
+                else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
+                else if (col.id === 'wrongCount') val = r.wrongCount;
+                else if (col.id === 'totalPossible') val = r.totalPossible;
+                else if (col.id && col.id.startsWith('etc_')) val = r.etcFields[col.etcName || col.id.replace('etc_', '')] || '';
+                html += `<td ${style}>${val}</td>`;
+            });
+            html += `</tr>`;
         });
 
         html += `</tbody></table></div>`;
