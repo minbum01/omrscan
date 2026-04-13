@@ -136,7 +136,7 @@ const Scoring = {
         const images = App.state.images || [];
         const students = App.state.students || [];
 
-        // 1단계: 이미지에서 OMR 데이터 추출
+        // 1단계: 이미지에서 OMR 데이터 추출 (과목별 분리)
         const omrRows = [];
         images.forEach((img, imgIdx) => {
             if (!img.results || !img.gradeResult) return;
@@ -145,12 +145,24 @@ const Scoring = {
                 imgIdx, filename: img._originalName || img.name || '',
                 examNo: '', name: '', birthday: '', phone: '', subjectCode: '',
                 etcFields: {},
+                // 하위호환: 전체 합산 값
                 score: img.gradeResult.score || 0,
                 totalPossible: img.gradeResult.totalPossible || 0,
                 correctCount: img.gradeResult.correctCount || 0,
                 wrongCount: img.gradeResult.wrongCount || 0,
                 answers: [], _matched: false,
+                // 다과목 구조
+                subjects: {},          // { 국어: {score, correctCount, wrongCount, totalPossible, answers}, ... }
+                totalScore: 0,
+                totalCorrect: 0,
+                totalWrong: 0,
+                totalMax: 0,
             };
+
+            // ROI별 정답 영역 순회 — details와 순서 일치
+            const details = img.gradeResult.details || [];
+            let detailCursor = 0;
+            const scorePerQ = (App.state.answerKey && App.state.answerKey.scorePerQuestion) || 5;
 
             img.rois.forEach((roi, roiIdx) => {
                 if (!roi.settings) return;
@@ -171,22 +183,54 @@ const Scoring = {
                 else if (type === 'subject_code') row.subjectCode = digits;
                 else if (type === 'etc') row.etcFields[roi.settings.name || '기타'] = digits;
                 else if (type === 'subject_answer') {
+                    // 과목명: ROI 이름 (이름 없으면 "과목N")
+                    const subjectName = (roi.settings.name && roi.settings.name.trim()) || `과목${roiIdx + 1}`;
+                    if (!row.subjects[subjectName]) {
+                        row.subjects[subjectName] = {
+                            score: 0, correctCount: 0, wrongCount: 0, totalPossible: 0, answers: [],
+                        };
+                    }
+                    const sub = row.subjects[subjectName];
+                    const labels = roi.settings.choiceLabels;
+
                     (res.rows || []).forEach(r => {
-                        const labels = roi.settings.choiceLabels;
                         const markedLabel = r.markedAnswer !== null && labels
                             ? (labels[r.markedAnswer - 1] || String(r.markedAnswer))
                             : (r.markedAnswer !== null ? String(r.markedAnswer) : '');
-                        row.answers.push({ q: r.questionNumber, marked: r.markedAnswer, markedLabel, isCorrect: false });
+
+                        const detail = details[detailCursor++] || null;
+                        const ans = {
+                            q: r.questionNumber,
+                            marked: r.markedAnswer,
+                            markedLabel,
+                            isCorrect: detail ? !!detail.isCorrect : false,
+                            correctAnswer: detail ? detail.correctAnswer : null,
+                            subject: subjectName,
+                        };
+                        sub.answers.push(ans);
+                        row.answers.push(ans); // 하위호환: 전체 합쳐서도 제공
+
+                        if (detail && detail.correctAnswer !== null && detail.correctAnswer !== undefined) {
+                            sub.totalPossible += scorePerQ;
+                            if (detail.isCorrect) {
+                                sub.correctCount++;
+                                sub.score += detail.score || scorePerQ;
+                            } else {
+                                sub.wrongCount++;
+                            }
+                        }
                     });
                 }
             });
 
-            if (img.gradeResult.details) {
-                img.gradeResult.details.forEach(d => {
-                    const ans = row.answers.find(a => a.q === d.questionNumber);
-                    if (ans) { ans.isCorrect = d.isCorrect; ans.correctAnswer = d.correctAnswer; }
-                });
-            }
+            // 전체 합산 (다과목일 때는 subjects의 합계 == gradeResult 값)
+            Object.values(row.subjects).forEach(s => {
+                row.totalScore += s.score;
+                row.totalCorrect += s.correctCount;
+                row.totalWrong += s.wrongCount;
+                row.totalMax += s.totalPossible;
+            });
+
             omrRows.push(row);
         });
 
@@ -224,7 +268,9 @@ const Scoring = {
                     birthday: st.birth || '', phone: st.phone || '',
                     subjectCode: '', etcFields: {},
                     score: '', totalPossible: '', correctCount: '', wrongCount: '',
-                    answers: [], _matched: false, _noOmr: true,
+                    answers: [], subjects: {},
+                    totalScore: '', totalCorrect: '', totalWrong: '', totalMax: '',
+                    _matched: false, _noOmr: true,
                 });
             }
         });
@@ -246,6 +292,28 @@ const Scoring = {
         // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
 
         return rows;
+    },
+
+    // ==========================================
+    // 과목 관련 헬퍼
+    // ==========================================
+    // rows에서 등장한 모든 과목명을 순서대로 반환 (첫 등장 순)
+    getSubjectList(rows) {
+        const seen = [];
+        const set = new Set();
+        rows.forEach(r => {
+            if (!r.subjects) return;
+            Object.keys(r.subjects).forEach(name => {
+                if (!set.has(name)) { set.add(name); seen.push(name); }
+            });
+        });
+        return seen;
+    },
+
+    // 특정 행의 과목 데이터 가져오기 (없으면 null)
+    getSubjectData(row, subjectName) {
+        if (!row || !row.subjects) return null;
+        return row.subjects[subjectName] || null;
     },
 
     // ==========================================
