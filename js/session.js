@@ -210,6 +210,7 @@ const SessionManager = {
             App.state.matchFields = data.matchFields || { name: true, birth: false, examNo: false, phone: false };
             App.state.answerKey = data.answerKey || null;
             App.state.images = [];
+            App.state.deletedImages = [];
             App.state.currentIndex = -1;
 
             this.currentSessionName = name;
@@ -219,6 +220,12 @@ const SessionManager = {
             this._hasUnsavedChanges = false;
             this._updateHeader();
 
+            // 활성/삭제 이미지 분류용 맵 (파일명 기준)
+            const activeMap = new Map();
+            (data.imageResults || []).forEach(r => { if (r.filename) activeMap.set(r.filename, r); });
+            const deletedMap = new Map();
+            (data.deletedImageResults || []).forEach(r => { if (r.filename) deletedMap.set(r.filename, r); });
+
             // 이미지 자동 로드 (Electron)
             if (imageFiles.length > 0) {
                 Toast.info(`이미지 ${imageFiles.length}장 로딩 중...`);
@@ -227,9 +234,12 @@ const SessionManager = {
                     const img = new Image();
                     img.onload = () => {
                         const thumb = typeof ImageManager !== 'undefined' ? ImageManager.createThumbnail(img) : null;
-                        // ROI 설정 복원 (저장된 imageResults에서)
-                        const savedResult = data.imageResults && data.imageResults[idx] ? data.imageResults[idx] : null;
-                        App.state.images.push({
+                        // 저장된 결과 복원 (우선 파일명 매칭 → 없으면 idx 기반 fallback)
+                        const isDeleted = deletedMap.has(imgFile.filename);
+                        const savedResult = isDeleted
+                            ? deletedMap.get(imgFile.filename)
+                            : (activeMap.get(imgFile.filename) || (data.imageResults && data.imageResults[idx]) || null);
+                        const imgObj = {
                             name: imgFile.filename,
                             _originalName: imgFile.filename,
                             imgElement: img,
@@ -237,7 +247,9 @@ const SessionManager = {
                             rois: savedResult ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null })) : [],
                             results: savedResult && savedResult.results ? savedResult.results : null,
                             gradeResult: savedResult ? savedResult.gradeResult : null,
-                        });
+                        };
+                        if (isDeleted) App.state.deletedImages.push(imgObj);
+                        else App.state.images.push(imgObj);
                         loaded++;
                         if (loaded === imageFiles.length) {
                             if (typeof ImageManager !== 'undefined') {
@@ -245,7 +257,9 @@ const SessionManager = {
                                 if (App.state.images.length > 0) ImageManager.select(0);
                             }
                             if (typeof UI !== 'undefined') UI.updateRightPanel();
-                            Toast.success(`세션 "${name}" 로드 완료 (${loaded}장)`);
+                            const activeCount = App.state.images.length;
+                            const deletedCount = App.state.deletedImages.length;
+                            Toast.success(`세션 "${name}" 로드 완료 (활성 ${activeCount}장${deletedCount > 0 ? `, 삭제됨 ${deletedCount}장` : ''})`);
                         }
                     };
                     img.onerror = () => {
@@ -276,6 +290,29 @@ const SessionManager = {
         }
 
         const name = this.currentSessionName;
+
+        // 이미지 1개 → 저장용 메타로 변환
+        const serializeImage = (img) => ({
+            filename: img._originalName || img.name || '',
+            rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
+            gradeResult: img.gradeResult || null,
+            results: (img.results || []).map(res => ({
+                roiIndex: res.roiIndex,
+                numQuestions: res.numQuestions,
+                numChoices: res.numChoices,
+                rows: (res.rows || []).map(row => ({
+                    questionNumber: row.questionNumber,
+                    markedAnswer: row.markedAnswer,
+                    markedIndices: row.markedIndices,
+                    multiMarked: row.multiMarked,
+                    numChoices: row.numChoices,
+                    corrected: row.corrected || false,
+                    _userCorrected: row._userCorrected || false,
+                    undetected: row.undetected || false,
+                })),
+            })),
+        });
+
         const data = {
             sessionName: name,
             examName: this.currentExamName || null,
@@ -287,33 +324,15 @@ const SessionManager = {
             matchFields: App.state.matchFields || {},
             answerKey: App.state.answerKey || null,
             imageCount: (App.state.images || []).length,
-            imageResults: (App.state.images || []).map(img => ({
-                filename: img._originalName || img.name || '',
-                rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
-                gradeResult: img.gradeResult || null,
-                // 분석 결과 저장 (블롭 좌표 제외, 답안+교정 데이터만)
-                results: (img.results || []).map(res => ({
-                    roiIndex: res.roiIndex,
-                    numQuestions: res.numQuestions,
-                    numChoices: res.numChoices,
-                    rows: (res.rows || []).map(row => ({
-                        questionNumber: row.questionNumber,
-                        markedAnswer: row.markedAnswer,
-                        markedIndices: row.markedIndices,
-                        multiMarked: row.multiMarked,
-                        numChoices: row.numChoices,
-                        corrected: row.corrected || false,
-                        _userCorrected: row._userCorrected || false,
-                        undetected: row.undetected || false,
-                    })),
-                })),
-            })),
+            imageResults: (App.state.images || []).map(serializeImage),
+            // 삭제된 이미지도 세션에 보존 (복원 가능)
+            deletedImageResults: (App.state.deletedImages || []).map(serializeImage),
         };
 
         try {
             if (this.isElectron) {
-                // 이미지 데이터 추출 (base64)
-                const imageDataArr = (App.state.images || []).map(img => {
+                // 이미지 → base64 변환 (활성 + 삭제 모두 저장하여 복원 가능)
+                const imgToData = (img) => {
                     try {
                         const c = document.createElement('canvas');
                         c.width = img.imgElement.naturalWidth || img.imgElement.width;
@@ -324,7 +343,10 @@ const SessionManager = {
                             dataUrl: c.toDataURL('image/jpeg', 0.9)
                         };
                     } catch (e) { return null; }
-                }).filter(Boolean);
+                };
+                const activeArr = (App.state.images || []).map(imgToData).filter(Boolean);
+                const deletedArr = (App.state.deletedImages || []).map(imgToData).filter(Boolean);
+                const imageDataArr = [...activeArr, ...deletedArr];
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);
                 if (!result.success) throw new Error(result.error);
