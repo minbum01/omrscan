@@ -10,6 +10,7 @@ const UI = {
         'exam_no':        { label: '수험번호', icon: '🔢' },
         'phone':          { label: '전화번호', icon: '📞' },
         'subject_code':   { label: '과목 코드', icon: '📋' },
+        'etc':            { label: '기타', icon: '📎' },
     },
 
     // 모드별 기본 임계값 (단일 진실 소스)
@@ -148,6 +149,15 @@ const UI = {
         const hasGrade = imgObj.gradeResult !== null;
 
         let html = '';
+
+        // 채점 탭 버튼 (채점된 이미지가 있을 때)
+        const hasAnyGrade = App.state.images.some(img => img.gradeResult);
+        if (hasAnyGrade) {
+            html += `<div style="margin-bottom:8px;">
+                <button class="btn btn-sm" style="width:100%; font-size:11px; padding:5px; background:var(--blue-light); color:var(--blue); font-weight:600;"
+                    onclick="UI.openScoringPanel()">채점 통계 열기</button>
+            </div>`;
+        }
 
         // 채점 요약 (있으면)
         if (hasGrade) {
@@ -402,7 +412,7 @@ const UI = {
                     const labels = s.choiceLabels || null;
                     const numC = s.numChoices || res.numChoices || 5;
 
-                    if (s.type === 'birthday' || s.type === 'exam_no' || s.type === 'phone' || s.type === 'subject_code') {
+                    if (s.type === 'birthday' || s.type === 'exam_no' || s.type === 'phone' || s.type === 'subject_code' || s.type === 'etc') {
                         // 숫자 판독 결과 (그리드 대신 문자열)
                         const digits = res.rows.map(r => {
                             if (r.markedAnswer !== null) {
@@ -1010,6 +1020,28 @@ const UI = {
         // 팝업이 없을 때만 패널 전체 리렌더 (팝업 있으면 팝업 유지)
         if (!document.getElementById('roi-settings-popup')) this.updateRightPanel();
         Toast.info(`"${subjectName}" 선택됨 (시작번호: ${s.startNum})`);
+    },
+
+    openScoringPanel() {
+        const existing = document.getElementById('scoring-modal');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'scoring-modal';
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal" style="width:90vw; max-width:1200px; max-height:90vh;">
+                <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2>채점 통계</h2>
+                    <button class="btn btn-sm" onclick="document.getElementById('scoring-modal').remove()">닫기</button>
+                </div>
+                <div class="modal-body" id="scoring-content" style="overflow-y:auto; max-height:75vh;"></div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        if (typeof Scoring !== 'undefined') {
+            Scoring.renderScoringPanel(document.getElementById('scoring-content'));
+        }
     },
 
     toggleAnswerEdit(idx) {
