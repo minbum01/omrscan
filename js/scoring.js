@@ -1,24 +1,21 @@
 // ============================================
-// scoring.js - 채점 통계 엔진 + 채점 탭 UI
+// scoring.js - 다과목 채점 통계 엔진 + 채점 탭 UI
 // ============================================
 
 const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
-    _showColumnSettings: false,
-    _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 성적 내림차순
-    // 문항분석 그룹 비율 (사용자 커스터마이징)
+    _sortMode: 'student',
+    _selectedSubject: null, // null = 첫 번째 과목
     _upperPct: 27,
     _lowerPct: 27,
-    // 별색 처리
-    _manualHL: {},     // 수동 클릭: { 'q1_rate': '#fecaca' }
+    _manualHL: {},
     _selectedColor: '#fecaca',
     _colors: [
         { c: '#fecaca', l: '빨강' }, { c: '#fed7aa', l: '주황' },
         { c: '#fef08a', l: '노랑' }, { c: '#bbf7d0', l: '초록' },
         { c: '#bfdbfe', l: '파랑' }, { c: '#e9d5ff', l: '보라' },
     ],
-    // 규칙 기반 별색
     _hlRules: [
         { id: 'rate_low', label: '정답률 이하', type: 'rate', op: '<=', value: 40, color: '#fecaca', on: false },
         { id: 'rate_high', label: '정답률 이상', type: 'rate', op: '>=', value: 80, color: '#bbf7d0', on: false },
@@ -26,130 +23,28 @@ const Scoring = {
         { id: 'disc_neg', label: '변별도 음수', type: 'disc', op: '<', value: 0, color: '#fecaca', on: false },
         { id: 'attractive', label: '매력적 오답', type: 'attractive', color: '#fed7aa', on: false, desc: '정답보다 많이 선택된 오답 선택지' },
     ],
-
-    // OMR 결과표 열 설정 (사용자 커스터마이징)
-    _omrColumns: null, // null이면 기본값 사용
-    _getOMRColumns() {
-        if (this._omrColumns) return this._omrColumns;
-
-        // 기본 열 (디폴트 표시)
-        const cols = [
-            { id: 'examNo', label: '응시번호', type: 'info', visible: true },
-            { id: 'name', label: '성명', type: 'info', visible: true },
-            { id: 'score', label: '점수', type: 'info', visible: true },
-        ];
-
-        // OMR 영역에서 가져올 수 있는 추가 열 (디폴트 비표시)
-        const roiCols = [
-            { id: 'birthday', label: '생년월일', type: 'info', visible: false },
-            { id: 'phone', label: '전화번호', type: 'info', visible: false },
-            { id: 'subjectCode', label: '과목코드', type: 'info', visible: false },
-            { id: 'correctCount', label: '맞은개수', type: 'info', visible: false },
-            { id: 'wrongCount', label: '틀린개수', type: 'info', visible: false },
-            { id: 'totalPossible', label: '만점', type: 'info', visible: false },
-            { id: 'rank', label: '석차', type: 'info', visible: false },
-            { id: 'tScore', label: '표준점수', type: 'info', visible: false },
-            { id: 'percentile', label: '백분위', type: 'info', visible: false },
-            { id: 'filename', label: '파일명', type: 'info', visible: false },
-        ];
-
-        // 기타(etc) ROI 영역들도 추가
-        const etcNames = new Set();
-        (App.state.images || []).forEach(img => {
-            (img.rois || []).forEach(roi => {
-                if (roi.settings && roi.settings.type === 'etc' && roi.settings.name) {
-                    etcNames.add(roi.settings.name);
-                }
-            });
-        });
-        etcNames.forEach(name => {
-            roiCols.push({ id: 'etc_' + name, label: name, type: 'info', visible: false, etcName: name });
-        });
-
-        cols.push(...roiCols);
-
-        // 마킹 + 정오
-        for (let i = 1; i <= this._defaultMaxQ; i++) {
-            cols.push({ id: `q${i}`, label: `${i}번`, type: 'answer', qNum: i, visible: true });
-        }
-        for (let i = 1; i <= this._defaultMaxQ; i++) {
-            cols.push({ id: `ox${i}`, label: `${i}번`, type: 'ox', qNum: i, visible: true });
-        }
-        this._omrColumns = cols;
-        return cols;
-    },
-
-    // 열 토글
-    toggleColumn(colId) {
-        const cols = this._getOMRColumns();
-        const col = cols.find(c => c.id === colId);
-        if (col) col.visible = !col.visible;
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 열 이름 변경
-    renameColumn(colId, newLabel) {
-        const cols = this._getOMRColumns();
-        const col = cols.find(c => c.id === colId);
-        if (col) col.label = newLabel;
-    },
-
-    // 열 순서 이동
-    moveColumn(colId, direction) {
-        const cols = this._getOMRColumns();
-        const idx = cols.findIndex(c => c.id === colId);
-        if (idx < 0) return;
-        const newIdx = idx + direction;
-        if (newIdx < 0 || newIdx >= cols.length) return;
-        [cols[idx], cols[newIdx]] = [cols[newIdx], cols[idx]];
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 열 추가
-    addColumn(afterColId, label) {
-        const cols = this._getOMRColumns();
-        const idx = afterColId ? cols.findIndex(c => c.id === afterColId) : cols.length - 1;
-        const newId = 'custom_' + Date.now();
-        cols.splice(idx + 1, 0, { id: newId, label: label || '새 열', type: 'custom', visible: true });
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 열 삭제
-    removeColumn(colId) {
-        const cols = this._getOMRColumns();
-        const idx = cols.findIndex(c => c.id === colId);
-        if (idx >= 0) cols.splice(idx, 1);
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 문항수 변경
-    setMaxQ(n) {
-        this._defaultMaxQ = Math.max(1, Math.min(100, parseInt(n) || 40));
-        this._omrColumns = null; // 리셋
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
+    _highlightCol: null,
+    _clickTimer: null,
+    _omrColumns: null,
+    _reportColumns: null,
 
     // ==========================================
-    // 데이터 수집 (시험인원 등록 순서 기준)
+    // 다과목 데이터 수집
     // ==========================================
     collectData() {
         const images = App.state.images || [];
         const students = App.state.students || [];
 
-        // 1단계: 이미지에서 OMR 데이터 추출
-        const omrRows = [];
+        // 1단계: 이미지별 과목별 데이터 추출
+        const imgData = []; // { examNo, name, ..., subjects: { '국어': {...}, '영어': {...} } }
         images.forEach((img, imgIdx) => {
-            if (!img.results || !img.gradeResult) return;
+            if (!img.results) return;
 
-            const row = {
+            const entry = {
                 imgIdx, filename: img._originalName || img.name || '',
                 examNo: '', name: '', birthday: '', phone: '', subjectCode: '',
                 etcFields: {},
-                score: img.gradeResult.score || 0,
-                totalPossible: img.gradeResult.totalPossible || 0,
-                correctCount: img.gradeResult.correctCount || 0,
-                wrongCount: img.gradeResult.wrongCount || 0,
-                answers: [], _matched: false,
+                subjects: {},
             };
 
             img.rois.forEach((roi, roiIdx) => {
@@ -157,6 +52,8 @@ const Scoring = {
                 const res = img.results[roiIdx];
                 if (!res) return;
                 const type = roi.settings.type;
+                const subjName = roi.settings.name || '';
+
                 const digits = (res.rows || []).map(r => {
                     if (r.markedAnswer !== null) {
                         const labels = roi.settings.choiceLabels;
@@ -165,1017 +62,633 @@ const Scoring = {
                     return '?';
                 }).join('');
 
-                if (type === 'exam_no' || type === 'phone_exam') row.examNo = digits;
-                else if (type === 'phone') row.phone = digits;
-                else if (type === 'birthday') row.birthday = digits;
-                else if (type === 'subject_code') row.subjectCode = digits;
-                else if (type === 'etc') row.etcFields[roi.settings.name || '기타'] = digits;
-                else if (type === 'subject_answer') {
+                if (type === 'exam_no' || type === 'phone_exam') entry.examNo = digits;
+                else if (type === 'phone') entry.phone = digits;
+                else if (type === 'birthday') entry.birthday = digits;
+                else if (type === 'subject_code') entry.subjectCode = digits;
+                else if (type === 'etc') entry.etcFields[subjName || '기타'] = digits;
+                else if (type === 'subject_answer' && subjName) {
+                    if (!entry.subjects[subjName]) {
+                        entry.subjects[subjName] = { score: 0, correctCount: 0, wrongCount: 0, totalPossible: 0, answers: [] };
+                    }
+                    const subj = entry.subjects[subjName];
+
+                    // 채점 결과에서 해당 ROI 점수 추출
+                    if (img.gradeResult && img.gradeResult.details) {
+                        const startNum = roi.settings.startNum || 1;
+                        const numQ = roi.settings.numQuestions || 0;
+                        img.gradeResult.details.forEach(d => {
+                            if (d.questionNumber >= startNum && d.questionNumber < startNum + numQ) {
+                                if (d.isCorrect) { subj.correctCount++; subj.score += (d.score || 0); }
+                                else subj.wrongCount++;
+                                subj.totalPossible += (d.score || 0) + (d.isCorrect ? 0 : (img.gradeResult.totalPossible > 0 ? img.gradeResult.totalPossible / (img.gradeResult.correctCount + img.gradeResult.wrongCount || 1) : 0));
+                            }
+                        });
+                    }
+
                     (res.rows || []).forEach(r => {
                         const labels = roi.settings.choiceLabels;
                         const markedLabel = r.markedAnswer !== null && labels
                             ? (labels[r.markedAnswer - 1] || String(r.markedAnswer))
                             : (r.markedAnswer !== null ? String(r.markedAnswer) : '');
-                        row.answers.push({ q: r.questionNumber, marked: r.markedAnswer, markedLabel, isCorrect: false });
+                        const detail = img.gradeResult && img.gradeResult.details
+                            ? img.gradeResult.details.find(d => d.questionNumber === r.questionNumber) : null;
+                        subj.answers.push({
+                            q: r.questionNumber, marked: r.markedAnswer, markedLabel,
+                            isCorrect: detail ? detail.isCorrect : false,
+                            correctAnswer: detail ? detail.correctAnswer : null,
+                        });
                     });
                 }
             });
 
-            if (img.gradeResult.details) {
-                img.gradeResult.details.forEach(d => {
-                    const ans = row.answers.find(a => a.q === d.questionNumber);
-                    if (ans) { ans.isCorrect = d.isCorrect; ans.correctAnswer = d.correctAnswer; }
+            // 과목이 없는 이미지 (subject_answer ROI에 이름 없는 경우) — 기존 호환
+            if (Object.keys(entry.subjects).length === 0 && img.gradeResult) {
+                entry.subjects['기본'] = {
+                    score: img.gradeResult.score || 0,
+                    correctCount: img.gradeResult.correctCount || 0,
+                    wrongCount: img.gradeResult.wrongCount || 0,
+                    totalPossible: img.gradeResult.totalPossible || 0,
+                    answers: [],
+                };
+                // answers 수집
+                img.rois.forEach((roi, roiIdx) => {
+                    if (!roi.settings || roi.settings.type !== 'subject_answer') return;
+                    const res = img.results[roiIdx];
+                    if (!res) return;
+                    (res.rows || []).forEach(r => {
+                        const labels = roi.settings.choiceLabels;
+                        const ml = r.markedAnswer !== null && labels ? (labels[r.markedAnswer-1]||String(r.markedAnswer)) : (r.markedAnswer!=null?String(r.markedAnswer):'');
+                        const det = img.gradeResult.details ? img.gradeResult.details.find(d=>d.questionNumber===r.questionNumber) : null;
+                        entry.subjects['기본'].answers.push({ q:r.questionNumber, marked:r.markedAnswer, markedLabel:ml, isCorrect:det?det.isCorrect:false, correctAnswer:det?det.correctAnswer:null });
+                    });
                 });
             }
-            omrRows.push(row);
+
+            imgData.push(entry);
         });
 
-        // 2단계: 시험인원 등록 순서 기준으로 정렬
-        if (students.length === 0) return omrRows; // 인원 미등록 시 이미지 순
-
-        const rows = [];
-        const usedOmr = new Set();
-
-        students.forEach(st => {
-            // 인원 → OMR 매칭
-            const matched = omrRows.find((r, i) => {
-                if (usedOmr.has(i)) return false;
-                if (st.examNo && r.examNo && st.examNo === r.examNo) return true;
-                if (st.phone && r.phone && st.phone === r.phone) return true;
-                if (st.birth && r.birthday && st.birth === r.birthday) return true;
-                return false;
-            });
-
-            if (matched) {
-                const idx = omrRows.indexOf(matched);
-                usedOmr.add(idx);
-                // 인원 정보로 보완
-                matched.name = st.name || matched.name;
-                if (!matched.birthday && st.birth) matched.birthday = st.birth;
-                if (!matched.phone && st.phone) matched.phone = st.phone;
-                if (!matched.examNo && st.examNo) matched.examNo = st.examNo;
-                matched._matched = true;
-                rows.push(matched);
+        // 2단계: 학생별 합산 (수험번호/전화번호로 같은 학생 매칭)
+        const studentMap = new Map(); // key → merged entry
+        imgData.forEach(entry => {
+            const key = entry.examNo || entry.phone || ('img_' + entry.imgIdx);
+            if (studentMap.has(key)) {
+                const existing = studentMap.get(key);
+                // 과목 합산
+                Object.entries(entry.subjects).forEach(([subj, data]) => {
+                    if (!existing.subjects[subj]) {
+                        existing.subjects[subj] = { ...data, answers: [...data.answers] };
+                    } else {
+                        const es = existing.subjects[subj];
+                        es.score += data.score;
+                        es.correctCount += data.correctCount;
+                        es.wrongCount += data.wrongCount;
+                        es.totalPossible += data.totalPossible;
+                        es.answers.push(...data.answers);
+                    }
+                });
+                // 정보 보완
+                if (!existing.name && entry.name) existing.name = entry.name;
+                if (!existing.birthday && entry.birthday) existing.birthday = entry.birthday;
+                Object.assign(existing.etcFields, entry.etcFields);
             } else {
-                // OMR 없는 인원 → 공란 행
-                rows.push({
-                    imgIdx: -1, filename: '',
-                    examNo: st.examNo || '', name: st.name || '',
-                    birthday: st.birth || '', phone: st.phone || '',
-                    subjectCode: '', etcFields: {},
-                    score: '', totalPossible: '', correctCount: '', wrongCount: '',
-                    answers: [], _matched: false, _noOmr: true,
-                });
+                studentMap.set(key, { ...entry, subjects: { ...entry.subjects } });
             }
         });
 
-        // 매칭 안 된 OMR도 추가 (미등록 인원)
-        omrRows.forEach((r, i) => {
-            if (!usedOmr.has(i)) rows.push(r);
+        let rows = [...studentMap.values()];
+
+        // 총점 계산
+        rows.forEach(r => {
+            r.totalScore = Object.values(r.subjects).reduce((s, sub) => s + (sub.score || 0), 0);
+            r.totalCorrect = Object.values(r.subjects).reduce((s, sub) => s + (sub.correctCount || 0), 0);
+            r.totalWrong = Object.values(r.subjects).reduce((s, sub) => s + (sub.wrongCount || 0), 0);
+            r.totalPossible = Object.values(r.subjects).reduce((s, sub) => s + (sub.totalPossible || 0), 0);
         });
 
-        // 정렬 적용
+        // 3단계: 시험인원 순서 정렬 + OMR 없는 인원
+        if (students.length > 0) {
+            const ordered = [];
+            const usedKeys = new Set();
+            students.forEach(st => {
+                const matched = rows.find(r => {
+                    if (usedKeys.has(r.examNo || r.phone || 'x')) return false;
+                    return (st.examNo && r.examNo && st.examNo === r.examNo) ||
+                           (st.phone && r.phone && st.phone === r.phone);
+                });
+                if (matched) {
+                    usedKeys.add(matched.examNo || matched.phone || 'x');
+                    matched.name = st.name || matched.name;
+                    if (!matched.birthday && st.birth) matched.birthday = st.birth;
+                    ordered.push(matched);
+                } else {
+                    ordered.push({
+                        imgIdx: -1, filename: '', examNo: st.examNo || '', name: st.name || '',
+                        birthday: st.birth || '', phone: st.phone || '', subjectCode: '', etcFields: {},
+                        subjects: {}, totalScore: '', totalCorrect: '', totalWrong: '', _noOmr: true,
+                    });
+                }
+            });
+            rows.filter(r => !usedKeys.has(r.examNo || r.phone || 'x')).forEach(r => ordered.push(r));
+            rows = ordered;
+        }
+
+        // 정렬
         if (this._sortMode === 'score_desc') {
             rows.sort((a, b) => {
-                if (a._noOmr && !b._noOmr) return 1;
-                if (!a._noOmr && b._noOmr) return -1;
-                if (a._noOmr && b._noOmr) return 0;
-                return (b.score || 0) - (a.score || 0);
+                if (a._noOmr) return 1; if (b._noOmr) return -1;
+                return (b.totalScore || 0) - (a.totalScore || 0);
             });
         }
-        // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
 
         return rows;
     },
 
+    // 전체 과목 목록
+    getSubjectList(rows) {
+        const set = new Set();
+        rows.forEach(r => Object.keys(r.subjects || {}).forEach(s => set.add(s)));
+        return [...set];
+    },
+
+    // 현재 선택된 과목
+    getCurrentSubject(rows) {
+        const list = this.getSubjectList(rows);
+        if (this._selectedSubject && list.includes(this._selectedSubject)) return this._selectedSubject;
+        return list[0] || '기본';
+    },
+
     // ==========================================
-    // 통계 계산
+    // 통계 (과목별 + 총점)
     // ==========================================
-    calcStats(rows) {
-        const validRows = rows.filter(r => !r._noOmr);
+    calcStats(rows, subjectName) {
+        const validRows = rows.filter(r => !r._noOmr && r.subjects);
         if (validRows.length === 0) return null;
         const N = validRows.length;
-        const scores = validRows.map(r => r.score);
+        const scores = validRows.map(r => subjectName ? (r.subjects[subjectName]?.score || 0) : (r.totalScore || 0));
         const mean = scores.reduce((s, v) => s + v, 0) / N;
-        const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / N;
-        const stdDev = Math.sqrt(variance);
-
+        const stdDev = Math.sqrt(scores.reduce((s, v) => s + (v - mean) ** 2, 0) / N);
         const sorted = [...scores].sort((a, b) => b - a);
+
         validRows.forEach(r => {
-            r.rank = sorted.filter(s => s > r.score).length + 1;
-            r.tScore = stdDev > 0 ? ((r.score - mean) / stdDev) * 20 + 100 : 100;
-            r.percentile = ((N - r.rank) / N) * 100;
+            const sc = subjectName ? (r.subjects[subjectName]?.score || 0) : (r.totalScore || 0);
+            const key = subjectName ? `_stat_${subjectName}` : '_stat_total';
+            r[key] = {
+                rank: sorted.filter(s => s > sc).length + 1,
+                tScore: stdDev > 0 ? ((sc - mean) / stdDev) * 20 + 100 : 100,
+                percentile: ((N - (sorted.filter(s => s > sc).length + 1)) / N) * 100,
+            };
         });
 
         return { N, mean, stdDev, max: Math.max(...scores), min: Math.min(...scores) };
     },
 
     // ==========================================
-    // 문항분석
+    // 문항분석 (과목별)
     // ==========================================
-    calcItemAnalysis(rows) {
-        rows = rows.filter(r => !r._noOmr);
-        if (rows.length === 0) return [];
-        const N = rows.length;
-        const uPct = this._upperPct / 100;
-        const lPct = this._lowerPct / 100;
-        const sortedRows = [...rows].sort((a, b) => b.score - a.score);
+    calcItemAnalysis(rows, subjectName) {
+        const valid = rows.filter(r => !r._noOmr && r.subjects && r.subjects[subjectName]);
+        if (valid.length === 0) return [];
+        const N = valid.length;
+        const uPct = this._upperPct / 100, lPct = this._lowerPct / 100;
+        const sortedR = [...valid].sort((a, b) => (b.subjects[subjectName]?.score||0) - (a.subjects[subjectName]?.score||0));
         const upperN = Math.max(1, Math.ceil(N * uPct));
         const lowerN = Math.max(1, Math.ceil(N * lPct));
-        const upperRows = sortedRows.slice(0, upperN);
-        const midRows = sortedRows.slice(upperN, N - lowerN);
-        const lowerRows = sortedRows.slice(N - lowerN);
-        const upperHalf = sortedRows.slice(0, Math.ceil(N / 2));
-        const lowerHalf = sortedRows.slice(Math.ceil(N / 2));
+        const upperRows = sortedR.slice(0, upperN);
+        const midRows = sortedR.slice(upperN, N - lowerN);
+        const lowerRows = sortedR.slice(N - lowerN);
+        const upperHalf = sortedR.slice(0, Math.ceil(N / 2));
+        const lowerHalf = sortedR.slice(Math.ceil(N / 2));
 
         const allQ = new Set();
-        rows.forEach(r => r.answers.forEach(a => allQ.add(a.q)));
-        const qNumbers = [...allQ].sort((a, b) => a - b);
-
-        return qNumbers.map(q => {
-            const gc = (group) => group.filter(r => { const a = r.answers.find(x => x.q === q); return a && a.isCorrect; }).length;
-            const U = gc(upperRows), M = gc(midRows), L = gc(lowerRows), T = gc(rows);
-            const sampleAns = rows[0].answers.find(a => a.q === q);
+        valid.forEach(r => (r.subjects[subjectName]?.answers||[]).forEach(a => allQ.add(a.q)));
+        return [...allQ].sort((a, b) => a - b).map(q => {
+            const gc = group => group.filter(r => { const a = (r.subjects[subjectName]?.answers||[]).find(x=>x.q===q); return a && a.isCorrect; }).length;
+            const U = gc(upperRows), M = gc(midRows), L = gc(lowerRows), T = gc(valid);
+            const sample = valid[0].subjects[subjectName].answers.find(a => a.q === q);
             const correctRate = (T / N) * 100;
-            // 변별도 = (U - L) / ((상위비율+하위비율)/2 × N)
             const avgPct = (uPct + lPct) / 2;
             const discrimination = (avgPct * N) > 0 ? (U - L) / (avgPct * N) : 0;
 
-            // 반응분포 (상부50% / 하부50%)
-            const getDist = (group) => {
+            const getDist = group => {
                 const dist = { blank: 0, multi: 0 };
                 for (let n = 1; n <= 7; n++) dist[n] = 0;
                 group.forEach(r => {
-                    const a = r.answers.find(x => x.q === q);
+                    const a = (r.subjects[subjectName]?.answers||[]).find(x=>x.q===q);
                     if (!a || a.marked === null) dist.blank++;
-                    else if (a.marked === -1) dist.multi++; // 중복
-                    else {
-                        const key = a.marked;
-                        if (key >= 1 && key <= 7) dist[key] = (dist[key] || 0) + 1;
-                        else dist[key] = (dist[key] || 0) + 1;
-                    }
+                    else if (a.marked >= 1 && a.marked <= 7) dist[a.marked]++;
                 });
                 dist.total = group.length;
                 return dist;
             };
 
-            return { q, correctAnswer: sampleAns ? sampleAns.correctAnswer : null,
-                upper: { correct: U, wrong: upperN - U, total: upperN },
-                mid: { correct: M, wrong: midRows.length - M, total: midRows.length },
-                lower: { correct: L, wrong: lowerN - L, total: lowerN },
+            return { q, correctAnswer: sample?.correctAnswer,
+                upper: { correct: U, wrong: upperN-U, total: upperN },
+                mid: { correct: M, wrong: midRows.length-M, total: midRows.length },
+                lower: { correct: L, wrong: lowerN-L, total: lowerN },
                 totalCorrect: T, correctRate, discrimination,
-                distUpper: getDist(upperHalf),
-                distLower: getDist(lowerHalf),
-                distTotal: getDist(rows),
-            };
+                distUpper: getDist(upperHalf), distLower: getDist(lowerHalf), distTotal: getDist(valid) };
         });
     },
 
     // ==========================================
-    // CSV 다운로드
+    // CSV
     // ==========================================
-    _dl(csv, name) {
-        const n = SessionManager.currentSessionName || '';
-        const d = new Date().toISOString().slice(0, 10);
-        SubjectManager._downloadFile(csv, `${name}_${n}_${d}.csv`);
-    },
+    _dl(csv, name) { SubjectManager._downloadFile(csv, `${name}_${SessionManager.currentSessionName||''}_${new Date().toISOString().slice(0,10)}.csv`); },
 
-    downloadOMR(rows) {
-        if (!rows.length) return;
+    downloadOMR(rows, subj) {
         const maxQ = this._defaultMaxQ;
-        let csv = '응시번호,성명,점수';
+        let csv = `응시번호,성명,${subj}점수`;
         for (let i = 1; i <= maxQ; i++) csv += `,${i}번`;
         for (let i = 1; i <= maxQ; i++) csv += `,${i}번정오`;
         csv += '\n';
         rows.forEach(r => {
-            csv += `${r.examNo},${r.name},${r._noOmr ? '' : r.score}`;
-            for (let i = 1; i <= maxQ; i++) {
-                if (r._noOmr) { csv += ','; continue; }
-                const a = r.answers.find(x => x.q === i);
-                csv += `,${a ? a.markedLabel : ''}`;
-            }
-            for (let i = 1; i <= maxQ; i++) {
-                if (r._noOmr) { csv += ','; continue; }
-                const a = r.answers.find(x => x.q === i);
-                csv += `,${a ? (a.isCorrect ? 'O' : 'X') : ''}`;
-            }
+            const s = r.subjects?.[subj];
+            csv += `${r.examNo},${r.name},${s ? s.score : ''}`;
+            for (let i = 1; i <= maxQ; i++) { const a = s?.answers?.find(x=>x.q===i); csv += `,${a?a.markedLabel:''}`; }
+            for (let i = 1; i <= maxQ; i++) { const a = s?.answers?.find(x=>x.q===i); csv += `,${a?(a.isCorrect?'O':'X'):''}`; }
             csv += '\n';
         });
-        this._dl(csv, 'OMR결과표');
+        this._dl(csv, `OMR결과표_${subj}`);
     },
 
-    downloadReport(rows) {
-        if (!rows.length) return;
-        const etcKeys = [...new Set(rows.flatMap(r => Object.keys(r.etcFields)))];
-        let csv = '응시번호,성명,생년월일,수험번호';
-        etcKeys.forEach(k => csv += `,${k}`);
-        csv += ',맞은수,점수,표준점수,석차,백분위\n';
-        rows.forEach(r => {
-            csv += `${r.examNo},${r.name},${r.birthday},${r.examNo}`;
-            etcKeys.forEach(k => csv += `,${r.etcFields[k] || ''}`);
-            if (r._noOmr) {
-                csv += ',,,,,\n';
-            } else {
-                csv += `,${r.correctCount},${r.score},${r.tScore ? r.tScore.toFixed(1) : ''},${r.rank || ''},${r.percentile ? r.percentile.toFixed(1) : ''}\n`;
-            }
-        });
-        this._dl(csv, '성적일람표');
-    },
-
-    downloadItem(items) {
-        if (!items.length) return;
-        let csv = '문항,정답,상위27%O,상위27%X,중위46%O,중위46%X,하위27%O,하위27%X,정답률(%),변별도\n';
-        items.forEach(i => {
-            csv += `${i.q},${i.correctAnswer||''},${i.upper.correct},${i.upper.wrong},${i.mid.correct},${i.mid.wrong},${i.lower.correct},${i.lower.wrong},${i.correctRate.toFixed(1)},${i.discrimination.toFixed(3)}\n`;
-        });
-        this._dl(csv, '문항분석표');
+    downloadAllOMR(rows) {
+        this.getSubjectList(rows).forEach(subj => this.downloadOMR(rows, subj));
     },
 
     // ==========================================
-    // 메인 렌더링
+    // 메인 렌더
     // ==========================================
     renderScoringPanel(container) {
         const rows = this.collectData();
-        const stats = this.calcStats(rows);
-        const items = this.calcItemAnalysis(rows);
+        const subjects = this.getSubjectList(rows);
+        const curSubj = this.getCurrentSubject(rows);
 
-        let html = `
-        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-            <!-- 헤더 -->
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
-                <h1 style="font-size:22px; font-weight:700; margin:0; color:var(--text);">채점 결과</h1>
-                <span style="font-size:13px; color:var(--text-muted);">${SessionManager.currentSessionName || ''}</span>
+        // 모든 과목 + 총점 통계 계산
+        subjects.forEach(s => this.calcStats(rows, s));
+        this.calcStats(rows, null); // 총점
+        const totalStats = this.calcStats(rows, null);
+
+        let html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+                <h1 style="font-size:22px; font-weight:700; margin:0;">채점 결과</h1>
+                <span style="font-size:13px; color:var(--text-muted);">${SessionManager.currentSessionName||''} · ${subjects.length}과목</span>
             </div>`;
 
         // 요약 카드
-        if (stats) {
-            html += `
-            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:24px;">
-                ${this._statCard('응시 인원', `${stats.N}명`, '#3b82f6')}
-                ${this._statCard('평균', `${stats.mean.toFixed(1)}점`, '#8b5cf6')}
-                ${this._statCard('표준편차', `${stats.stdDev.toFixed(2)}`, '#6366f1')}
-                ${this._statCard('최고점', `${stats.max}점`, '#22c55e')}
-                ${this._statCard('최저점', `${stats.min}점`, '#ef4444')}
+        if (totalStats) {
+            html += `<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:20px;">
+                ${this._card('응시', totalStats.N+'명', '#3b82f6')}
+                ${this._card('평균', totalStats.mean.toFixed(1), '#8b5cf6')}
+                ${this._card('표준편차', totalStats.stdDev.toFixed(2), '#6366f1')}
+                ${this._card('최고', totalStats.max+'', '#22c55e')}
+                ${this._card('최저', totalStats.min+'', '#ef4444')}
             </div>`;
         }
 
-        if (rows.length === 0) {
-            html += `<div style="text-align:center; padding:60px 20px; color:var(--text-muted); font-size:15px;">
-                채점된 이미지가 없습니다.<br>분석 탭에서 분석 후 채점을 실행하세요.
-            </div></div>`;
-            container.innerHTML = html;
-            return;
+        if (rows.length === 0 || subjects.length === 0) {
+            html += `<div style="text-align:center; padding:60px; color:var(--text-muted);">채점된 데이터가 없습니다.</div></div>`;
+            container.innerHTML = html; return;
         }
 
-        // 탭 바
+        // 탭
         html += `<div style="display:flex; gap:2px; margin-bottom:16px; border-bottom:2px solid var(--border);">
-            ${this._tabBtn('omr', 'OMR 결과표')}
-            ${this._tabBtn('report', '성적일람표')}
-            ${this._tabBtn('item', '문항분석표')}
+            ${['omr','report','item','personal'].map(t => {
+                const labels = { omr:'OMR 결과표', report:'성적일람표', item:'문항분석표', personal:'개인별 성적표' };
+                const active = this._activeTab === t;
+                return `<button onclick="Scoring._activeTab='${t}'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));"
+                    style="padding:8px 18px; font-size:13px; font-weight:${active?'700':'500'}; border:none;
+                    background:${active?'white':'transparent'}; color:${active?'var(--blue)':'var(--text-muted)'};
+                    border-bottom:${active?'3px solid var(--blue)':'3px solid transparent'}; cursor:pointer;">${labels[t]}</button>`;
+            }).join('')}
         </div>`;
 
-        // 탭 내용
-        html += `<div id="scoring-tab-content">`;
-        if (this._activeTab === 'omr') html += this._renderOMR(rows);
-        else if (this._activeTab === 'report') html += this._renderReport(rows);
-        else if (this._activeTab === 'item') html += this._renderItem(items, rows.length);
-        html += `</div></div>`;
+        // 과목 선택 (OMR결과표/문항분석표)
+        if (['omr','item'].includes(this._activeTab) && subjects.length > 1) {
+            html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">
+                ${subjects.map(s => `<button class="btn btn-sm" style="font-size:11px; ${curSubj===s?'background:var(--blue);color:#fff;':''}"
+                    onclick="Scoring._selectedSubject='${s}'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">${s}</button>`).join('')}
+            </div>`;
+        }
 
+        if (this._activeTab === 'omr') html += this._renderOMR(rows, curSubj);
+        else if (this._activeTab === 'report') html += this._renderReport(rows, subjects);
+        else if (this._activeTab === 'item') html += this._renderItem(rows, curSubj);
+        else if (this._activeTab === 'personal') html += this._renderPersonal(rows, subjects);
+
+        html += `</div>`;
         container.innerHTML = html;
     },
 
-    _statCard(label, value, color) {
-        return `<div style="background:white; border-radius:10px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:4px solid ${color};">
-            <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">${label}</div>
-            <div style="font-size:20px; font-weight:700; color:${color};">${value}</div>
-        </div>`;
-    },
-
-    _tabBtn(id, label) {
-        const active = this._activeTab === id;
-        return `<button onclick="Scoring._activeTab='${id}'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));"
-            style="padding:8px 20px; font-size:13px; font-weight:${active ? '700' : '500'}; border:none;
-            background:${active ? 'white' : 'transparent'}; color:${active ? 'var(--blue)' : 'var(--text-muted)'};
-            border-bottom:${active ? '3px solid var(--blue)' : '3px solid transparent'};
-            cursor:pointer; transition:all 0.15s;">${label}</button>`;
+    _card(l, v, c) {
+        return `<div style="background:white; border-radius:10px; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:4px solid ${c};">
+            <div style="font-size:10px; color:var(--text-muted);">${l}</div>
+            <div style="font-size:18px; font-weight:700; color:${c};">${v}</div></div>`;
     },
 
     // ==========================================
-    // OMR 결과표
+    // OMR 결과표 (과목별)
     // ==========================================
-    _renderOMR(rows) {
-        const cols = this._getOMRColumns().filter(c => c.visible);
-
-        // 상단 도구
-        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-                <label style="font-size:11px;">문항수:
-                    <input type="number" value="${this._defaultMaxQ}" min="1" max="100" style="width:50px; padding:3px; font-size:11px; border:1px solid var(--border); border-radius:4px;"
-                        onchange="Scoring.setMaxQ(this.value)">
-                </label>
-                <button class="btn btn-sm" style="font-size:10px; padding:3px 8px;"
-                    onclick="Scoring._showColumnSettings=!Scoring._showColumnSettings; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
-                    ${this._showColumnSettings ? '설정 닫기' : '열 설정'}
-                </button>
+    _renderOMR(rows, subj) {
+        const maxQ = this._defaultMaxQ;
+        const sortBtns = this._sortBtns();
+        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
+            <div style="display:flex; gap:4px;">${sortBtns}</div>
+            <div style="display:flex; gap:4px;">
+                <button class="btn btn-sm" style="font-size:10px;" onclick="Scoring.downloadOMR(Scoring.collectData(),'${subj}')">CSV (${subj})</button>
+                <button class="btn btn-sm" style="font-size:10px;" onclick="Scoring.downloadAllOMR(Scoring.collectData())">CSV (전체 과목)</button>
             </div>
-            <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
-        // 뱃지 영역 (공용 함수)
-        html += this._renderBadgeBar(this._getOMRColumns, 'toggleColumn', 'omr');
+        // 동명이인 감지
+        const nameCount = {};
+        rows.forEach(r => { if (r.name) nameCount[r.name] = (nameCount[r.name]||0)+1; });
 
-        // 정렬 + 마킹/정오 토글 + 문항수
-        const allCols = this._getOMRColumns();
-        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:14px; padding:8px 12px; background:#f8fafc; border-radius:8px; flex-wrap:wrap;">
-            ${this._renderSortButtons()}
-            <div style="width:1px; height:20px; background:var(--border);"></div>
-            <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
-                    onchange="Scoring._toggleAnswerCols(this.checked)">
-                <span style="padding:2px 8px; border-radius:10px; background:#e0f2fe; color:#0369a1; font-size:10px; font-weight:600;">마킹 내용</span>
-            </label>
-            <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
-                    onchange="Scoring._toggleOXCols(this.checked)">
-                <span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:600;">정오표(O/X)</span>
-            </label>
-            <span style="font-size:10px; color:var(--text-muted); margin-left:auto;">
-                문항수: <input type="number" value="${this._defaultMaxQ}" min="1" max="100"
-                    style="width:45px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
-                    onchange="Scoring.setMaxQ(this.value)">
-            </span>
-        </div>`;
+        const th = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#e5e7eb; position:sticky; top:0; z-index:1;';
+        const td = 'padding:4px 5px; text-align:center; font-size:10px; border:1px solid #e2e8f0;';
 
-        // 테이블
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
-        <table style="border-collapse:collapse; width:100%;">
-        <thead><tr>`;
-
-        cols.forEach(col => {
-            const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
-            const bg = col.type === 'ox' ? 'background:#fef3c7;' : col.id === 'score' ? 'color:var(--blue);' : 'background:#f8fafc;';
-            html += `<th style="padding:6px 6px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} ${hl} position:sticky; top:0; z-index:1; white-space:nowrap;">${col.label}</th>`;
-        });
+        <table style="border-collapse:collapse; width:100%;"><thead><tr>
+            <th style="${th}">응시번호</th><th style="${th}">성명</th><th style="${th}">${subj} 점수</th>`;
+        for (let i = 1; i <= maxQ; i++) html += `<th style="${th}">${i}</th>`;
+        for (let i = 1; i <= maxQ; i++) html += `<th style="${th} background:#fef3c7;">${i}</th>`;
         html += `</tr></thead><tbody>`;
 
         rows.forEach((r, ri) => {
-            const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            const noOmr = r._noOmr;
-            html += `<tr style="${bg} ${noOmr ? 'opacity:0.5;' : ''}">`;
-            cols.forEach(col => {
-                const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
-                let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
-                if (noOmr && col.type !== 'info') { val = ''; html += `<td style="${style}">${val}</td>`; return; }
-                if (col.id === 'examNo') val = r.examNo;
-                else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
-                else if (col.id === 'score') { val = r.score; style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
-                else if (col.id === 'birthday') val = r.birthday;
-                else if (col.id === 'phone') val = r.phone;
-                else if (col.id === 'subjectCode') val = r.subjectCode || '';
-                else if (col.id === 'correctCount') { val = r.correctCount; style += 'color:#22c55e; font-weight:600;'; }
-                else if (col.id === 'wrongCount') { val = r.wrongCount; style += 'color:#ef4444;'; }
-                else if (col.id === 'totalPossible') val = r.totalPossible;
-                else if (col.id === 'rank') { val = r.rank || ''; style += 'font-weight:700;'; }
-                else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
-                else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
-                else if (col.id === 'filename') val = r.filename;
-                else if (col.id && col.id.startsWith('etc_')) { val = r.etcFields[col.etcName || col.id.replace('etc_','')] || ''; }
-                else if (col.type === 'answer') {
-                    const a = r.answers.find(x => x.q === col.qNum);
-                    val = a ? a.markedLabel : '';
-                } else if (col.type === 'ox') {
-                    const a = r.answers.find(x => x.q === col.qNum);
-                    val = a ? (a.isCorrect ? 'O' : 'X') : '';
-                    if (val === 'O') style += 'color:#22c55e; font-weight:700;';
-                    else if (val === 'X') style += 'color:#ef4444; font-weight:700;';
-                } else if (col.type === 'custom') {
-                    val = '';
-                }
-                html += `<td style="${style}">${val}</td>`;
-            });
+            const s = r.subjects?.[subj];
+            const dup = nameCount[r.name] > 1 && r.name;
+            const bg = dup ? 'background:#fef08a;' : (ri%2?'background:#f8fafc;':'');
+            html += `<tr style="${bg}" ${dup?'title="동명이인 또는 체킹 오류 확인 필요"':''}>
+                <td style="${td}">${r.examNo}</td>
+                <td style="${td} font-weight:600;">${r.name}</td>
+                <td style="${td} font-weight:700; color:var(--blue);">${s?s.score:''}</td>`;
+            for (let i=1;i<=maxQ;i++) { const a=s?.answers?.find(x=>x.q===i); html+=`<td style="${td}">${a?a.markedLabel:''}</td>`; }
+            for (let i=1;i<=maxQ;i++) { const a=s?.answers?.find(x=>x.q===i); const ox=a?(a.isCorrect?'O':'X'):''; html+=`<td style="${td} ${ox==='O'?'color:#22c55e;':''}${ox==='X'?'color:#ef4444;':''} font-weight:700;">${ox}</td>`; }
             html += `</tr>`;
         });
-
         html += `</tbody></table></div>`;
         return html;
     },
 
-    // 정렬 버튼
-    _renderSortButtons() {
-        const isStudent = this._sortMode === 'student';
-        const isScore = this._sortMode === 'score_desc';
-        return `
-            <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isStudent ? 'background:var(--blue); color:#fff;' : ''}"
-                onclick="Scoring._sortMode='student'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">인원명단순</button>
-            <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isScore ? 'background:var(--blue); color:#fff;' : ''}"
-                onclick="Scoring._sortMode='score_desc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 내림차순</button>`;
+    // ==========================================
+    // 성적일람표 (과목별 열 반복 + 총점)
+    // ==========================================
+    _renderReport(rows, subjects) {
+        const sortBtns = this._sortBtns();
+        const nameCount = {};
+        rows.forEach(r => { if (r.name) nameCount[r.name] = (nameCount[r.name]||0)+1; });
+
+        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <div style="display:flex; gap:4px;">${sortBtns}</div>
+            <button class="btn btn-sm" style="font-size:10px;" onclick="Scoring._downloadReport()">CSV 다운로드</button>
+        </div>`;
+
+        const th = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#e5e7eb; position:sticky; top:0; z-index:1; white-space:nowrap;';
+        const td = 'padding:4px 6px; text-align:center; font-size:11px; border:1px solid #e2e8f0;';
+
+        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
+        <table style="border-collapse:collapse; width:100%;"><thead>
+        <tr>
+            <th style="${th}" rowspan="2">응시번호</th>
+            <th style="${th}" rowspan="2">성명</th>
+            <th style="${th}" rowspan="2">생년월일</th>`;
+        subjects.forEach(s => { html += `<th style="${th} background:#dbeafe;" colspan="5">${s}</th>`; });
+        html += `<th style="${th} background:#f0fdf4;" colspan="5">총점</th></tr><tr>`;
+        const subHeaders = ['맞은수','점수','표준점수','석차','백분위'];
+        for (let i = 0; i < subjects.length + 1; i++) {
+            subHeaders.forEach(h => { html += `<th style="${th} font-size:9px;">${h}</th>`; });
+        }
+        html += `</tr></thead><tbody>`;
+
+        rows.forEach((r, ri) => {
+            const dup = nameCount[r.name] > 1 && r.name;
+            const bg = dup ? 'background:#fef08a;' : (ri%2?'background:#f8fafc;':'');
+            html += `<tr style="${bg}">
+                <td style="${td}">${r.examNo}</td>
+                <td style="${td} font-weight:600;">${r.name}</td>
+                <td style="${td}">${r.birthday||''}</td>`;
+
+            subjects.forEach(s => {
+                const sub = r.subjects?.[s];
+                const stat = r[`_stat_${s}`];
+                if (sub && stat) {
+                    html += `<td style="${td}">${sub.correctCount}</td>
+                        <td style="${td} font-weight:700; color:var(--blue);">${sub.score}</td>
+                        <td style="${td}">${stat.tScore.toFixed(1)}</td>
+                        <td style="${td} font-weight:700;">${stat.rank}</td>
+                        <td style="${td}">${stat.percentile.toFixed(1)}%</td>`;
+                } else {
+                    html += '<td style="'+td+'"></td>'.repeat(5);
+                }
+            });
+
+            // 총점
+            const tStat = r['_stat_total'];
+            if (!r._noOmr && tStat) {
+                html += `<td style="${td}">${r.totalCorrect}</td>
+                    <td style="${td} font-weight:700; color:var(--blue);">${r.totalScore}</td>
+                    <td style="${td}">${tStat.tScore.toFixed(1)}</td>
+                    <td style="${td} font-weight:700;">${tStat.rank}</td>
+                    <td style="${td}">${tStat.percentile.toFixed(1)}%</td>`;
+            } else {
+                html += '<td style="'+td+'"></td>'.repeat(5);
+            }
+            html += `</tr>`;
+        });
+        html += `</tbody></table></div>`;
+        return html;
     },
 
-    // 셀 별색 토글 (수동)
+    _downloadReport() {
+        const rows = this.collectData();
+        const subjects = this.getSubjectList(rows);
+        let csv = '응시번호,성명,생년월일';
+        subjects.forEach(s => csv += `,${s}_맞은수,${s}_점수,${s}_표준점수,${s}_석차,${s}_백분위`);
+        csv += ',총점_맞은수,총점_점수,총점_표준점수,총점_석차,총점_백분위\n';
+        rows.forEach(r => {
+            csv += `${r.examNo},${r.name},${r.birthday||''}`;
+            subjects.forEach(s => {
+                const sub=r.subjects?.[s]; const st=r[`_stat_${s}`];
+                csv += sub&&st ? `,${sub.correctCount},${sub.score},${st.tScore.toFixed(1)},${st.rank},${st.percentile.toFixed(1)}` : ',,,,,';
+            });
+            const t=r['_stat_total'];
+            csv += !r._noOmr&&t ? `,${r.totalCorrect},${r.totalScore},${t.tScore.toFixed(1)},${t.rank},${t.percentile.toFixed(1)}` : ',,,,,';
+            csv += '\n';
+        });
+        this._dl(csv, '성적일람표');
+    },
+
+    // ==========================================
+    // 문항분석표 (과목별)
+    // ==========================================
+    _renderItem(rows, subj) {
+        const items = this.calcItemAnalysis(rows, subj);
+        const valid = rows.filter(r=>!r._noOmr&&r.subjects&&r.subjects[subj]);
+        const N = valid.length;
+        const uPct = this._upperPct, lPct = this._lowerPct, mPct = 100-uPct-lPct;
+
+        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:8px; padding:4px 10px; background:#f9fafb; border-radius:6px; border:1px solid var(--border);">
+                <span style="font-size:10px; font-weight:600;">그룹</span>
+                <label style="font-size:10px;">상위<input type="number" value="${uPct}" min="1" max="49" style="width:35px; padding:1px; font-size:10px; border:1px solid var(--border); border-radius:3px; text-align:center;"
+                    onchange="Scoring._upperPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%</label>
+                <span style="font-size:10px; color:var(--text-muted);">중위${mPct}%</span>
+                <label style="font-size:10px;">하위<input type="number" value="${lPct}" min="1" max="49" style="width:35px; padding:1px; font-size:10px; border:1px solid var(--border); border-radius:3px; text-align:center;"
+                    onchange="Scoring._lowerPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%</label>
+                <span style="font-size:10px; color:var(--text-muted);">총${N}명</span>
+            </div>
+            <button class="btn btn-sm" style="font-size:10px;" onclick="Scoring._dl('',' ')">CSV</button>
+        </div>`;
+
+        if (items.length === 0) { return html + '<div style="padding:20px; text-align:center; color:var(--text-muted);">데이터 없음</div>'; }
+
+        const th2 = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#e5e7eb; position:sticky; top:0; z-index:1;';
+        const td = 'padding:4px 5px; text-align:center; font-size:10px; border:1px solid #e2e8f0;';
+        const choiceNums = [1,2,3,4,5,6,7];
+
+        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
+        <table style="border-collapse:collapse; width:100%;"><thead><tr>
+            <th style="${th2}">문항</th><th style="${th2}">정답</th><th style="${th2}">구분</th>
+            <th style="${th2}">상위${uPct}%</th><th style="${th2}">중위${mPct}%</th><th style="${th2}">하위${lPct}%</th><th style="${th2}">총계</th>
+            <th style="${th2}">정답률</th><th style="${th2}">변별도</th>
+            <th style="${th2}">구분</th>
+            ${choiceNums.map(n=>`<th style="${th2}">${n}번</th>`).join('')}
+            <th style="${th2}">공백</th><th style="${th2}">중복</th><th style="${th2}">계</th>
+        </tr></thead><tbody>`;
+
+        const distC = (dist, ca) => choiceNums.map(n => {
+            const v=dist[n]||0; const isCA=ca&&ca===n;
+            return `<td style="${td} ${isCA?'font-weight:700; text-decoration:underline;':''}">${v}</td>`;
+        }).join('') + `<td style="${td}">${dist.blank||0}</td><td style="${td}">${dist.multi||0}</td><td style="${td} font-weight:600;">${dist.total||0}</td>`;
+
+        items.forEach(item => {
+            const tc = item.upper.correct+item.mid.correct+item.lower.correct;
+            const tw = item.upper.wrong+item.mid.wrong+item.lower.wrong;
+            const ca = item.correctAnswer;
+            html += `<tr>
+                <td rowspan="3" style="${td} font-weight:700; background:#e5e7eb; border-right:2px solid #94a3b8;">${item.q}</td>
+                <td rowspan="3" style="${td} font-weight:600;">${ca||''}</td>
+                <td style="${td} font-size:9px; font-weight:600;">정답</td>
+                <td style="${td}">${item.upper.correct}</td><td style="${td}">${item.mid.correct}</td><td style="${td}">${item.lower.correct}</td>
+                <td style="${td} font-weight:600;">${tc}</td>
+                <td rowspan="3" style="${td} font-weight:700;">${item.correctRate.toFixed(1)}%</td>
+                <td rowspan="3" style="${td} font-weight:700; border-right:2px solid #94a3b8;">${item.discrimination.toFixed(3)}</td>
+                <td style="${td} font-size:9px; font-weight:600;">상50%</td>${distC(item.distUpper,ca)}</tr>`;
+            html += `<tr><td style="${td} font-size:9px; font-weight:600;">오답</td>
+                <td style="${td}">${item.upper.wrong}</td><td style="${td}">${item.mid.wrong}</td><td style="${td}">${item.lower.wrong}</td>
+                <td style="${td} font-weight:600;">${tw}</td>
+                <td style="${td} font-size:9px; font-weight:600;">하50%</td>${distC(item.distLower,ca)}</tr>`;
+            html += `<tr style="border-bottom:2px solid #94a3b8;"><td style="${td} font-size:9px; font-weight:700;">계</td>
+                <td style="${td} font-weight:700;">${item.upper.total}</td><td style="${td} font-weight:700;">${item.mid.total}</td>
+                <td style="${td} font-weight:700;">${item.lower.total}</td><td style="${td} font-weight:700;">${tc+tw}</td>
+                <td style="${td} font-size:9px; font-weight:700;">계</td>${distC(item.distTotal,ca)}</tr>`;
+        });
+
+        if (items.length > 0) {
+            const avgR = items.reduce((s,i)=>s+i.correctRate,0)/items.length;
+            const avgD = items.reduce((s,i)=>s+i.discrimination,0)/items.length;
+            html += `<tr style="background:#f8fafc; font-weight:700;">
+                <td colspan="7" style="padding:6px; text-align:right; border-top:2px solid var(--border);">평균</td>
+                <td style="padding:6px; text-align:center; border-top:2px solid var(--border);">${avgR.toFixed(1)}%</td>
+                <td style="padding:6px; text-align:center; border-top:2px solid var(--border);">${avgD.toFixed(3)}</td>
+                <td colspan="11" style="border-top:2px solid var(--border);"></td></tr>`;
+        }
+        html += `</tbody></table></div>`;
+        return html;
+    },
+
+    // ==========================================
+    // 개인별 성적표
+    // ==========================================
+    _personalIdx: 0,
+    _renderPersonal(rows, subjects) {
+        const validRows = rows.filter(r => !r._noOmr);
+        if (validRows.length === 0) return '<div style="padding:40px; text-align:center; color:var(--text-muted);">데이터 없음</div>';
+
+        const idx = Math.min(this._personalIdx, validRows.length - 1);
+        const r = validRows[idx];
+
+        let html = `<div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+            <button class="btn btn-sm" ${idx<=0?'disabled':''} onclick="Scoring._personalIdx--; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">◀ 이전</button>
+            <select style="padding:4px 8px; font-size:12px; border:1px solid var(--border); border-radius:4px;" onchange="Scoring._personalIdx=parseInt(this.value); Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
+                ${validRows.map((vr, i) => `<option value="${i}" ${i===idx?'selected':''}>${vr.examNo||''} ${vr.name||'학생'+(i+1)}</option>`).join('')}
+            </select>
+            <button class="btn btn-sm" ${idx>=validRows.length-1?'disabled':''} onclick="Scoring._personalIdx++; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">다음 ▶</button>
+            <span style="font-size:11px; color:var(--text-muted);">${idx+1} / ${validRows.length}</span>
+        </div>`;
+
+        // 개인 정보 카드
+        html += `<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 2px 8px rgba(0,0,0,0.06); margin-bottom:16px;">
+            <div style="display:flex; gap:24px; align-items:center; margin-bottom:16px;">
+                <div>
+                    <div style="font-size:24px; font-weight:700;">${r.name||'이름 없음'}</div>
+                    <div style="font-size:12px; color:var(--text-muted);">수험번호: ${r.examNo||'-'} · 생년월일: ${r.birthday||'-'}</div>
+                </div>
+                <div style="margin-left:auto; text-align:right;">
+                    <div style="font-size:36px; font-weight:800; color:var(--blue);">${r.totalScore||0}<span style="font-size:16px; font-weight:400; color:var(--text-muted);">점</span></div>
+                    <div style="font-size:12px; color:var(--text-muted);">총점 석차: ${r._stat_total?.rank||'-'}등</div>
+                </div>
+            </div>
+
+            <!-- 과목별 카드 -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px;">
+                ${subjects.map(s => {
+                    const sub = r.subjects?.[s];
+                    const stat = r[`_stat_${s}`];
+                    if (!sub) return '';
+                    const pct = sub.totalPossible > 0 ? Math.round((sub.score / sub.totalPossible) * 100) : 0;
+                    const color = pct >= 80 ? '#22c55e' : pct >= 60 ? '#3b82f6' : pct >= 40 ? '#f59e0b' : '#ef4444';
+                    return `<div style="border:1px solid var(--border); border-radius:10px; padding:14px; position:relative; overflow:hidden;">
+                        <div style="position:absolute; bottom:0; left:0; right:0; height:${pct}%; background:${color}11; transition:height 0.3s;"></div>
+                        <div style="position:relative;">
+                            <div style="font-size:13px; font-weight:700;">${s}</div>
+                            <div style="font-size:28px; font-weight:800; color:${color};">${sub.score}<span style="font-size:12px; color:var(--text-muted);">/${sub.totalPossible||'?'}</span></div>
+                            <div style="font-size:11px; color:var(--text-muted);">
+                                맞음 ${sub.correctCount} · 틀림 ${sub.wrongCount}<br>
+                                ${stat?`석차 ${stat.rank}등 · 백분위 ${stat.percentile.toFixed(1)}%`:''}
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>`;
+
+        // 과목별 정오 차트
+        html += `<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+            <h3 style="font-size:14px; font-weight:700; margin:0 0 12px 0;">문항별 정오표</h3>`;
+        subjects.forEach(s => {
+            const sub = r.subjects?.[s];
+            if (!sub || !sub.answers || sub.answers.length === 0) return;
+            html += `<div style="margin-bottom:12px;">
+                <div style="font-size:12px; font-weight:600; margin-bottom:4px;">${s} (${sub.correctCount}/${sub.answers.length})</div>
+                <div style="display:flex; flex-wrap:wrap; gap:3px;">
+                    ${sub.answers.sort((a,b)=>a.q-b.q).map(a => {
+                        const bg = a.isCorrect ? '#dcfce7' : '#fee2e2';
+                        const color = a.isCorrect ? '#16a34a' : '#dc2626';
+                        return `<div style="width:28px; height:28px; border-radius:4px; background:${bg}; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:8px;">
+                            <span style="color:var(--text-muted);">${a.q}</span>
+                            <span style="font-weight:700; color:${color};">${a.isCorrect?'O':'X'}</span>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+        });
+        html += `</div>`;
+        return html;
+    },
+
+    // 정렬 버튼
+    _sortBtns() {
+        return `<button class="btn btn-sm" style="font-size:10px; ${this._sortMode==='student'?'background:var(--blue);color:#fff;':''}"
+            onclick="Scoring._sortMode='student'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">인원명단순</button>
+        <button class="btn btn-sm" style="font-size:10px; ${this._sortMode==='score_desc'?'background:var(--blue);color:#fff;':''}"
+            onclick="Scoring._sortMode='score_desc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 내림차순</button>`;
+    },
+
+    // 셀 별색 토글
     _toggleCellHL(key) {
         if (this._manualHL[key]) delete this._manualHL[key];
         else this._manualHL[key] = this._selectedColor;
         this.renderScoringPanel(document.getElementById('scoring-content'));
     },
-
-    // 규칙 기반 별색 계산
-    _calcRuleHL(items) {
-        const hl = {};
-        this._hlRules.forEach(rule => {
-            if (!rule.on) return;
-            items.forEach(item => {
-                if (rule.type === 'rate') {
-                    const v = item.correctRate;
-                    if ((rule.op === '<=' && v <= rule.value) || (rule.op === '>=' && v >= rule.value) || (rule.op === '<' && v < rule.value))
-                        hl['q'+item.q+'_rate'] = rule.color;
-                } else if (rule.type === 'disc') {
-                    const v = item.discrimination;
-                    if ((rule.op === '<=' && v <= rule.value) || (rule.op === '>=' && v >= rule.value) || (rule.op === '<' && v < rule.value))
-                        hl['q'+item.q+'_disc'] = rule.color;
-                } else if (rule.type === 'attractive' && item.distTotal && item.correctAnswer) {
-                    const caCount = item.distTotal[item.correctAnswer] || 0;
-                    for (let n = 1; n <= 7; n++) {
-                        if (n !== item.correctAnswer && (item.distTotal[n] || 0) > caCount)
-                            hl['q'+item.q+'_dt_'+n] = rule.color;
-                    }
-                }
-            });
-        });
-        // 수동이 규칙보다 우선
-        return { ...hl, ...this._manualHL };
-    },
-
-    // 성적일람표 열 설정
-    _reportColumns: null,
-    _getReportColumns() {
-        if (this._reportColumns) return this._reportColumns;
-        const cols = [
-            { id: 'examNo', label: '응시번호', type: 'info', visible: true },
-            { id: 'name', label: '성명', type: 'info', visible: true },
-            { id: 'birthday', label: '생년월일', type: 'info', visible: true },
-            { id: 'phone', label: '전화번호', type: 'info', visible: false },
-            { id: 'subjectCode', label: '과목코드', type: 'info', visible: false },
-            { id: 'filename', label: '파일명', type: 'info', visible: false },
-        ];
-        // 기타 ROI
-        const etcNames = new Set();
-        (App.state.images || []).forEach(img => {
-            (img.rois || []).forEach(roi => {
-                if (roi.settings && roi.settings.type === 'etc' && roi.settings.name) etcNames.add(roi.settings.name);
-            });
-        });
-        etcNames.forEach(name => cols.push({ id: 'etc_' + name, label: name, type: 'info', visible: true, etcName: name }));
-
-        // 성적 열
-        cols.push(
-            { id: 'correctCount', label: '맞은개수', type: 'info', visible: true },
-            { id: 'score', label: '점수', type: 'info', visible: true },
-            { id: 'tScore', label: '표준점수', type: 'info', visible: true },
-            { id: 'rank', label: '석차', type: 'info', visible: true },
-            { id: 'percentile', label: '백분위', type: 'info', visible: true },
-            { id: 'wrongCount', label: '틀린개수', type: 'info', visible: false },
-            { id: 'totalPossible', label: '만점', type: 'info', visible: false },
-        );
-        this._reportColumns = cols;
-        return cols;
-    },
-
-    // 선택된 열 하이라이트
-    _highlightCol: null,
-
-    // 공용 뱃지 UI 렌더
-    _renderBadgeBar(columnsGetter, toggleFn, prefix) {
-        const allCols = columnsGetter.call(this);
-        const active = allCols.filter(c => c.visible);
-        const inactive = allCols.filter(c => !c.visible);
-        const fnName = columnsGetter.name || '_getOMRColumns';
-
-        let html = `
-        <style>
-            .badge-area { transition: background 0.2s; }
-            .badge-area.drag-over { background: #dbeafe !important; border-color: var(--blue) !important; }
-            .scoring-badge-item {
-                padding: 4px 12px; border-radius: 14px; font-size: 11px; cursor: grab;
-                user-select: none; transition: all 0.2s ease; display: inline-block;
-            }
-            .scoring-badge-item:active { cursor: grabbing; transform: scale(1.05); }
-            .scoring-badge-item.inactive {
-                border: 1.5px dashed #cbd5e1; color: #94a3b8; background: white;
-            }
-            .scoring-badge-item.inactive:hover {
-                border-color: var(--blue); color: var(--blue); background: #eff6ff;
-                transform: translateY(-1px); box-shadow: 0 2px 4px rgba(59,130,246,0.15);
-            }
-            .scoring-badge-item.active {
-                border: 1.5px solid var(--blue); color: var(--blue); background: #eff6ff; font-weight: 600;
-            }
-            .scoring-badge-item.active:hover {
-                background: #dbeafe; transform: translateY(-1px); box-shadow: 0 2px 6px rgba(59,130,246,0.2);
-            }
-            .scoring-badge-item.active.highlighted {
-                background: var(--blue); color: white; box-shadow: 0 2px 8px rgba(59,130,246,0.3);
-            }
-            .scoring-badge-item.dragging { opacity: 0.4; transform: scale(0.95); }
-            .drop-indicator { animation: pulse 0.6s ease infinite alternate; }
-            @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
-        </style>
-        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:14px;">
-            <div style="margin-bottom:8px;">
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">사용 가능한 항목 — 아래 헤더 영역으로 드래그하세요</div>
-                <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:30px; padding:6px; border-radius:6px;"
-                    id="${prefix}-available"
-                    ondragover="Scoring._onBadgeDragOver(event);"
-                    ondragleave="Scoring._onBadgeDragLeave(event);"
-                    ondrop="Scoring._onBadgeDrop(event,'${toggleFn}','available');">
-                    ${inactive.map(c => `<span class="scoring-badge-item inactive" draggable="true" data-col-id="${c.id}"
-                        ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
-                        ondragend="this.classList.remove('dragging')">${c.label}</span>`).join('')}
-                    ${inactive.length === 0 ? '<span style="font-size:10px; color:var(--text-muted); padding:4px;">모든 항목이 추가됨</span>' : ''}
-                </div>
-            </div>
-            <div>
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">현재 표 헤더 — 드래그로 순서 변경 · 위로 드래그하여 제거 · 클릭하면 열 하이라이트</div>
-                <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:34px; padding:6px; border:1.5px solid var(--border); border-radius:8px; background:white;"
-                    id="${prefix}-active"
-                    ondragover="Scoring._onBadgeDragOver(event);"
-                    ondragleave="Scoring._onBadgeDragLeave(event);"
-                    ondrop="Scoring._onBadgeDrop(event,'${toggleFn}','active');">
-                    ${active.filter(c => c.type === 'info' || c.type === 'custom').map(c => `<span class="scoring-badge-item active ${this._highlightCol === c.id ? 'highlighted' : ''}"
-                        draggable="true" data-col-id="${c.id}" data-toggle-fn="${toggleFn}" tabindex="0"
-                        ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
-                        ondragend="this.classList.remove('dragging')"
-                        onclick="Scoring._onBadgeClick('${c.id}')"
-                        ondblclick="event.stopPropagation(); event.preventDefault(); Scoring._startBadgeRename(this,'${c.id}','${toggleFn}')"
-                        onkeydown="if(event.key==='Delete')Scoring._deleteBadge('${c.id}','${toggleFn}'); if(event.key==='Escape')Scoring._clearHighlight();"
-                        >${c.label}</span>`).join('')}
-                </div>
-            </div>
-        </div>`;
-        return html;
-    },
-
-    _onBadgeDragStart(e, colId) {
-        this._dragColId = colId;
-        e.dataTransfer.effectAllowed = 'move';
-        e.target.classList.add('dragging');
-    },
-
-    // 드래그 중 삽입 위치 인디케이터
-    _onBadgeDragOver(e) {
-        e.preventDefault();
-        const container = e.currentTarget;
-        container.classList.add('drag-over');
-
-        // 기존 인디케이터 제거
-        container.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-
-        // 삽입 위치 계산
-        const badges = container.querySelectorAll('.scoring-badge-item');
-        let insertBefore = null;
-        for (const badge of badges) {
-            const rect = badge.getBoundingClientRect();
-            if (e.clientX < rect.left + rect.width / 2) {
-                insertBefore = badge;
-                break;
-            }
-        }
-
-        // 인디케이터 삽입
-        const indicator = document.createElement('div');
-        indicator.className = 'drop-indicator';
-        indicator.style.cssText = 'width:3px; height:24px; background:var(--blue); border-radius:2px; flex-shrink:0; animation:pulse 0.6s ease infinite alternate;';
-        if (insertBefore) {
-            container.insertBefore(indicator, insertBefore);
-        } else {
-            container.appendChild(indicator);
-        }
-    },
-
-    _onBadgeDragLeave(e) {
-        e.currentTarget.classList.remove('drag-over');
-        e.currentTarget.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-    },
-
-    _getColsForToggleFn(toggleFn) {
-        return toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
-    },
-
-    _onBadgeDrop(e, toggleFn, target) {
-        e.preventDefault();
-        e.currentTarget.classList.remove('drag-over');
-        e.currentTarget.querySelectorAll('.drop-indicator').forEach(el => el.remove());
-
-        if (!this._dragColId) return;
-        const colId = this._dragColId;
-        this._dragColId = null;
-
-        const cols = this._getColsForToggleFn(toggleFn);
-        const col = cols.find(c => c.id === colId);
-        if (!col) return;
-
-        if (target === 'available') {
-            // active → available: 제거 (비활성화)
-            if (col.visible) {
-                col.visible = false;
-                this.renderScoringPanel(document.getElementById('scoring-content'));
-            }
-        } else {
-            // available → active: 추가 (활성화)
-            if (!col.visible) {
-                col.visible = true;
-            }
-
-            // 드롭 위치에 따라 순서 변경
-            const badges = e.currentTarget.querySelectorAll('.scoring-badge-item');
-            let insertBeforeId = null;
-            for (const badge of badges) {
-                if (badge.dataset.colId === colId) continue;
-                const rect = badge.getBoundingClientRect();
-                if (e.clientX < rect.left + rect.width / 2) {
-                    insertBeforeId = badge.dataset.colId;
-                    break;
-                }
-            }
-
-            // 배열에서 이동
-            const fromIdx = cols.findIndex(c => c.id === colId);
-            if (fromIdx >= 0) {
-                const [moved] = cols.splice(fromIdx, 1);
-                if (insertBeforeId) {
-                    const toIdx = cols.findIndex(c => c.id === insertBeforeId);
-                    cols.splice(toIdx >= 0 ? toIdx : cols.length, 0, moved);
-                } else {
-                    // 맨 끝 (info/custom 중)
-                    const lastInfo = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, cols.length - 1);
-                    cols.splice(lastInfo + 1, 0, moved);
-                }
-            }
-
-            this.renderScoringPanel(document.getElementById('scoring-content'));
-        }
-    },
-
-    _clickTimer: null,
-    _onBadgeClick(colId) {
-        // 더블클릭 구분용 딜레이
-        if (this._clickTimer) { clearTimeout(this._clickTimer); this._clickTimer = null; return; }
-        this._clickTimer = setTimeout(() => {
-            this._clickTimer = null;
-            this._highlightCol = colId;
-            this.renderScoringPanel(document.getElementById('scoring-content'));
-            setTimeout(() => {
-                const badge = document.querySelector(`.scoring-badge-item[data-col-id="${colId}"]`);
-                if (badge) badge.focus();
-            }, 50);
-        }, 250);
-    },
-
-    // Escape로 선택 해제
-    _clearHighlight() {
-        if (this._highlightCol) {
-            this._highlightCol = null;
-            this.renderScoringPanel(document.getElementById('scoring-content'));
-        }
-    },
-
-    // Delete 키로 뱃지 제거 (비활성화)
-    _deleteBadge(colId, toggleFn) {
-        const cols = this._getColsForToggleFn(toggleFn);
-        const col = cols.find(c => c.id === colId);
-        if (col && col.visible) {
-            col.visible = false;
-            if (this._highlightCol === colId) this._highlightCol = null;
-            this.renderScoringPanel(document.getElementById('scoring-content'));
-        }
-    },
-
-    // 더블클릭 → 인라인 이름 변경 (Electron prompt 미지원 대응)
-    _startBadgeRename(el, colId, toggleFn) {
-        const cols = this._getColsForToggleFn(toggleFn);
-        const col = cols.find(c => c.id === colId);
-        if (!col) return;
-
-        const oldLabel = col.label;
-        const rect = el.getBoundingClientRect();
-
-        // 뱃지를 input으로 교체
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = oldLabel;
-        input.style.cssText = `width:${Math.max(60, oldLabel.length * 12)}px; padding:3px 8px; border-radius:14px; border:2px solid var(--blue); font-size:11px; font-weight:600; text-align:center; outline:none;`;
-        el.textContent = '';
-        el.appendChild(input);
-        el.draggable = false;
-        input.focus();
-        input.select();
-
-        const finish = () => {
-            const newLabel = input.value.trim() || oldLabel;
-            col.label = newLabel;
-            el.draggable = true;
-            this.renderScoringPanel(document.getElementById('scoring-content'));
-        };
-
-        input.addEventListener('blur', finish);
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-            if (e.key === 'Escape') { input.value = oldLabel; input.blur(); }
-            e.stopPropagation(); // Delete 키 등 전파 방지
-        });
-    },
-
-    // 성적일람표 열 토글
-    toggleReportColumn(colId) {
-        const cols = this._getReportColumns();
-        const col = cols.find(c => c.id === colId);
-        if (col) col.visible = !col.visible;
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 드래그 앤 드롭
-    _dragColId: null,
-    _onDragStart(e, colId) {
-        this._dragColId = colId;
-        e.dataTransfer.effectAllowed = 'move';
-        e.target.style.opacity = '0.5';
-        setTimeout(() => { if (e.target) e.target.style.opacity = '1'; }, 200);
-    },
-    _onDropBadge(e) {
-        e.preventDefault();
-        if (!this._dragColId) return;
-        // 드롭 위치의 가장 가까운 뱃지 찾기
-        const badges = document.querySelectorAll('#scoring-active-badges .scoring-badge');
-        const dropX = e.clientX;
-        let insertBeforeId = null;
-        badges.forEach(badge => {
-            const rect = badge.getBoundingClientRect();
-            if (dropX < rect.left + rect.width / 2) {
-                if (!insertBeforeId) insertBeforeId = badge.dataset.colId;
-            }
-        });
-        // 순서 변경
-        const cols = this._getOMRColumns();
-        const fromIdx = cols.findIndex(c => c.id === this._dragColId);
-        if (fromIdx < 0) return;
-        const [moved] = cols.splice(fromIdx, 1);
-        if (insertBeforeId) {
-            const toIdx = cols.findIndex(c => c.id === insertBeforeId);
-            cols.splice(toIdx, 0, moved);
-        } else {
-            // 맨 끝에 추가 (info/custom 영역 끝)
-            const lastInfoIdx = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, -1);
-            cols.splice(lastInfoIdx + 1, 0, moved);
-        }
-        this._dragColId = null;
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // 마킹/정오 열 일괄 토글
-    _toggleAnswerCols(show) {
-        this._getOMRColumns().forEach(c => { if (c.type === 'answer') c.visible = show; });
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-    _toggleOXCols(show) {
-        this._getOMRColumns().forEach(c => { if (c.type === 'ox') c.visible = show; });
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-    },
-
-    // ==========================================
-    // 성적일람표
-    // ==========================================
-    _renderReport(rows) {
-        const cols = this._getReportColumns().filter(c => c.visible);
-
-        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="display:flex; gap:4px;">${this._renderSortButtons()}</div>
-            <button class="btn btn-sm" onclick="Scoring.downloadReport(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
-        </div>`;
-
-        // 뱃지 바
-        html += this._renderBadgeBar(this._getReportColumns, 'toggleReportColumn', 'report');
-
-        const th = 'style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap;"';
-        const td = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9;"';
-
-        // 열별 특수 스타일
-        const colStyle = {
-            score: 'background:#eff6ff;', correctCount: 'background:#ecfdf5;',
-            tScore: 'background:#f5f3ff;', rank: 'background:#fef3c7;', percentile: 'background:#fce7f3;',
-        };
-
-        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
-        <table style="border-collapse:collapse; width:100%;">
-        <thead><tr>`;
-        cols.forEach(col => {
-            const extra = colStyle[col.id] || '';
-            const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
-            html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${extra} ${hl}">${col.label}</th>`;
-        });
-        html += `</tr></thead><tbody>`;
-
-        rows.forEach((r, ri) => {
-            const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            html += `<tr style="${bg}">`;
-            cols.forEach(col => {
-                const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
-                let val = '', style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; ${hl}"`;
-                if (col.id === 'examNo') val = r.examNo;
-                else if (col.id === 'name') { val = r.name; style = `style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9; ${hl}"`; }
-                else if (col.id === 'birthday') val = r.birthday;
-                else if (col.id === 'phone') val = r.phone;
-                else if (col.id === 'subjectCode') val = r.subjectCode || '';
-                else if (col.id === 'filename') val = r.filename;
-                else if (col.id === 'correctCount') { val = r.correctCount; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600; ${hl}"`; }
-                else if (col.id === 'score') { val = r.score; style = `style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700; ${hl}"`; }
-                else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
-                else if (col.id === 'rank') { val = r.rank || ''; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700; ${hl}"`; }
-                else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
-                else if (col.id === 'wrongCount') val = r.wrongCount;
-                else if (col.id === 'totalPossible') val = r.totalPossible;
-                else if (col.id && col.id.startsWith('etc_')) val = r.etcFields[col.etcName || col.id.replace('etc_', '')] || '';
-                html += `<td ${style}>${val}</td>`;
-            });
-            html += `</tr>`;
-        });
-
-        html += `</tbody></table></div>`;
-        return html;
-    },
-
-    // ==========================================
-    // 문항분석표
-    // ==========================================
-    _renderItem(items, totalN) {
-        const uPct = this._upperPct;
-        const lPct = this._lowerPct;
-        const mPct = 100 - uPct - lPct;
-
-        // 설정 바
-        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
-            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:#f8fafc; border-radius:8px; border:1px solid var(--border);">
-                <span style="font-size:11px; font-weight:600;">그룹 비율</span>
-                <label style="font-size:11px; display:flex; align-items:center; gap:3px;">상위
-                    <input type="number" value="${uPct}" min="1" max="49" style="width:38px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
-                        onchange="Scoring._upperPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%
-                </label>
-                <span style="font-size:11px; color:var(--text-muted);">중위 ${mPct}%</span>
-                <label style="font-size:11px; display:flex; align-items:center; gap:3px;">하위
-                    <input type="number" value="${lPct}" min="1" max="49" style="width:38px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
-                        onchange="Scoring._lowerPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%
-                </label>
-                <span style="font-size:11px; color:var(--text-muted);">총 ${totalN}명</span>
-            </div>
-            <button class="btn btn-sm" onclick="Scoring.downloadItem(Scoring.calcItemAnalysis(Scoring.collectData()))" style="font-size:11px;">CSV 다운로드</button>
-        </div>`;
-
-        // 별색 도구: 규칙 + 수동
-        const allHL = this._calcRuleHL(items);
-
-        html += `<div style="margin-bottom:10px; padding:8px 10px; background:#f9fafb; border-radius:8px; border:1px solid var(--border);">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
-                <span style="font-size:11px; font-weight:600;">별색 규칙</span>
-                <span style="font-size:9px; color:var(--text-muted);">체크 후 기준값/색상 지정 · 셀 직접 클릭도 가능</span>
-                <button class="btn btn-sm" style="font-size:9px; padding:2px 6px; margin-left:auto;" onclick="Scoring._manualHL={}; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">수동 초기화</button>
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
-                ${this._hlRules.map((rule, ri) => `
-                <div style="display:flex; align-items:center; gap:4px; padding:3px 8px; border:1px solid ${rule.on ? rule.color : 'var(--border)'}; border-radius:6px; background:${rule.on ? rule.color+'33' : 'white'}; font-size:10px;">
-                    <input type="checkbox" ${rule.on ? 'checked' : ''} onchange="Scoring._hlRules[${ri}].on=this.checked; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
-                    <span style="font-weight:600;" ${rule.desc ? `title="${rule.desc}"` : ''}>${rule.label}${rule.desc ? ' ℹ' : ''}</span>
-                    ${rule.value !== undefined && rule.type !== 'attractive' ? `
-                        <input type="number" value="${rule.value}" step="${rule.type==='disc' ? '0.01' : '1'}" style="width:45px; padding:1px 3px; font-size:10px; border:1px solid var(--border); border-radius:3px; text-align:center;"
-                            onchange="Scoring._hlRules[${ri}].value=parseFloat(this.value); Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
-                        <span>${rule.type==='rate' ? '%' : ''}</span>
-                    ` : ''}
-                    <span onclick="const cs=Scoring._colors; const ci=cs.findIndex(c=>c.c===Scoring._hlRules[${ri}].color); Scoring._hlRules[${ri}].color=cs[(ci+1)%cs.length].c; Scoring.renderScoringPanel(document.getElementById('scoring-content'));"
-                        style="width:14px; height:14px; border-radius:3px; background:${rule.color}; cursor:pointer; border:1px solid #aaa;" title="색상 변경 (클릭)"></span>
-                </div>
-                `).join('')}
-            </div>
-            <div style="display:flex; align-items:center; gap:6px;">
-                <span style="font-size:10px; font-weight:600;">수동 별색</span>
-                <div style="display:flex; gap:3px;">
-                    ${this._colors.map(c => `<span onclick="Scoring._selectedColor='${c.c}'; document.querySelectorAll('.hl-sw').forEach(s=>s.style.outline=''); this.style.outline='2px solid #333';"
-                        class="hl-sw" title="${c.l}"
-                        style="width:16px; height:16px; border-radius:3px; background:${c.c}; cursor:pointer; border:1px solid #ccc;
-                        ${this._selectedColor === c.c ? 'outline:2px solid #333;' : ''}"></span>`).join('')}
-                </div>
-                <span style="font-size:9px; color:var(--text-muted);">색 선택 → 셀 클릭</span>
-            </div>
-        </div>`;
-
-        const thBase = 'padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border:1px solid var(--border); position:sticky; top:0;';
-
-        const choiceNums = [1,2,3,4,5,6,7];
-        const th2 = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#e5e7eb; color:#374151; position:sticky; top:0; z-index:1;';
-
-        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
-        <table style="border-collapse:collapse; width:100%;">
-        <thead>
-        <tr>
-            <th style="${th2}">문항</th>
-            <th style="${th2}">정답</th>
-            <th style="${th2}">구분</th>
-            <th style="${th2}">상위${uPct}%</th>
-            <th style="${th2}">중위${mPct}%</th>
-            <th style="${th2}">하위${lPct}%</th>
-            <th style="${th2}">총계</th>
-            <th style="${th2}">정답률</th>
-            <th style="${th2}">변별도</th>
-            <th style="${th2}">구분</th>
-            ${choiceNums.map(n => `<th style="${th2}">${n}번</th>`).join('')}
-            <th style="${th2}">공백</th>
-            <th style="${th2}">중복</th>
-            <th style="${th2}">계</th>
-        </tr>
-        </thead><tbody>`;
-
-        const td = 'padding:4px 5px; text-align:center; font-size:10px; border:1px solid #e2e8f0;';
-
-        // 반응분포 셀 헬퍼
-        const distCells = (dist, ca, qNum, group) => {
-            let h = '';
-            choiceNums.forEach(n => {
-                const v = dist[n] || 0;
-                const isCA = ca && ca === n;
-                const key = 'q'+qNum+'_d'+group+'_'+n;
-                const hl = allHL[key] ? 'background:'+allHL[key]+';' : '';
-                h += `<td style="${td} cursor:pointer; ${isCA ? 'font-weight:700; text-decoration:underline;' : ''} ${hl}"
-                    onclick="Scoring._toggleCellHL('${key}')">${v}</td>`;
-            });
-            h += `<td style="${td}">${dist.blank || 0}</td>`;
-            h += `<td style="${td}">${dist.multi || 0}</td>`;
-            h += `<td style="${td} font-weight:600;">${dist.total || 0}</td>`;
-            return h;
-        };
-
-        // 클릭 가능 셀 헬퍼
-        const cc = (key, val, extra) => {
-            const bg = allHL[key] ? 'background:'+allHL[key]+';' : '';
-            return `<td style="${td} cursor:pointer; ${extra || ''} ${bg}" onclick="Scoring._toggleCellHL('${key}')">${val}</td>`;
-        };
-        const ccR = (key, val, extra) => {
-            const bg = allHL[key] ? 'background:'+allHL[key]+';' : '';
-            return `<td rowspan="3" style="${td} cursor:pointer; vertical-align:middle; ${extra || ''} ${bg}" onclick="Scoring._toggleCellHL('${key}')">${val}</td>`;
-        };
-
-        items.forEach((item, ri) => {
-            const totalCorrect = item.upper.correct + item.mid.correct + item.lower.correct;
-            const totalWrong = item.upper.wrong + item.mid.wrong + item.lower.wrong;
-            const totalAll = totalCorrect + totalWrong;
-            const ca = item.correctAnswer;
-            const q = item.q;
-
-            // 행 1: 정답수
-            html += `<tr>
-                ${ccR('q'+q+'_num', q, 'font-weight:700; font-size:11px; border-right:2px solid #d1d5db; background:#e5e7eb;')}
-                ${ccR('q'+q+'_ans', ca || '', 'font-weight:600;')}
-                ${cc('q'+q+'_r1_lbl', '정답', 'font-size:9px; font-weight:600;')}
-                ${cc('q'+q+'_uc', item.upper.correct, '')}
-                ${cc('q'+q+'_mc', item.mid.correct, '')}
-                ${cc('q'+q+'_lc', item.lower.correct, '')}
-                ${cc('q'+q+'_tc', totalCorrect, 'font-weight:600;')}
-                ${ccR('q'+q+'_rate', item.correctRate.toFixed(1)+'%', 'font-weight:700;')}
-                ${ccR('q'+q+'_disc', item.discrimination.toFixed(3), 'font-weight:700; border-right:2px solid #d1d5db;')}
-                ${cc('q'+q+'_d1_lbl', '상50%', 'font-size:9px; font-weight:600;')}
-                ${distCells(item.distUpper, ca, q, 'u')}
-            </tr>`;
-
-            // 행 2: 오답수
-            html += `<tr>
-                ${cc('q'+q+'_r2_lbl', '오답', 'font-size:9px; font-weight:600;')}
-                ${cc('q'+q+'_uw', item.upper.wrong, '')}
-                ${cc('q'+q+'_mw', item.mid.wrong, '')}
-                ${cc('q'+q+'_lw', item.lower.wrong, '')}
-                ${cc('q'+q+'_tw', totalWrong, 'font-weight:600;')}
-                ${cc('q'+q+'_d2_lbl', '하50%', 'font-size:9px; font-weight:600;')}
-                ${distCells(item.distLower, ca, q, 'l')}
-            </tr>`;
-
-            // 행 3: 계
-            html += `<tr style="border-bottom:2px solid #94a3b8;">
-                ${cc('q'+q+'_r3_lbl', '계', 'font-size:9px; font-weight:700;')}
-                ${cc('q'+q+'_ut', item.upper.total, 'font-weight:700;')}
-                ${cc('q'+q+'_mt', item.mid.total, 'font-weight:700;')}
-                ${cc('q'+q+'_lt', item.lower.total, 'font-weight:700;')}
-                ${cc('q'+q+'_tt', totalAll, 'font-weight:700;')}
-                ${cc('q'+q+'_d3_lbl', '계', 'font-size:9px; font-weight:700;')}
-                ${distCells(item.distTotal, ca, q, 't')}
-            </tr>`;
-        });
-
-        if (items.length > 0) {
-            const avgR = items.reduce((s, i) => s + i.correctRate, 0) / items.length;
-            const avgD = items.reduce((s, i) => s + i.discrimination, 0) / items.length;
-            html += `<tr style="background:#f8fafc; font-weight:700;">
-                <td colspan="16" style="padding:8px; text-align:right; font-size:12px; border-top:2px solid var(--border);">전체 평균</td>
-                <td colspan="11" style="padding:8px; font-size:12px; border-top:2px solid var(--border);">
-                    정답률 <span style="color:var(--blue);">${avgR.toFixed(1)}%</span> · 변별도 <span style="color:var(--blue);">${avgD.toFixed(3)}</span>
-                </td>
-            </tr>`;
-        }
-
-        html += `</tbody></table></div>`;
-        return html;
-    }
 };
