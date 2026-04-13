@@ -9,6 +9,18 @@ const Scoring = {
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
+    // 별색 처리
+    _highlightCells: {},  // { 'q1_rate': '#fecaca', 'q3_disc': '#fef08a', ... }
+    _selectedColor: '#fecaca',
+    _autoHighlight: true,
+    _highlightColors: [
+        { color: '#fecaca', label: '빨강' },
+        { color: '#fed7aa', label: '주황' },
+        { color: '#fef08a', label: '노랑' },
+        { color: '#bbf7d0', label: '초록' },
+        { color: '#bfdbfe', label: '파랑' },
+        { color: '#e9d5ff', label: '보라' },
+    ],
 
     // OMR 결과표 열 설정 (사용자 커스터마이징)
     _omrColumns: null, // null이면 기본값 사용
@@ -485,6 +497,16 @@ const Scoring = {
         return html;
     },
 
+    // 셀 별색 토글
+    _toggleCellHL(key) {
+        if (this._highlightCells[key]) {
+            delete this._highlightCells[key];
+        } else {
+            this._highlightCells[key] = this._selectedColor;
+        }
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
     // 성적일람표 열 설정
     _reportColumns: null,
     _getReportColumns() {
@@ -907,6 +929,43 @@ const Scoring = {
             <button class="btn btn-sm" onclick="Scoring.downloadItem(Scoring.calcItemAnalysis(Scoring.collectData()))" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
+        // 별색 도구
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; padding:6px 10px; background:#f9fafb; border-radius:8px; border:1px solid var(--border); flex-wrap:wrap;">
+            <span style="font-size:10px; font-weight:600;">별색</span>
+            <div style="display:flex; gap:3px;">
+                ${this._highlightColors.map(c => `<span onclick="Scoring._selectedColor='${c.color}'; document.querySelectorAll('.hl-swatch').forEach(s=>s.style.outline=''); this.style.outline='2px solid #333';"
+                    class="hl-swatch" title="${c.label}"
+                    style="width:18px; height:18px; border-radius:4px; background:${c.color}; cursor:pointer; border:1px solid #d1d5db;
+                    ${this._selectedColor === c.color ? 'outline:2px solid #333;' : ''}"></span>`).join('')}
+            </div>
+            <span style="font-size:9px; color:var(--text-muted);">셀 클릭=별색 · 다시 클릭=해제</span>
+            <div style="display:flex; gap:4px; margin-left:auto;">
+                <label style="font-size:10px; cursor:pointer; display:flex; align-items:center; gap:3px;">
+                    <input type="checkbox" ${this._autoHighlight ? 'checked' : ''} onchange="Scoring._autoHighlight=this.checked; Scoring._highlightCells={}; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
+                    자동 별색
+                </label>
+                <button class="btn btn-sm" style="font-size:9px; padding:2px 6px;" onclick="Scoring._highlightCells={}; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">초기화</button>
+            </div>
+        </div>`;
+
+        // 자동 별색
+        if (this._autoHighlight) {
+            items.forEach(item => {
+                if (item.correctRate < 40) this._highlightCells['q'+item.q+'_rate'] = '#fecaca';
+                else if (item.correctRate > 80) this._highlightCells['q'+item.q+'_rate'] = '#bbf7d0';
+                if (item.discrimination < 0) this._highlightCells['q'+item.q+'_disc'] = '#fecaca';
+                else if (item.discrimination < 0.1) this._highlightCells['q'+item.q+'_disc'] = '#fef08a';
+                // 매력적 오답
+                if (item.distTotal && item.correctAnswer) {
+                    const caCount = item.distTotal[item.correctAnswer] || 0;
+                    for (let n = 1; n <= 7; n++) {
+                        if (n !== item.correctAnswer && (item.distTotal[n] || 0) > caCount)
+                            this._highlightCells['q'+item.q+'_dt_'+n] = '#fed7aa';
+                    }
+                }
+            });
+        }
+
         const thBase = 'padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border:1px solid var(--border); position:sticky; top:0;';
 
         const choiceNums = [1,2,3,4,5,6,7];
@@ -935,13 +994,16 @@ const Scoring = {
 
         const td = 'padding:4px 5px; text-align:center; font-size:10px; border:1px solid #e2e8f0;';
 
-        // 반응분포 셀 헬퍼
-        const distCells = (dist, ca) => {
+        // 반응분포 셀 헬퍼 (qNum: 문항번호, group: 'u'/'l'/'t')
+        const distCells = (dist, ca, qNum, group) => {
             let h = '';
             choiceNums.forEach(n => {
                 const v = dist[n] || 0;
                 const isCA = ca && ca === n;
-                h += `<td style="${td} ${isCA ? 'font-weight:700; text-decoration:underline;' : ''}">${v}</td>`;
+                const key = 'q'+qNum+'_d'+group+'_'+n;
+                const hl = this._highlightCells[key] ? 'background:'+this._highlightCells[key]+';' : '';
+                h += `<td style="${td} cursor:pointer; ${isCA ? 'font-weight:700; text-decoration:underline;' : ''} ${hl}"
+                    onclick="Scoring._toggleCellHL('${key}')">${v}</td>`;
             });
             h += `<td style="${td}">${dist.blank || 0}</td>`;
             h += `<td style="${td}">${dist.multi || 0}</td>`;
@@ -964,10 +1026,12 @@ const Scoring = {
                 <td style="${td}">${item.mid.correct}</td>
                 <td style="${td}">${item.lower.correct}</td>
                 <td style="${td} font-weight:600;">${totalCorrect}</td>
-                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle;">${item.correctRate.toFixed(1)}%</td>
-                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; border-right:2px solid #d1d5db;">${item.discrimination.toFixed(3)}</td>
+                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; cursor:pointer; ${this._highlightCells['q'+item.q+'_rate'] ? 'background:'+this._highlightCells['q'+item.q+'_rate']+';' : ''}"
+                    onclick="Scoring._toggleCellHL('q${item.q}_rate')">${item.correctRate.toFixed(1)}%</td>
+                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; border-right:2px solid #d1d5db; cursor:pointer; ${this._highlightCells['q'+item.q+'_disc'] ? 'background:'+this._highlightCells['q'+item.q+'_disc']+';' : ''}"
+                    onclick="Scoring._toggleCellHL('q${item.q}_disc')">${item.discrimination.toFixed(3)}</td>
                 <td style="${td} font-size:9px; font-weight:600;">상50%</td>
-                ${distCells(item.distUpper, ca)}
+                ${distCells(item.distUpper, ca, item.q, 'u')}
             </tr>`;
 
             // 행 2: 오답수
@@ -978,7 +1042,7 @@ const Scoring = {
                 <td style="${td}">${item.lower.wrong}</td>
                 <td style="${td} font-weight:600;">${totalWrong}</td>
                 <td style="${td} font-size:9px; font-weight:600;">하50%</td>
-                ${distCells(item.distLower, ca)}
+                ${distCells(item.distLower, ca, item.q, 'l')}
             </tr>`;
 
             // 행 3: 계
@@ -989,7 +1053,7 @@ const Scoring = {
                 <td style="${td} font-weight:700;">${item.lower.total}</td>
                 <td style="${td} font-weight:700;">${totalAll}</td>
                 <td style="${td} font-size:9px; font-weight:700;">계</td>
-                ${distCells(item.distTotal, ca)}
+                ${distCells(item.distTotal, ca, item.q, 't')}
             </tr>`;
         });
 
