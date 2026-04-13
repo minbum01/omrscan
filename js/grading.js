@@ -98,6 +98,7 @@ const Grading = {
         document.getElementById('ak-cancel').addEventListener('click', () => overlay.remove());
         document.getElementById('ak-clear').addEventListener('click', () => {
             App.state.answerKey = null;
+            App.syncAnswerKey(); // 현재 교시에 반영
             App.state.images.forEach(img => img.gradeResult = null);
             ImageManager.updateList();
             App.updateStatusBar();
@@ -140,6 +141,7 @@ const Grading = {
             answers,
             totalPossible: numQ * score
         };
+        App.syncAnswerKey(); // 현재 교시에 반영
 
         // 이미 분석된 이미지 재채점
         App.state.images.forEach(img => {

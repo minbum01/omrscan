@@ -117,22 +117,32 @@ const App = {
     // 반드시 App.state.images = [] 대입 직후에 호출해야 같은 참조가 유지됨
     _initPeriods(savedPeriods) {
         const firstImages = this.state.images; // 이미 [] 로 초기화된 상태
+
+        // p1: 저장된 교시 메타가 있으면 복원, 없으면 현재 state 값 사용 (하위호환)
+        const sp0 = savedPeriods && savedPeriods[0];
         const p1 = {
-            id: 'p1',
-            name: (savedPeriods && savedPeriods[0] && savedPeriods[0].name) || '1교시',
-            images: firstImages,   // App.state.images 와 같은 참조
+            id:        (sp0 && sp0.id)   || 'p1',
+            name:      (sp0 && sp0.name) || '1교시',
+            images:    firstImages,
+            answerKey: (sp0 && sp0.answerKey !== undefined) ? sp0.answerKey : (this.state.answerKey || null),
+            subjects:  (sp0 && sp0.subjects  !== undefined) ? sp0.subjects  : (this.state.subjects  || []),
         };
 
-        // 저장된 추가 교시가 있으면 빈 이미지 배열로 복원
-        // (실제 이미지는 Step 6에서 periodId 기반으로 분배됨)
+        // App.state 를 p1 값으로 동기화
+        this.state.answerKey = p1.answerKey;
+        this.state.subjects  = p1.subjects;
+
+        // 저장된 추가 교시가 있으면 복원 (이미지는 Step 6에서 periodId 기반으로 분배됨)
         const extraPeriods = (savedPeriods || []).slice(1).map(sp => ({
-            id: sp.id,
-            name: sp.name,
-            images: [],
+            id:        sp.id,
+            name:      sp.name,
+            images:    [],
+            answerKey: sp.answerKey || null,
+            subjects:  sp.subjects  || [],
         }));
 
         this.state.periods = [p1, ...extraPeriods];
-        this.state.currentPeriodId = (savedPeriods && savedPeriods[0] && savedPeriods[0].id) || 'p1';
+        this.state.currentPeriodId = p1.id;
 
         // App.state.images 도 p1.images 와 동일한 참조로 유지
         this.state.images = p1.images;
@@ -141,16 +151,37 @@ const App = {
         if (typeof PeriodManager !== 'undefined') PeriodManager.render();
     },
 
-    // 교시 전환 (Step 2에서 본격 사용 — 지금은 내부 준비만)
+    // 교시 전환: 현재 교시 상태를 period 에 저장하고 새 교시로 전환
     setCurrentPeriod(periodId) {
         const p = this.state.periods.find(p => p.id === periodId);
         if (!p) return;
-        // 현재 교시 images 를 해당 period 에 보존 후 교체
+
+        // 현재 교시 상태 보존
         const cur = this.getCurrentPeriod();
-        if (cur) cur.images = this.state.images;
+        if (cur) {
+            cur.images    = this.state.images;
+            cur.answerKey = this.state.answerKey;
+            cur.subjects  = this.state.subjects || [];
+        }
+
+        // 새 교시로 전환
         this.state.currentPeriodId = periodId;
-        this.state.images = p.images;
+        this.state.images    = p.images;
+        this.state.answerKey = p.answerKey || null;
+        this.state.subjects  = p.subjects  || [];
         this.state.currentIndex = -1;
+    },
+
+    // App.state.answerKey 변경 시 현재 period 에 즉시 반영
+    syncAnswerKey() {
+        const p = this.getCurrentPeriod();
+        if (p) p.answerKey = this.state.answerKey;
+    },
+
+    // App.state.subjects 변경 시 현재 period 에 즉시 반영
+    syncSubjects() {
+        const p = this.getCurrentPeriod();
+        if (p) p.subjects = this.state.subjects || [];
     },
 
     updateStatusBar() {

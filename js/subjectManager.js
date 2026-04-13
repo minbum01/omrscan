@@ -26,6 +26,8 @@ const SubjectManager = {
         try {
             localStorage.setItem(this.STORAGE_KEY, JSON.stringify(App.state.subjects || []));
         } catch (e) { console.warn('과목 저장 실패:', e); }
+        // 현재 교시에 subjects 반영
+        App.syncSubjects();
         // 세션에 변경 알림
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
     },

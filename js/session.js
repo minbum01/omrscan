@@ -364,10 +364,18 @@ const SessionManager = {
         const deletedImages = App.state.deletedImages || [];
         const deletedFilenames = deletedImages.map(img => getPristine(img));
 
-        // 교시 메타데이터 (id + name 만 저장 — 이미지는 imageResults 에 포함)
+        // 저장 전: 현재 교시의 최신 값을 period 에 동기화
+        App.syncAnswerKey();
+        App.syncSubjects();
+        const curPeriod = App.getCurrentPeriod();
+        if (curPeriod) curPeriod.images = App.state.images;
+
+        // 교시 메타데이터 (id, name, answerKey, subjects 저장)
         const periodsMetadata = (App.state.periods || []).map(p => ({
-            id: p.id,
-            name: p.name,
+            id:        p.id,
+            name:      p.name,
+            answerKey: p.answerKey || null,
+            subjects:  p.subjects  || [],
         }));
 
         const data = {
