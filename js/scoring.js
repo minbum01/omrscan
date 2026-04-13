@@ -336,9 +336,17 @@ const Scoring = {
         for (let i = 1; i <= maxQ; i++) csv += `,${i}번정오`;
         csv += '\n';
         rows.forEach(r => {
-            csv += `${r.examNo},${r.name},${r.score}`;
-            for (let i = 1; i <= maxQ; i++) { const a = r.answers.find(x => x.q === i); csv += `,${a ? a.markedLabel : ''}`; }
-            for (let i = 1; i <= maxQ; i++) { const a = r.answers.find(x => x.q === i); csv += `,${a ? (a.isCorrect ? 'O' : 'X') : ''}`; }
+            csv += `${r.examNo},${r.name},${r._noOmr ? '' : r.score}`;
+            for (let i = 1; i <= maxQ; i++) {
+                if (r._noOmr) { csv += ','; continue; }
+                const a = r.answers.find(x => x.q === i);
+                csv += `,${a ? a.markedLabel : ''}`;
+            }
+            for (let i = 1; i <= maxQ; i++) {
+                if (r._noOmr) { csv += ','; continue; }
+                const a = r.answers.find(x => x.q === i);
+                csv += `,${a ? (a.isCorrect ? 'O' : 'X') : ''}`;
+            }
             csv += '\n';
         });
         this._dl(csv, 'OMR결과표');
@@ -353,7 +361,11 @@ const Scoring = {
         rows.forEach(r => {
             csv += `${r.examNo},${r.name},${r.birthday},${r.examNo}`;
             etcKeys.forEach(k => csv += `,${r.etcFields[k] || ''}`);
-            csv += `,${r.correctCount},${r.score},${r.tScore.toFixed(1)},${r.rank},${r.percentile.toFixed(1)}\n`;
+            if (r._noOmr) {
+                csv += ',,,,,\n';
+            } else {
+                csv += `,${r.correctCount},${r.score},${r.tScore ? r.tScore.toFixed(1) : ''},${r.rank || ''},${r.percentile ? r.percentile.toFixed(1) : ''}\n`;
+            }
         });
         this._dl(csv, '성적일람표');
     },
