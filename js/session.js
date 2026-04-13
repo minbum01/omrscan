@@ -76,18 +76,45 @@ const SessionManager = {
     // 세션 생성
     // ==========================================
     createNewSession() {
-        const name = prompt('세션 이름을 입력하세요 (예: 2026년 1회 모의고사)');
-        if (!name || !name.trim()) return;
-        const trimmed = name.trim();
+        // Electron에서 prompt() 안 되므로 커스텀 입력
+        const startScreen = document.getElementById('session-start-screen');
+        const modalBody = startScreen ? startScreen.querySelector('.modal-body') : null;
+        if (!modalBody) return;
 
-        const sessions = this.getSessionList();
-        if (sessions.find(s => s.name === trimmed && !s.deleted)) {
-            Toast.error('이미 존재하는 세션 이름입니다.');
-            return;
-        }
+        // 입력 UI 삽입
+        const existing = document.getElementById('new-session-input-area');
+        if (existing) { existing.querySelector('input').focus(); return; }
+
+        const div = document.createElement('div');
+        div.id = 'new-session-input-area';
+        div.style.cssText = 'padding:12px; border:2px solid var(--blue); border-radius:8px; margin-bottom:12px; background:var(--blue-light);';
+        div.innerHTML = `
+            <div style="font-size:12px; font-weight:600; margin-bottom:6px;">세션 이름 입력</div>
+            <div style="display:flex; gap:6px;">
+                <input type="text" id="new-session-name" placeholder="예: 2026년 1회 모의고사"
+                    style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                <button class="btn btn-primary btn-sm" onclick="SessionManager._confirmNewSession()">생성</button>
+                <button class="btn btn-sm" onclick="document.getElementById('new-session-input-area').remove()">취소</button>
+            </div>
+        `;
+        modalBody.insertBefore(div, modalBody.firstChild.nextSibling);
+
+        const input = document.getElementById('new-session-name');
+        input.focus();
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') SessionManager._confirmNewSession();
+            if (e.key === 'Escape') div.remove();
+        });
+    },
+
+    _confirmNewSession() {
+        const input = document.getElementById('new-session-name');
+        if (!input) return;
+        const name = input.value.trim();
+        if (!name) { Toast.error('세션 이름을 입력하세요'); input.focus(); return; }
 
         this._closeStartScreen();
-        this.currentSessionName = trimmed;
+        this.currentSessionName = name;
         this._hasUnsavedChanges = false;
 
         // 상태 초기화
@@ -98,16 +125,18 @@ const SessionManager = {
         App.state.currentIndex = -1;
         App.state.answerKey = null;
 
-        localStorage.setItem(this.CURRENT_KEY, trimmed);
-        this._updateSessionMeta(trimmed, {
-            createdAt: new Date().toISOString(),
-            lastUsedAt: new Date().toISOString(),
-        });
+        if (!this.isElectron) {
+            localStorage.setItem(this.CURRENT_KEY, name);
+            this._updateSessionMeta(name, {
+                createdAt: new Date().toISOString(),
+                lastUsedAt: new Date().toISOString(),
+            });
+        }
 
         this._updateHeader();
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
         if (typeof UI !== 'undefined') UI.updateRightPanel();
-        Toast.success(`세션 "${trimmed}" 생성됨`);
+        Toast.success(`세션 "${name}" 생성됨`);
     },
 
     // ==========================================
@@ -168,9 +197,8 @@ const SessionManager = {
     // ==========================================
     async saveCurrentSession() {
         if (!this.currentSessionName) {
-            const name = prompt('세션 이름을 입력하세요');
-            if (!name || !name.trim()) return;
-            this.currentSessionName = name.trim();
+            Toast.error('세션을 먼저 생성하세요');
+            return;
         }
 
         const name = this.currentSessionName;
