@@ -238,8 +238,9 @@ const Scoring = {
             const U = gc(upperRows), M = gc(midRows), L = gc(lowerRows), T = gc(rows);
             const sampleAns = rows[0].answers.find(a => a.q === q);
             const correctRate = (T / N) * 100;
-            // 변별도 = (U - L) / (상위비율 × N)
-            const discrimination = (uPct * N) > 0 ? (U - L) / (uPct * N) : 0;
+            // 변별도 = (U - L) / ((상위비율+하위비율)/2 × N)
+            const avgPct = (uPct + lPct) / 2;
+            const discrimination = (avgPct * N) > 0 ? (U - L) / (avgPct * N) : 0;
 
             // 반응분포 (상부50% / 하부50%)
             const getDist = (group) => {
@@ -909,25 +910,26 @@ const Scoring = {
         const thBase = 'padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border:1px solid var(--border); position:sticky; top:0;';
 
         const choiceNums = [1,2,3,4,5,6,7];
+        const th2 = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#f9fafb; position:sticky; top:0; z-index:1;';
 
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
         <thead>
         <tr>
-            <th rowspan="2" style="${thBase} background:#f8fafc;">문항</th>
-            <th rowspan="2" style="${thBase} background:#f8fafc;">정답</th>
-            <th rowspan="2" style="${thBase} background:#f8fafc;">구분</th>
-            <th style="${thBase} background:#dbeafe;">상위${uPct}%</th>
-            <th style="${thBase} background:#f3f4f6;">중위${mPct}%</th>
-            <th style="${thBase} background:#fef2f2;">하위${lPct}%</th>
-            <th style="${thBase} background:#f0fdf4;">총계</th>
-            <th rowspan="2" style="${thBase} background:#ecfdf5;">정답률</th>
-            <th rowspan="2" style="${thBase} background:#fef3c7;">변별도</th>
-            <th rowspan="2" style="${thBase} background:#f8fafc;">구분</th>
-            ${choiceNums.map(n => `<th style="${thBase} background:#f8fafc;">${n}번</th>`).join('')}
-            <th style="${thBase} background:#f8fafc;">공백</th>
-            <th style="${thBase} background:#f8fafc;">중복</th>
-            <th style="${thBase} background:#f0fdf4;">계</th>
+            <th style="${th2}">문항</th>
+            <th style="${th2}">정답</th>
+            <th style="${th2}">구분</th>
+            <th style="${th2}">상위${uPct}%</th>
+            <th style="${th2}">중위${mPct}%</th>
+            <th style="${th2}">하위${lPct}%</th>
+            <th style="${th2}">총계</th>
+            <th style="${th2}">정답률</th>
+            <th style="${th2}">변별도</th>
+            <th style="${th2}">구분</th>
+            ${choiceNums.map(n => `<th style="${th2}">${n}번</th>`).join('')}
+            <th style="${th2}">공백</th>
+            <th style="${th2}">중복</th>
+            <th style="${th2}">계</th>
         </tr>
         </thead><tbody>`;
 
@@ -939,7 +941,7 @@ const Scoring = {
             choiceNums.forEach(n => {
                 const v = dist[n] || 0;
                 const isCA = ca && ca === n;
-                h += `<td style="${td} ${isCA ? 'font-weight:700; color:var(--blue); background:#eff6ff;' : ''}">${v}</td>`;
+                h += `<td style="${td} ${isCA ? 'font-weight:700; text-decoration:underline;' : ''}">${v}</td>`;
             });
             h += `<td style="${td}">${dist.blank || 0}</td>`;
             h += `<td style="${td}">${dist.multi || 0}</td>`;
@@ -948,48 +950,45 @@ const Scoring = {
         };
 
         items.forEach((item, ri) => {
-            const bgBase = ri % 2 === 0 ? '#fff' : '#fafafa';
-            const rc = item.correctRate >= 80 ? '#22c55e' : item.correctRate < 40 ? '#ef4444' : 'var(--text)';
-            const dc = item.discrimination >= 0.3 ? '#22c55e' : item.discrimination < 0.1 ? '#ef4444' : 'var(--text)';
             const totalCorrect = item.upper.correct + item.mid.correct + item.lower.correct;
             const totalWrong = item.upper.wrong + item.mid.wrong + item.lower.wrong;
             const totalAll = totalCorrect + totalWrong;
             const ca = item.correctAnswer;
 
             // 행 1: 정답수
-            html += `<tr style="background:${bgBase};">
-                <td rowspan="3" style="${td} font-weight:700; font-size:12px; vertical-align:middle;">${item.q}</td>
-                <td rowspan="3" style="${td} font-weight:600; color:var(--blue); vertical-align:middle;">${ca || ''}</td>
-                <td style="${td} font-size:9px; font-weight:600; background:#ecfdf5;">정답</td>
-                <td style="${td} background:#eff6ff;">${item.upper.correct}</td>
+            html += `<tr>
+                <td rowspan="3" style="${td} font-weight:700; font-size:11px; vertical-align:middle; border-right:2px solid #d1d5db;">${item.q}</td>
+                <td rowspan="3" style="${td} font-weight:600; vertical-align:middle;">${ca || ''}</td>
+                <td style="${td} font-size:9px; font-weight:600;">정답</td>
+                <td style="${td}">${item.upper.correct}</td>
                 <td style="${td}">${item.mid.correct}</td>
-                <td style="${td} background:#fef2f2;">${item.lower.correct}</td>
-                <td style="${td} color:#22c55e; font-weight:600;">${totalCorrect}</td>
-                <td rowspan="3" style="${td} font-weight:700; color:${rc}; vertical-align:middle;">${item.correctRate.toFixed(1)}%</td>
-                <td rowspan="3" style="${td} font-weight:700; color:${dc}; vertical-align:middle;">${item.discrimination.toFixed(3)}</td>
-                <td style="${td} font-size:9px; font-weight:600; background:#eff6ff;">상50%</td>
+                <td style="${td}">${item.lower.correct}</td>
+                <td style="${td} font-weight:600;">${totalCorrect}</td>
+                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle;">${item.correctRate.toFixed(1)}%</td>
+                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; border-right:2px solid #d1d5db;">${item.discrimination.toFixed(3)}</td>
+                <td style="${td} font-size:9px; font-weight:600;">상50%</td>
                 ${distCells(item.distUpper, ca)}
             </tr>`;
 
             // 행 2: 오답수
-            html += `<tr style="background:${bgBase};">
-                <td style="${td} font-size:9px; font-weight:600; background:#fef2f2;">오답</td>
-                <td style="${td} background:#eff6ff;">${item.upper.wrong}</td>
+            html += `<tr>
+                <td style="${td} font-size:9px; font-weight:600;">오답</td>
+                <td style="${td}">${item.upper.wrong}</td>
                 <td style="${td}">${item.mid.wrong}</td>
-                <td style="${td} background:#fef2f2;">${item.lower.wrong}</td>
-                <td style="${td} color:#ef4444; font-weight:600;">${totalWrong}</td>
-                <td style="${td} font-size:9px; font-weight:600; background:#fef2f2;">하50%</td>
+                <td style="${td}">${item.lower.wrong}</td>
+                <td style="${td} font-weight:600;">${totalWrong}</td>
+                <td style="${td} font-size:9px; font-weight:600;">하50%</td>
                 ${distCells(item.distLower, ca)}
             </tr>`;
 
             // 행 3: 계
-            html += `<tr style="background:${bgBase}; border-bottom:2px solid #cbd5e1;">
-                <td style="${td} font-size:9px; font-weight:700; background:#f0fdf4;">계</td>
-                <td style="${td} font-weight:700; background:#eff6ff;">${item.upper.total}</td>
+            html += `<tr style="border-bottom:2px solid #94a3b8;">
+                <td style="${td} font-size:9px; font-weight:700;">계</td>
+                <td style="${td} font-weight:700;">${item.upper.total}</td>
                 <td style="${td} font-weight:700;">${item.mid.total}</td>
-                <td style="${td} font-weight:700; background:#fef2f2;">${item.lower.total}</td>
+                <td style="${td} font-weight:700;">${item.lower.total}</td>
                 <td style="${td} font-weight:700;">${totalAll}</td>
-                <td style="${td} font-size:9px; font-weight:700; background:#f0fdf4;">계</td>
+                <td style="${td} font-size:9px; font-weight:700;">계</td>
                 ${distCells(item.distTotal, ca)}
             </tr>`;
         });
