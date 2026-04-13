@@ -136,8 +136,16 @@ const Scoring = {
     // 데이터 수집 (시험인원 등록 순서 기준)
     // ==========================================
     collectData() {
+        // 다교시 모드: 모든 교시 이미지를 수험번호 기준으로 통합
+        const periods = App.state.periods || [];
+        if (periods.length > 1) {
+            return this._collectDataMultiPeriod(periods);
+        }
+
+        // 단일 교시 (기존 로직)
         const images = App.state.images || [];
         const students = App.state.students || [];
+        const currentPeriod = App.getCurrentPeriod();
 
         // 1단계: 이미지에서 OMR 데이터 추출 (과목별 분리)
         const omrRows = [];
@@ -191,6 +199,9 @@ const Scoring = {
                     if (!row.subjects[subjectName]) {
                         row.subjects[subjectName] = {
                             score: 0, correctCount: 0, wrongCount: 0, totalPossible: 0, answers: [],
+                            // 교시 정보 (툴팁에 표시)
+                            periodId:   currentPeriod ? currentPeriod.id   : null,
+                            periodName: currentPeriod ? currentPeriod.name : null,
                         };
                     }
                     const sub = row.subjects[subjectName];
@@ -294,6 +305,206 @@ const Scoring = {
         }
         // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
 
+        return rows;
+    },
+
+    // ==========================================
+    // 다교시 수집 (교시 간 학생 매칭 + subjects 병합)
+    // ==========================================
+    _collectDataMultiPeriod(periods) {
+        const students = App.state.students || [];
+
+        // ── Phase 1: 각 교시의 이미지에서 omrRow 추출 ──
+        const allOmrRows = [];
+
+        periods.forEach(period => {
+            const images   = period.images || [];
+            const scorePerQ = (period.answerKey && period.answerKey.scorePerQuestion) || 5;
+
+            images.forEach((img, localIdx) => {
+                if (!img.results || !img.gradeResult) return;
+
+                const row = {
+                    periodId: period.id, periodName: period.name,
+                    _localIdx: localIdx,
+                    imgIdx: -1,
+                    filename: img._originalName || img.name || '',
+                    examNo: '', name: '', birthday: '', phone: '',
+                    subjectCode: '', etcFields: {},
+                    score: img.gradeResult.score || 0,
+                    totalPossible: img.gradeResult.totalPossible || 0,
+                    correctCount:  img.gradeResult.correctCount  || 0,
+                    wrongCount:    img.gradeResult.wrongCount     || 0,
+                    answers: [],
+                    subjects: {},
+                    totalScore: 0, totalCorrect: 0, totalWrong: 0, totalMax: 0,
+                    _matched: false,
+                };
+
+                const details      = img.gradeResult.details || [];
+                let   detailCursor = 0;
+
+                img.rois.forEach((roi, roiIdx) => {
+                    if (!roi.settings) return;
+                    const res  = img.results[roiIdx];
+                    if (!res)  return;
+                    const type = roi.settings.type;
+                    const digits = (res.rows || []).map(r => {
+                        if (r.markedAnswer !== null) {
+                            const lb = roi.settings.choiceLabels;
+                            return lb && lb[r.markedAnswer - 1] ? lb[r.markedAnswer - 1] : String(r.markedAnswer);
+                        }
+                        return '?';
+                    }).join('');
+
+                    if      (type === 'exam_no' || type === 'phone_exam') row.examNo   = digits;
+                    else if (type === 'phone')    row.phone    = digits;
+                    else if (type === 'birthday') row.birthday = digits;
+                    else if (type === 'subject_code') row.subjectCode = digits;
+                    else if (type === 'etc')      row.etcFields[roi.settings.name || '기타'] = digits;
+                    else if (type === 'subject_answer') {
+                        const subjectName = (roi.settings.name && roi.settings.name.trim()) || `과목${roiIdx + 1}`;
+                        if (!row.subjects[subjectName]) {
+                            row.subjects[subjectName] = {
+                                score: 0, correctCount: 0, wrongCount: 0, totalPossible: 0,
+                                answers: [],
+                                periodId:   period.id,
+                                periodName: period.name,
+                            };
+                        }
+                        const sub    = row.subjects[subjectName];
+                        const labels = roi.settings.choiceLabels;
+
+                        (res.rows || []).forEach(r => {
+                            const markedLabel = r.markedAnswer !== null && labels
+                                ? (labels[r.markedAnswer - 1] || String(r.markedAnswer))
+                                : (r.markedAnswer !== null ? String(r.markedAnswer) : '');
+                            const detail = details[detailCursor++] || null;
+                            const ans = {
+                                q: r.questionNumber, marked: r.markedAnswer, markedLabel,
+                                isCorrect: detail ? !!detail.isCorrect : false,
+                                correctAnswer: detail ? detail.correctAnswer : null,
+                                subject: subjectName,
+                            };
+                            sub.answers.push(ans);
+                            row.answers.push(ans);
+                            if (detail && detail.correctAnswer !== null && detail.correctAnswer !== undefined) {
+                                sub.totalPossible += scorePerQ;
+                                if (detail.isCorrect) { sub.correctCount++; sub.score += detail.score || scorePerQ; }
+                                else { sub.wrongCount++; }
+                            }
+                        });
+                    }
+                });
+
+                Object.values(row.subjects).forEach(s => {
+                    row.totalScore   += s.score;
+                    row.totalCorrect += s.correctCount;
+                    row.totalWrong   += s.wrongCount;
+                    row.totalMax     += s.totalPossible;
+                });
+                allOmrRows.push(row);
+            });
+        });
+
+        // ── Phase 2: 학생별 매칭 및 교시 간 subjects 병합 ──
+        if (students.length === 0) return allOmrRows; // 인원 미등록
+
+        const rows       = [];
+        const usedIndices = new Set();
+
+        const _matchRow = (st, r) =>
+            (st.examNo && r.examNo && st.examNo === r.examNo) ||
+            (st.phone  && r.phone  && st.phone  === r.phone)  ||
+            (st.birth  && r.birthday && st.birth === r.birthday);
+
+        students.forEach(st => {
+            // 이 학생과 매칭되는 모든 교시 rows
+            const matchedPairs = [];
+            allOmrRows.forEach((r, i) => {
+                if (!usedIndices.has(i) && _matchRow(st, r)) matchedPairs.push({ r, i });
+            });
+
+            if (matchedPairs.length === 0) {
+                // 어느 교시에도 OMR 없음
+                rows.push({
+                    imgIdx: -1, filename: '',
+                    examNo: st.examNo || '', name: st.name || '',
+                    birthday: st.birth || '', phone: st.phone || '',
+                    subjectCode: '', etcFields: {},
+                    score: '', totalPossible: '', correctCount: '', wrongCount: '',
+                    answers: [], subjects: {},
+                    totalScore: '', totalCorrect: '', totalWrong: '', totalMax: '',
+                    _matched: false, _noOmr: true,
+                });
+                return;
+            }
+
+            matchedPairs.forEach(({ i }) => usedIndices.add(i));
+
+            // 교시별 rows 병합
+            const primary = matchedPairs[0].r;
+            const merged  = {
+                imgIdx: primary._localIdx,
+                filename: primary.filename,
+                examNo:    primary.examNo    || st.examNo    || '',
+                name:      st.name           || primary.name || '',
+                birthday:  primary.birthday  || st.birth     || '',
+                phone:     primary.phone     || st.phone     || '',
+                subjectCode: primary.subjectCode || '',
+                etcFields:   { ...primary.etcFields },
+                score: 0, totalPossible: 0, correctCount: 0, wrongCount: 0,
+                answers: [], subjects: {},
+                totalScore: 0, totalCorrect: 0, totalWrong: 0, totalMax: 0,
+                _matched: true,
+                _periodRows: matchedPairs.map(p => p.r),
+            };
+
+            matchedPairs.forEach(({ r }) => {
+                Object.entries(r.subjects).forEach(([sn, sd]) => {
+                    if (!merged.subjects[sn]) {
+                        merged.subjects[sn] = { ...sd, answers: [...sd.answers] };
+                    } else {
+                        // 같은 과목명 → 합산 (기획서 확정 #1)
+                        const ex = merged.subjects[sn];
+                        ex.score          += sd.score;
+                        ex.correctCount   += sd.correctCount;
+                        ex.wrongCount     += sd.wrongCount;
+                        ex.totalPossible  += sd.totalPossible;
+                        ex.answers         = [...ex.answers, ...sd.answers];
+                    }
+                });
+                merged.answers = [...merged.answers, ...r.answers];
+            });
+
+            Object.values(merged.subjects).forEach(s => {
+                merged.totalScore   += s.score;
+                merged.totalCorrect += s.correctCount;
+                merged.totalWrong   += s.wrongCount;
+                merged.totalMax     += s.totalPossible;
+            });
+            merged.score          = merged.totalScore;
+            merged.totalPossible  = merged.totalMax;
+            merged.correctCount   = merged.totalCorrect;
+            merged.wrongCount     = merged.totalWrong;
+
+            rows.push(merged);
+        });
+
+        // 매칭 안 된 OMR (미등록 수험생)
+        allOmrRows.forEach((r, i) => {
+            if (!usedIndices.has(i)) rows.push(r);
+        });
+
+        // 정렬
+        if (this._sortMode === 'score_desc') {
+            rows.sort((a, b) => {
+                if (a._noOmr && !b._noOmr) return 1;
+                if (!a._noOmr && b._noOmr) return -1;
+                if (a._noOmr && b._noOmr)  return 0;
+                return (b.score || 0) - (a.score || 0);
+            });
+        }
         return rows;
     },
 
@@ -1202,6 +1413,15 @@ const Scoring = {
         const infoCols = allCols.filter(c => c.group !== 'score');
         const scoreCols = allCols.filter(c => c.group === 'score');
         const subjects = this.getSubjectList(rows);
+        // 과목별 교시 이름 수집 (툴팁 표시용: "국어 (1교시)")
+        const periodBySubject = {};
+        rows.forEach(r => {
+            if (!r.subjects) return;
+            Object.entries(r.subjects).forEach(([sn, sd]) => {
+                if (!periodBySubject[sn] && sd.periodName) periodBySubject[sn] = sd.periodName;
+            });
+        });
+
         // 과목 그룹 목록: 각 과목 + 총점 (과목이 1개여도 총점 컬럼 생략 대신 '총점' 안 붙임)
         const groups = subjects.length > 0
             ? [...subjects.map(s => ({ key: s, label: s, isTotal: false })),
@@ -1234,7 +1454,11 @@ const Scoring = {
             });
             groups.forEach(g => {
                 const bg = g.isTotal ? 'background:#fef3c7;' : 'background:#dbeafe;';
-                html += `<th colspan="${scoreCols.length}" style="padding:8px 10px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid var(--border); border-right:2px solid var(--border); ${bg} position:sticky; top:0; white-space:nowrap;">${g.label}</th>`;
+                // 교시 정보: 다교시일 때 툴팁으로 표시
+                const pName = !g.isTotal ? (periodBySubject[g.key] || '') : '';
+                const tipAttr = pName ? ` title="${g.label} (${pName})" style="cursor:help;"` : '';
+                const displayLabel = pName ? `${g.label}<span style="font-size:9px; font-weight:400; opacity:0.7; margin-left:3px;">(${pName})</span>` : g.label;
+                html += `<th colspan="${scoreCols.length}" style="padding:8px 10px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid var(--border); border-right:2px solid var(--border); ${bg} position:sticky; top:0; white-space:nowrap;"${tipAttr}>${displayLabel}</th>`;
             });
             html += `</tr><tr>`;
             groups.forEach((g, gi) => {
