@@ -6,6 +6,9 @@ const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
     _showColumnSettings: false,
+    // 문항분석 그룹 비율 (사용자 커스터마이징)
+    _upperPct: 27,
+    _lowerPct: 27,
 
     // OMR 결과표 열 설정 (사용자 커스터마이징)
     _omrColumns: null, // null이면 기본값 사용
@@ -215,9 +218,11 @@ const Scoring = {
     calcItemAnalysis(rows) {
         if (rows.length === 0) return [];
         const N = rows.length;
+        const uPct = this._upperPct / 100;
+        const lPct = this._lowerPct / 100;
         const sortedRows = [...rows].sort((a, b) => b.score - a.score);
-        const upperN = Math.ceil(N * 0.27);
-        const lowerN = Math.ceil(N * 0.27);
+        const upperN = Math.max(1, Math.ceil(N * uPct));
+        const lowerN = Math.max(1, Math.ceil(N * lPct));
         const upperRows = sortedRows.slice(0, upperN);
         const midRows = sortedRows.slice(upperN, N - lowerN);
         const lowerRows = sortedRows.slice(N - lowerN);
@@ -233,8 +238,8 @@ const Scoring = {
             const U = gc(upperRows), M = gc(midRows), L = gc(lowerRows), T = gc(rows);
             const sampleAns = rows[0].answers.find(a => a.q === q);
             const correctRate = (T / N) * 100;
-            // 변별도 = (U - L) / (0.27 × N)
-            const discrimination = (0.27 * N) > 0 ? (U - L) / (0.27 * N) : 0;
+            // 변별도 = (U - L) / (상위비율 × N)
+            const discrimination = (uPct * N) > 0 ? (U - L) / (uPct * N) : 0;
 
             return { q, correctAnswer: sampleAns ? sampleAns.correctAnswer : null,
                 upper: { correct: U, wrong: upperN - U, total: upperN },
@@ -857,47 +862,86 @@ const Scoring = {
     // 문항분석표
     // ==========================================
     _renderItem(items, totalN) {
-        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-size:12px; color:var(--text-muted);">총 ${totalN}명 응시</span>
+        const uPct = this._upperPct;
+        const lPct = this._lowerPct;
+        const mPct = 100 - uPct - lPct;
+
+        // 설정 바
+        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
+            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:#f8fafc; border-radius:8px; border:1px solid var(--border);">
+                <span style="font-size:11px; font-weight:600;">그룹 비율</span>
+                <label style="font-size:11px; display:flex; align-items:center; gap:3px;">상위
+                    <input type="number" value="${uPct}" min="1" max="49" style="width:38px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
+                        onchange="Scoring._upperPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%
+                </label>
+                <span style="font-size:11px; color:var(--text-muted);">중위 ${mPct}%</span>
+                <label style="font-size:11px; display:flex; align-items:center; gap:3px;">하위
+                    <input type="number" value="${lPct}" min="1" max="49" style="width:38px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
+                        onchange="Scoring._lowerPct=parseInt(this.value)||27; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">%
+                </label>
+                <span style="font-size:11px; color:var(--text-muted);">총 ${totalN}명</span>
+            </div>
             <button class="btn btn-sm" onclick="Scoring.downloadItem(Scoring.calcItemAnalysis(Scoring.collectData()))" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
-        const th = 'style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0;"';
-        const td = 'style="padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9;"';
+        const thBase = 'padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border:1px solid var(--border); position:sticky; top:0;';
 
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
         <thead>
         <tr>
-            <th ${th} rowspan="2">문항</th><th ${th} rowspan="2">정답</th>
-            <th ${th} colspan="2" style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:1px solid var(--border); background:#dbeafe;">상위 27%</th>
-            <th ${th} colspan="2" style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:1px solid var(--border); background:#f3f4f6;">중위 46%</th>
-            <th ${th} colspan="2" style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:1px solid var(--border); background:#fef2f2;">하위 27%</th>
-            <th ${th} rowspan="2" style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#ecfdf5;">정답률</th>
-            <th ${th} rowspan="2" style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#fef3c7;">변별도</th>
+            <th rowspan="2" style="${thBase} background:#f8fafc;">문항</th>
+            <th rowspan="2" style="${thBase} background:#f8fafc;">정답</th>
+            <th colspan="3" style="${thBase} background:#dbeafe; border-bottom:1px solid #93c5fd;">상위 ${uPct}%</th>
+            <th colspan="3" style="${thBase} background:#f3f4f6; border-bottom:1px solid #d1d5db;">중위 ${mPct}%</th>
+            <th colspan="3" style="${thBase} background:#fef2f2; border-bottom:1px solid #fca5a5;">하위 ${lPct}%</th>
+            <th colspan="3" style="${thBase} background:#f0fdf4; border-bottom:1px solid #86efac;">총계</th>
+            <th rowspan="2" style="${thBase} background:#ecfdf5;">정답률</th>
+            <th rowspan="2" style="${thBase} background:#fef3c7;">변별도</th>
         </tr>
         <tr>
-            <th style="padding:4px 6px; font-size:10px; background:#dbeafe; border-bottom:2px solid var(--border);">O</th>
-            <th style="padding:4px 6px; font-size:10px; background:#dbeafe; border-bottom:2px solid var(--border);">X</th>
-            <th style="padding:4px 6px; font-size:10px; background:#f3f4f6; border-bottom:2px solid var(--border);">O</th>
-            <th style="padding:4px 6px; font-size:10px; background:#f3f4f6; border-bottom:2px solid var(--border);">X</th>
-            <th style="padding:4px 6px; font-size:10px; background:#fef2f2; border-bottom:2px solid var(--border);">O</th>
-            <th style="padding:4px 6px; font-size:10px; background:#fef2f2; border-bottom:2px solid var(--border);">X</th>
+            <th style="padding:3px 5px; font-size:9px; background:#dbeafe; border:1px solid var(--border);">정답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#dbeafe; border:1px solid var(--border);">오답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#dbeafe; border:1px solid var(--border);">계</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f3f4f6; border:1px solid var(--border);">정답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f3f4f6; border:1px solid var(--border);">오답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f3f4f6; border:1px solid var(--border);">계</th>
+            <th style="padding:3px 5px; font-size:9px; background:#fef2f2; border:1px solid var(--border);">정답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#fef2f2; border:1px solid var(--border);">오답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#fef2f2; border:1px solid var(--border);">계</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f0fdf4; border:1px solid var(--border);">정답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f0fdf4; border:1px solid var(--border);">오답</th>
+            <th style="padding:3px 5px; font-size:9px; background:#f0fdf4; border:1px solid var(--border);">계</th>
         </tr>
         </thead><tbody>`;
+
+        const td = 'padding:4px 5px; text-align:center; font-size:11px; border:1px solid #f1f5f9;';
 
         items.forEach((item, ri) => {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             const rc = item.correctRate >= 80 ? '#22c55e' : item.correctRate < 40 ? '#ef4444' : 'var(--text)';
             const dc = item.discrimination >= 0.3 ? '#22c55e' : item.discrimination < 0.1 ? '#ef4444' : 'var(--text)';
+            const totalCorrect = item.upper.correct + item.mid.correct + item.lower.correct;
+            const totalWrong = item.upper.wrong + item.mid.wrong + item.lower.wrong;
+            const totalAll = totalCorrect + totalWrong;
+
             html += `<tr style="${bg}">
-                <td ${td} style="padding:5px 6px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid #f1f5f9;">${item.q}</td>
-                <td ${td} style="padding:5px 6px; text-align:center; font-size:11px; font-weight:600; border-bottom:1px solid #f1f5f9; color:var(--blue);">${item.correctAnswer || ''}</td>
-                <td ${td}>${item.upper.correct}</td><td ${td}>${item.upper.wrong}</td>
-                <td ${td}>${item.mid.correct}</td><td ${td}>${item.mid.wrong}</td>
-                <td ${td}>${item.lower.correct}</td><td ${td}>${item.lower.wrong}</td>
-                <td style="padding:5px 6px; text-align:center; font-size:12px; font-weight:700; color:${rc}; border-bottom:1px solid #f1f5f9;">${item.correctRate.toFixed(1)}%</td>
-                <td style="padding:5px 6px; text-align:center; font-size:12px; font-weight:700; color:${dc}; border-bottom:1px solid #f1f5f9;">${item.discrimination.toFixed(3)}</td>
+                <td style="${td} font-weight:700; font-size:12px;">${item.q}</td>
+                <td style="${td} font-weight:600; color:var(--blue);">${item.correctAnswer || ''}</td>
+                <td style="${td}">${item.upper.correct}</td>
+                <td style="${td}">${item.upper.wrong}</td>
+                <td style="${td} font-weight:600; background:#eff6ff;">${item.upper.total}</td>
+                <td style="${td}">${item.mid.correct}</td>
+                <td style="${td}">${item.mid.wrong}</td>
+                <td style="${td} font-weight:600; background:#f9fafb;">${item.mid.total}</td>
+                <td style="${td}">${item.lower.correct}</td>
+                <td style="${td}">${item.lower.wrong}</td>
+                <td style="${td} font-weight:600; background:#fef2f2;">${item.lower.total}</td>
+                <td style="${td} color:#22c55e;">${totalCorrect}</td>
+                <td style="${td} color:#ef4444;">${totalWrong}</td>
+                <td style="${td} font-weight:700;">${totalAll}</td>
+                <td style="${td} font-weight:700; color:${rc};">${item.correctRate.toFixed(1)}%</td>
+                <td style="${td} font-weight:700; color:${dc};">${item.discrimination.toFixed(3)}</td>
             </tr>`;
         });
 
@@ -905,7 +949,7 @@ const Scoring = {
             const avgR = items.reduce((s, i) => s + i.correctRate, 0) / items.length;
             const avgD = items.reduce((s, i) => s + i.discrimination, 0) / items.length;
             html += `<tr style="background:#f8fafc; font-weight:700;">
-                <td colspan="8" style="padding:8px; text-align:right; font-size:12px; border-top:2px solid var(--border);">전체 평균</td>
+                <td colspan="14" style="padding:8px; text-align:right; font-size:12px; border-top:2px solid var(--border);">전체 평균</td>
                 <td style="padding:8px; text-align:center; font-size:13px; color:var(--blue); border-top:2px solid var(--border);">${avgR.toFixed(1)}%</td>
                 <td style="padding:8px; text-align:center; font-size:13px; color:var(--blue); border-top:2px solid var(--border);">${avgD.toFixed(3)}</td>
             </tr>`;
