@@ -528,15 +528,17 @@ const Scoring = {
                 background: var(--blue); color: white; box-shadow: 0 2px 8px rgba(59,130,246,0.3);
             }
             .scoring-badge-item.dragging { opacity: 0.4; transform: scale(0.95); }
+            .drop-indicator { animation: pulse 0.6s ease infinite alternate; }
+            @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
         </style>
         <div style="background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:14px;">
             <div style="margin-bottom:8px;">
                 <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">사용 가능한 항목 — 아래 헤더 영역으로 드래그하세요</div>
                 <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:30px; padding:6px; border-radius:6px;"
                     id="${prefix}-available"
-                    ondragover="event.preventDefault(); this.classList.add('drag-over');"
-                    ondragleave="this.classList.remove('drag-over');"
-                    ondrop="this.classList.remove('drag-over'); Scoring._onBadgeDrop(event,'${toggleFn}','available');">
+                    ondragover="Scoring._onBadgeDragOver(event);"
+                    ondragleave="Scoring._onBadgeDragLeave(event);"
+                    ondrop="Scoring._onBadgeDrop(event,'${toggleFn}','available');">
                     ${inactive.map(c => `<span class="scoring-badge-item inactive" draggable="true" data-col-id="${c.id}"
                         ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
                         ondragend="this.classList.remove('dragging')">${c.label}</span>`).join('')}
@@ -547,9 +549,9 @@ const Scoring = {
                 <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">현재 표 헤더 — 드래그로 순서 변경 · 위로 드래그하여 제거 · 클릭하면 열 하이라이트</div>
                 <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:34px; padding:6px; border:1.5px solid var(--border); border-radius:8px; background:white;"
                     id="${prefix}-active"
-                    ondragover="event.preventDefault(); this.classList.add('drag-over');"
-                    ondragleave="this.classList.remove('drag-over');"
-                    ondrop="this.classList.remove('drag-over'); Scoring._onBadgeDrop(event,'${toggleFn}','active');">
+                    ondragover="Scoring._onBadgeDragOver(event);"
+                    ondragleave="Scoring._onBadgeDragLeave(event);"
+                    ondrop="Scoring._onBadgeDrop(event,'${toggleFn}','active');">
                     ${active.filter(c => c.type === 'info' || c.type === 'custom').map(c => `<span class="scoring-badge-item active ${this._highlightCol === c.id ? 'highlighted' : ''}"
                         draggable="true" data-col-id="${c.id}"
                         ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
@@ -569,46 +571,98 @@ const Scoring = {
         e.target.classList.add('dragging');
     },
 
+    // 드래그 중 삽입 위치 인디케이터
+    _onBadgeDragOver(e) {
+        e.preventDefault();
+        const container = e.currentTarget;
+        container.classList.add('drag-over');
+
+        // 기존 인디케이터 제거
+        container.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+
+        // 삽입 위치 계산
+        const badges = container.querySelectorAll('.scoring-badge-item');
+        let insertBefore = null;
+        for (const badge of badges) {
+            const rect = badge.getBoundingClientRect();
+            if (e.clientX < rect.left + rect.width / 2) {
+                insertBefore = badge;
+                break;
+            }
+        }
+
+        // 인디케이터 삽입
+        const indicator = document.createElement('div');
+        indicator.className = 'drop-indicator';
+        indicator.style.cssText = 'width:3px; height:24px; background:var(--blue); border-radius:2px; flex-shrink:0; animation:pulse 0.6s ease infinite alternate;';
+        if (insertBefore) {
+            container.insertBefore(indicator, insertBefore);
+        } else {
+            container.appendChild(indicator);
+        }
+    },
+
+    _onBadgeDragLeave(e) {
+        e.currentTarget.classList.remove('drag-over');
+        e.currentTarget.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+    },
+
+    _getColsForToggleFn(toggleFn) {
+        return toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
+    },
+
     _onBadgeDrop(e, toggleFn, target) {
         e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        e.currentTarget.querySelectorAll('.drop-indicator').forEach(el => el.remove());
+
         if (!this._dragColId) return;
         const colId = this._dragColId;
         this._dragColId = null;
 
-        // available에 드롭 = 제거, active에 드롭 = 추가/이동
-        const fn = this[toggleFn.replace('toggle', '_get').replace('Column', 'Columns')];
-        // 간단하게: toggleFn 호출로 토글
+        const cols = this._getColsForToggleFn(toggleFn);
+        const col = cols.find(c => c.id === colId);
+        if (!col) return;
+
         if (target === 'available') {
-            // 활성 → 비활성
-            const cols = toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
-            const col = cols.find(c => c.id === colId);
-            if (col && col.visible) { col.visible = false; this.renderScoringPanel(document.getElementById('scoring-content')); }
+            // active → available: 제거 (비활성화)
+            if (col.visible) {
+                col.visible = false;
+                this.renderScoringPanel(document.getElementById('scoring-content'));
+            }
         } else {
-            // 비활성 → 활성
-            const cols = toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
-            const col = cols.find(c => c.id === colId);
-            if (col && !col.visible) { col.visible = true; this.renderScoringPanel(document.getElementById('scoring-content')); }
-            // 이미 활성인 경우 순서 변경 (드롭 위치)
-            else if (col && col.visible) {
-                const badges = e.currentTarget.querySelectorAll('.scoring-badge-item');
-                let insertBeforeId = null;
-                badges.forEach(b => {
-                    const rect = b.getBoundingClientRect();
-                    if (e.clientX < rect.left + rect.width / 2 && !insertBeforeId && b.dataset.colId !== colId) {
-                        insertBeforeId = b.dataset.colId;
-                    }
-                });
-                const fromIdx = cols.findIndex(c => c.id === colId);
+            // available → active: 추가 (활성화)
+            if (!col.visible) {
+                col.visible = true;
+            }
+
+            // 드롭 위치에 따라 순서 변경
+            const badges = e.currentTarget.querySelectorAll('.scoring-badge-item');
+            let insertBeforeId = null;
+            for (const badge of badges) {
+                if (badge.dataset.colId === colId) continue;
+                const rect = badge.getBoundingClientRect();
+                if (e.clientX < rect.left + rect.width / 2) {
+                    insertBeforeId = badge.dataset.colId;
+                    break;
+                }
+            }
+
+            // 배열에서 이동
+            const fromIdx = cols.findIndex(c => c.id === colId);
+            if (fromIdx >= 0) {
                 const [moved] = cols.splice(fromIdx, 1);
                 if (insertBeforeId) {
                     const toIdx = cols.findIndex(c => c.id === insertBeforeId);
-                    cols.splice(toIdx, 0, moved);
+                    cols.splice(toIdx >= 0 ? toIdx : cols.length, 0, moved);
                 } else {
-                    const lastInfo = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, -1);
+                    // 맨 끝 (info/custom 중)
+                    const lastInfo = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, cols.length - 1);
                     cols.splice(lastInfo + 1, 0, moved);
                 }
-                this.renderScoringPanel(document.getElementById('scoring-content'));
             }
+
+            this.renderScoringPanel(document.getElementById('scoring-content'));
         }
     },
 
