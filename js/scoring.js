@@ -557,7 +557,7 @@ const Scoring = {
                         ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
                         ondragend="this.classList.remove('dragging')"
                         onclick="Scoring._onBadgeClick('${c.id}')"
-                        ondblclick="Scoring._startBadgeRename(this,'${c.id}','${toggleFn}')"
+                        ondblclick="event.stopPropagation(); event.preventDefault(); Scoring._startBadgeRename(this,'${c.id}','${toggleFn}')"
                         onkeydown="if(event.key==='Delete')Scoring._deleteBadge('${c.id}','${toggleFn}'); if(event.key==='Escape')Scoring._clearHighlight();"
                         >${c.label}</span>`).join('')}
                 </div>
@@ -667,15 +667,19 @@ const Scoring = {
         }
     },
 
+    _clickTimer: null,
     _onBadgeClick(colId) {
-        // 같은 뱃지 다시 클릭해도 선택 유지 (Escape로 해제)
-        this._highlightCol = colId;
-        this.renderScoringPanel(document.getElementById('scoring-content'));
-        // 포커스 유지 (Delete 키 수신용)
-        setTimeout(() => {
-            const badge = document.querySelector(`.scoring-badge-item[data-col-id="${colId}"]`);
-            if (badge) badge.focus();
-        }, 50);
+        // 더블클릭 구분용 딜레이
+        if (this._clickTimer) { clearTimeout(this._clickTimer); this._clickTimer = null; return; }
+        this._clickTimer = setTimeout(() => {
+            this._clickTimer = null;
+            this._highlightCol = colId;
+            this.renderScoringPanel(document.getElementById('scoring-content'));
+            setTimeout(() => {
+                const badge = document.querySelector(`.scoring-badge-item[data-col-id="${colId}"]`);
+                if (badge) badge.focus();
+            }, 50);
+        }, 250);
     },
 
     // Escape로 선택 해제
@@ -699,7 +703,6 @@ const Scoring = {
 
     // 더블클릭 → 인라인 이름 변경 (Electron prompt 미지원 대응)
     _startBadgeRename(el, colId, toggleFn) {
-        event.stopPropagation();
         const cols = this._getColsForToggleFn(toggleFn);
         const col = cols.find(c => c.id === colId);
         if (!col) return;
