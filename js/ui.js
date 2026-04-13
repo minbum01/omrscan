@@ -325,19 +325,22 @@ const UI = {
                         </div>`;
                     }
 
-                    // 정답 소스
-                    const codeRois = imgObj.rois.map((r, i) => ({ i, s: r.settings })).filter(r => r.s && r.s.type === 'subject_code');
+                    // 정답 표시 + 수정 버튼
+                    const answerDisplay = s.answerKey || '(없음)';
+                    const isEditing = roi._editingAnswer || false;
                     html += `<div class="roi-choice-section" style="border-top:1px solid var(--border-light);">
-                        <span class="roi-field-label">정답 소스</span>
-                        <select class="roi-choice-select" data-roi="${idx}" onchange="UI.onAnswerSourceChange(this)">
-                            <option value="direct" ${s.answerSource === 'direct' ? 'selected' : ''}>직접 입력</option>
-                            ${codeRois.map(cr => `<option value="code_${cr.i}" ${s.answerSource === 'code_'+cr.i ? 'selected' : ''}>과목코드 (${cr.s.name || '영역'+(cr.i+1)})</option>`).join('')}
-                        </select>
-                        ${s.answerSource === 'direct' ? `
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <span class="roi-field-label">정답</span>
+                            <button class="btn btn-sm" style="font-size:9px; padding:1px 6px;"
+                                onclick="UI.toggleAnswerEdit(${idx})">${isEditing ? '완료' : '수정'}</button>
+                        </div>
+                        ${isEditing ? `
                             <input type="text" class="roi-answer-input" data-roi="${idx}" onchange="UI.onDirectAnswerChange(this)"
-                                value="${this.esc(s.answerKey || '')}" placeholder="정답 입력 (쉼표로 구분: 1,2,3,4 또는 ㄱ,ㄴ,ㄷ)"
+                                value="${this.esc(s.answerKey || '')}" placeholder="쉼표 구분: 1,2,3,4 또는 ㄱ,ㄴ,ㄷ"
                                 style="width:100%; margin-top:4px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:monospace;">
-                        ` : ''}
+                        ` : `
+                            <div style="font-size:11px; font-family:monospace; color:var(--text-secondary); padding:4px 0; word-break:break-all;">${this.esc(answerDisplay)}</div>
+                        `}
                     </div>`;
                 }
 
@@ -1006,6 +1009,12 @@ const UI = {
         // 팝업이 없을 때만 패널 전체 리렌더 (팝업 있으면 팝업 유지)
         if (!document.getElementById('roi-settings-popup')) this.updateRightPanel();
         Toast.info(`"${subjectName}" 선택됨 (시작번호: ${s.startNum})`);
+    },
+
+    toggleAnswerEdit(idx) {
+        const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[idx]) return;
+        imgObj.rois[idx]._editingAnswer = !imgObj.rois[idx]._editingAnswer;
+        this.updateRightPanel();
     },
 
     onDirectAnswerChange(input) {

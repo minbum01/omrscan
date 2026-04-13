@@ -107,20 +107,33 @@
                 </div>
             </div>
 
-            <div class="image-adjust-bar" id="image-adjust-bar" style="display:none;">
-                <label>진하기 <input type="range" id="adj-intensity" min="0" max="350" value="250" step="5"><span id="adj-intensity-val">250</span>%</label>
-                <label style="margin-left:2px;font-size:11px;cursor:pointer;"><input type="checkbox" id="adj-intensity-all"> 전체</label>
-                <div class="toolbar-divider"></div>
-                <button id="adj-rotate-left" class="tool-btn" style="font-size:13px;" title="왼쪽 90도 회전">↺ 좌회전</button>
-                <button id="adj-rotate-right" class="tool-btn" style="font-size:13px;" title="오른쪽 90도 회전">↻ 우회전</button>
-                <label style="margin-left:2px;font-size:11px;cursor:pointer;"><input type="checkbox" id="adj-rotate-all"> 전체</label>
-                <div class="toolbar-divider"></div>
-                <button id="adj-skew-ccw" class="tool-btn" style="font-size:11px;" title="반시계 0.5도">↶ -0.5°</button>
-                <button id="adj-skew-cw" class="tool-btn" style="font-size:11px;" title="시계 0.5도">↷ +0.5°</button>
-                <label style="margin-left:2px;font-size:11px;cursor:pointer;"><input type="checkbox" id="adj-skew-all"> 전체</label>
-                <div class="toolbar-divider"></div>
-                <button id="adj-reset" class="tool-btn" style="font-size:11px;">초기화</button>
-                <label style="margin-left:8px;cursor:pointer;font-size:11px;"><input type="checkbox" id="adj-debug-log"> 분석 로그</label>
+            <div class="image-adjust-bar" id="image-adjust-bar" style="display:none; flex-wrap:wrap; gap:4px;">
+                <!-- 진하기 영역 -->
+                <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
+                    <span style="font-size:11px; font-weight:600;">진하기</span>
+                    <input type="range" id="adj-intensity" min="0" max="350" value="250" step="5" style="width:80px;">
+                    <span id="adj-intensity-val" style="font-size:11px; min-width:30px;">250</span>%
+                    <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-intensity-all" checked> 전체</label>
+                </div>
+                <!-- 회전 영역 -->
+                <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
+                    <span style="font-size:11px; font-weight:600;">회전</span>
+                    <button id="adj-rotate-left" class="tool-btn" style="font-size:12px;" title="왼쪽 90도">↺</button>
+                    <button id="adj-rotate-right" class="tool-btn" style="font-size:12px;" title="오른쪽 90도">↻</button>
+                    <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-rotate-all" checked> 전체</label>
+                </div>
+                <!-- 미세 기울기 영역 -->
+                <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
+                    <span style="font-size:11px; font-weight:600;">기울기</span>
+                    <button id="adj-skew-ccw" class="tool-btn" style="font-size:11px;" title="반시계 0.5도">↶ -0.5°</button>
+                    <button id="adj-skew-cw" class="tool-btn" style="font-size:11px;" title="시계 0.5도">↷ +0.5°</button>
+                    <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-skew-all" checked> 전체</label>
+                </div>
+                <!-- 기타 -->
+                <div style="display:flex; align-items:center; gap:4px;">
+                    <button id="adj-reset" class="tool-btn" style="font-size:11px;">초기화</button>
+                    <label style="cursor:pointer;font-size:10px;"><input type="checkbox" id="adj-debug-log"> 분석 로그</label>
+                </div>
             </div>
             <div id="canvas-container" class="canvas-container mode-draw">
                 <canvas id="main-canvas" style="display:none;"></canvas>

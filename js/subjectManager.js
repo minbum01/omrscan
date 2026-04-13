@@ -99,7 +99,7 @@ const SubjectManager = {
             const scoreMap = subj.scoreMap || [];
             const totalScore = subj.totalScore || 100;
             const baseScore = numQ > 0 ? Math.round((totalScore / numQ) * 100) / 100 : 0;
-            const useCode = subj.code !== undefined && subj.code !== '';
+            const useCode = subj.useCode || (subj.code !== undefined && subj.code !== '');
 
             // 정답 배열을 numQ에 맞춤
             while (answers.length < numQ) answers.push('');
@@ -274,9 +274,10 @@ const SubjectManager = {
 
     // 코드 사용 여부 토글
     toggleCode(idx, checked) {
-        const subj = this.getSubjects()[idx]; if (!subj) return;
-        if (!checked) subj.code = '';
         this._saveCurrentToData();
+        const subj = this.getSubjects()[idx]; if (!subj) return;
+        subj.useCode = checked;
+        if (!checked) subj.code = '';
         this.renderList();
     },
 
