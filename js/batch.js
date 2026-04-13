@@ -102,8 +102,7 @@ const BatchProcess = {
                 const numC = s.numChoices || 0;
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
-                // 모드와 무관하게 항상 임계값 전달 (답인식 하한 등 후처리 필터 적용 위해)
-                const elongatedThresholds = UI.getThresholds(s);
+                const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
                 const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
 
                 const startNum = s.startNum || 1;

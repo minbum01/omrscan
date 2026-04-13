@@ -702,16 +702,6 @@ const OmrEngine = {
                 }
             } else if (numC === 1) primaryMarked = 0;
 
-            // ───────────────────────────────────────────────
-            // 답 인식 하한 (post-filter): 최고 채움률이 임계 미만이면 빈칸 처리
-            // 기존 로직은 그대로 두고 마지막에 한 번 더 거름
-            // ───────────────────────────────────────────────
-            if (primaryMarked !== -1 && elongatedThresholds && elongatedThresholds.answerMinFill != null) {
-                if (cellScores[primaryMarked].centerFill < elongatedThresholds.answerMinFill) {
-                    primaryMarked = -1;
-                }
-            }
-
             this._log(`  Q${q + 1}: ${cellScores.map(c => `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)}`).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
             // 중복 감지
