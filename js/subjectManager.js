@@ -595,12 +595,12 @@ const SubjectManager = {
             '- / 영어 / 5 / 4 / 100 / 3 / 1 / 4 / ... / 2',
             '[차등배점 예시] 정답 뒤에 배점이 이어짐',
             '03 / 수학 / 5 / 차등 / 100 / 1 / 2 / ... / 5 / 8 / ... / 12',
-            '',
-            '',
-            '',
-            '21행부터 입력하세요',
-            '',
         ];
+        // 19행(index 18)에 안내, 총 20행 보장
+        while (lines.length < 18) lines.push('');
+        lines[18] = '21행부터 입력하세요'; // 19행
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
         this._downloadFile(lines.join('\n'), '과목_CSV_양식.csv');
     },
 
@@ -770,12 +770,12 @@ const SubjectManager = {
             '홍길동 / 010101 / 20260001 / 01012345678',
             '김철수 / 020202 / (빈칸) / 01098765432',
             '이영희 / 030303 / 20260003 / (빈칸)',
-            '',
-            '',
-            '',
-            '21행부터 입력하세요',
-            '',
         ];
+        // 19행에 안내, 총 20행 보장
+        while (lines.length < 18) lines.push('');
+        lines[18] = '21행부터 입력하세요'; // 19행 (index 18)
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
         this._downloadFile(lines.join('\n'), '시험인원_CSV_양식.csv');
     },
 
