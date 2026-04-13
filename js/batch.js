@@ -59,6 +59,21 @@ const BatchProcess = {
                 }));
             }
 
+            // 개별수정 유지 모드: 수기 교정된 row 백업
+            const correctedBackup = {};
+            if (!this._forceReset && imgObj.results) {
+                imgObj.results.forEach((res, resIdx) => {
+                    if (res && res.rows) {
+                        res.rows.forEach(row => {
+                            if (row.corrected) {
+                                const key = `${resIdx}_${row.questionNumber}`;
+                                correctedBackup[key] = { markedAnswer: row.markedAnswer, markedIndices: row.markedIndices };
+                            }
+                        });
+                    }
+                });
+            }
+
             imgObj.results = [];
             imgObj.validationErrors = [];
 
@@ -127,9 +142,35 @@ const BatchProcess = {
                 });
             });
 
+            // 수기 교정 복원
+            if (Object.keys(correctedBackup).length > 0) {
+                imgObj.results.forEach((res, resIdx) => {
+                    if (res && res.rows) {
+                        res.rows.forEach(row => {
+                            const key = `${resIdx}_${row.questionNumber}`;
+                            if (correctedBackup[key]) {
+                                row.markedAnswer = correctedBackup[key].markedAnswer;
+                                row.markedIndices = correctedBackup[key].markedIndices;
+                                row.corrected = true;
+                                row._userCorrected = true;
+                            }
+                        });
+                    }
+                });
+            }
+
             ImageManager.applyPhonePrefix(imgObj);
 
-            if (App.state.answerKey) {
+            // 과목별 채점 (과목관리 또는 ROI 직접 정답 기반)
+            const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
+                imgObj.rois.some(r => r.settings && r.settings.answerKey);
+            if (hasAnswers || App.state.answerKey) {
+                // ROI별 과목 정답 로드
+                imgObj.rois.forEach(roi => {
+                    if (roi.settings && roi.settings.type === 'subject_answer' && roi.settings.name) {
+                        UI._loadAnswersFromSubject(roi);
+                    }
+                });
                 imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
             }
 

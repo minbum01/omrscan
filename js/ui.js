@@ -321,7 +321,7 @@ const UI = {
                         ? SubjectManager.findByName(subjName) : null;
                     if (subjName) {
                         html += `<div style="padding:4px 8px; font-size:10px; color:${matchedSubj ? 'var(--green)' : 'var(--text-muted)'}; border-top:1px solid var(--border-light);">
-                            ${matchedSubj ? `✓ 과목 "${this.esc(subjName)}" 매칭됨 (${matchedSubj.answers ? '정답 ' + matchedSubj.answers.length + '자' : '정답 없음'})` : `• 이 영역 이름이 과목명으로 등록됩니다`}
+                            ${matchedSubj ? `✓ 과목 "${this.esc(subjName)}" 매칭됨` : `• 이 영역 이름이 과목명으로 등록됩니다`}
                         </div>`;
                     }
 
@@ -1089,9 +1089,8 @@ const UI = {
         const subj = SubjectManager.findByName(name);
         if (!subj || !subj.answers) return false;
 
-        const subjArray = subj.answers.indexOf(',') >= 0
-            ? subj.answers.split(',').map(t => t.trim())
-            : subj.answers.split('');
+        // 과목 정답은 항상 쉼표 구분으로 저장됨 (subjectManager.save에서 보장)
+        const subjArray = subj.answers.split(',').map(t => t.trim());
         const startIdx = (s.startNum || 1) - 1;
         const endIdx = startIdx + (s.numQuestions || 20);
         const slice = subjArray.slice(startIdx, endIdx);
