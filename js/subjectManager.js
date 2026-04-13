@@ -416,16 +416,16 @@ const SubjectManager = {
         if (!file) return;
         this._readFileWithEncoding(file, (text) => {
             try {
+                const delimiter = this._detectDelimiter(text);
                 const allLines = text.split('\n').map(l => l.trim());
-                // 21행 이전은 설명 영역 → 스킵
-                let dataRows = allLines.slice(20).filter(l => l && l.indexOf(',') >= 0);
+                // 21행(index 20)부터 읽기
+                let dataRows = allLines.slice(20).filter(l => l);
                 if (dataRows.length === 0) {
-                    // 20행 이하 파일 → 쉼표 있는 행만 추출 (하위호환)
-                    dataRows = allLines.filter(l => l && l.indexOf(',') >= 0 && !l.startsWith('#') && !l.startsWith('='));
-                    // 설명 행 제거: 숫자로 시작하거나 빈 코드(,이름)로 시작하는 행만
-                    dataRows = dataRows.filter(l => {
-                        const first = l.split(',')[0].trim();
-                        return first === '' || /^\d/.test(first);
+                    // 하위호환: 20행 이하 파일
+                    dataRows = allLines.filter(l => {
+                        if (!l) return false;
+                        const first = l.split(delimiter)[0].trim();
+                        return first === '' || first === '-' || /^\d/.test(first) || /^[가-힣]/.test(first);
                     });
                 }
                 if (dataRows.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
@@ -434,7 +434,7 @@ const SubjectManager = {
                 const subjects = this.getSubjects();
 
                 dataRows.forEach(line => {
-                    const cells = this._parseCSVLine(line);
+                    const cells = this._parseCSVLine(line, delimiter);
                     // 최소 2열(이름 + 답 1개 이상) 필요
                     if (cells.length < 2) return;
 
@@ -507,13 +507,27 @@ const SubjectManager = {
         });
     },
 
-    _parseCSVLine(line) {
+    // 구분자 자동 감지 (쉼표, 탭, 세미콜론)
+    _detectDelimiter(text) {
+        // 21행 이후 첫 데이터 행에서 판별
+        const lines = text.split('\n');
+        const sample = lines.slice(20).find(l => l.trim()) || lines.find(l => l.trim() && l.indexOf(',') >= 0) || '';
+        const commas = (sample.match(/,/g) || []).length;
+        const tabs = (sample.match(/\t/g) || []).length;
+        const semis = (sample.match(/;/g) || []).length;
+        if (tabs > commas && tabs > semis) return '\t';
+        if (semis > commas && semis > tabs) return ';';
+        return ',';
+    },
+
+    _parseCSVLine(line, delimiter) {
+        if (!delimiter) delimiter = ',';
         const result = [];
         let current = '', inQuotes = false;
         for (let i = 0; i < line.length; i++) {
             const ch = line[i];
             if (ch === '"') inQuotes = !inQuotes;
-            else if (ch === ',' && !inQuotes) { result.push(current); current = ''; }
+            else if (ch === delimiter && !inQuotes) { result.push(current); current = ''; }
             else current += ch;
         }
         result.push(current);
@@ -580,10 +594,10 @@ const SubjectManager = {
         const lines = [
             '과목/정답 CSV 양식',
             '',
-            '[열 순서] 과목코드 있을 때',
+            '[열 순서]',
             '과목코드 / 과목명 / 선택지수 / 배점 / 총점 / 1번답 / 2번답 / ...',
-            '[열 순서] 과목코드 없을 때',
-            '과목명 / 선택지수 / 배점 / 총점 / 1번답 / 2번답 / ...',
+            '과목코드가 없으면 - 를 입력',
+            '',
             '',
             '[배점] 숫자 = 일괄배점 / 차등 = 정답 뒤에 문항별 배점',
             '[참고] 과목별 문항수 달라도 됨 / 헤더 불필요',
@@ -782,25 +796,25 @@ const SubjectManager = {
     // 시험 인원 CSV 불러오기
     importStudentCSV(file) {
         if (!file) return;
-        // 인코딩 자동 감지: UTF-8 먼저, 깨지면 EUC-KR
         this._readFileWithEncoding(file, (text) => {
             try {
+                const delimiter = this._detectDelimiter(text);
                 const allLines = text.split('\n').map(l => l.trim());
-                // 21행(index 20)부터 읽기, 빈 행 제외
+                // 21행(index 20)부터 읽기
                 let dataLines = allLines.slice(20).filter(l => l);
                 if (dataLines.length === 0) {
-                    // 하위호환: 20행 이하 파일 → 전체에서 데이터 행 찾기
-                    dataLines = allLines.filter(l => l && !/열 순서|참고|양식|예시|입력하세요|CSV|설명/.test(l));
+                    // 하위호환: 20행 이하 파일
+                    dataLines = allLines.filter(l => l && !/열 순서|참고|양식|예시|입력하세요|CSV|설명|핸드폰번호\(/.test(l));
                 }
                 if (dataLines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
 
-                // 헤더 판별: 고정 키워드 포함 시 스킵
+                // 헤더 판별
                 if (/이름|생년월일|수험번호|핸드폰/.test(dataLines[0])) dataLines.shift();
 
                 const students = this.getStudents();
                 let imported = 0;
                 dataLines.forEach(line => {
-                    const cells = this._parseCSVLine(line);
+                    const cells = this._parseCSVLine(line, delimiter);
                     if (cells.length < 1 || !cells[0].trim()) return;
                     students.push({
                         name: (cells[0] || '').trim(),
