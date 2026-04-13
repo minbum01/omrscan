@@ -12,16 +12,22 @@ const SubjectManager = {
     },
 
     loadFromStorage() {
-        try {
-            const raw = localStorage.getItem(this.STORAGE_KEY);
-            if (raw) App.state.subjects = JSON.parse(raw);
-        } catch (e) { console.warn('과목 불러오기 실패:', e); }
+        // 세션 시스템이 관리하므로 별도 로드 불필요 (세션에서 subjects 복원)
+        // 하위 호환: 세션 없으면 기존 키에서 로드
+        if (!App.state.subjects || App.state.subjects.length === 0) {
+            try {
+                const raw = localStorage.getItem(this.STORAGE_KEY);
+                if (raw) App.state.subjects = JSON.parse(raw);
+            } catch (e) { console.warn('과목 불러오기 실패:', e); }
+        }
     },
 
     saveToStorage() {
         try {
             localStorage.setItem(this.STORAGE_KEY, JSON.stringify(App.state.subjects || []));
         } catch (e) { console.warn('과목 저장 실패:', e); }
+        // 세션에 변경 알림
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
     },
 
     findByName(name) { return (App.state.subjects || []).find(s => s.name === name); },
@@ -412,11 +418,18 @@ const SubjectManager = {
         reader.onload = (e) => {
             try {
                 const text = e.target.result;
-                const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-                if (lines.length === 0) { Toast.error('빈 CSV 파일입니다'); return; }
+                const allLines = text.split('\n').map(l => l.trim());
+                // 21행 이전은 설명 영역 → 스킵, 빈 줄/주석도 스킵
+                const lines = allLines.slice(20).filter(l => l && !l.startsWith('#') && !l.startsWith('='));
+                if (lines.length === 0) {
+                    // 20행 이하 파일이면 전체에서 데이터 행 찾기 (하위호환)
+                    const fallback = allLines.filter(l => l && !l.startsWith('#') && !l.startsWith('=') && l.indexOf(',') >= 0);
+                    if (fallback.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
+                    lines.push(...fallback);
+                }
 
                 const firstCells = this._parseCSVLine(lines[0]);
-                const hasHeader = isNaN(parseInt(firstCells[0])) && firstCells[0] !== '';
+                const hasHeader = isNaN(parseInt(firstCells[0])) && firstCells[0] !== '' && /[가-힣a-zA-Z]/.test(firstCells[0]);
                 const dataLines = hasHeader ? lines.slice(1) : lines;
 
                 let imported = 0;
@@ -542,21 +555,27 @@ const SubjectManager = {
     // ==========================================
     downloadCSVTemplate() {
         const lines = [
-            '# [과목 CSV 양식 설명]',
-            '# 열 순서: 과목코드, 과목명, 선택지수, 배점, 총점, 1번답, 2번답, ...',
-            '# 배점 열에 숫자 = 일괄배점 / "차등" = 정답 뒤에 문항별 배점 추가',
-            '# 과목별 문항수가 달라도 됨 (열 수가 달라도 자동 처리)',
-            '#',
-            '# === 일괄배점 예시 (20문항) ===',
-            '과목코드,과목명,선택지수,배점,총점,1번,2번,3번,4번,5번,6번,7번,8번,9번,10번,11번,12번,13번,14번,15번,16번,17번,18번,19번,20번',
+            '========================================',
+            '과목/정답 CSV 양식',
+            '========================================',
+            '',
+            '[열 순서]',
+            '과목코드  과목명  선택지수  배점  총점  1번답  2번답  ...',
+            '',
+            '[배점]',
+            '숫자(예:4) = 일괄배점',
+            '차등 = 정답 뒤에 문항별 배점이 이어짐',
+            '',
+            '[참고]',
+            '- 과목별 문항수가 달라도 됨 (열 수가 달라도 자동 처리)',
+            '- 헤더 행은 불필요 (21행부터 바로 데이터 입력)',
+            '- 이 설명 영역(1~20행)은 자동으로 무시됩니다',
+            '',
+            '=== 일괄배점 예시 (20문항) ===',
             '01,국어,5,5,100,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5',
-            '',
-            '# === 일괄배점 예시 (30문항 — 문항수 다름) ===',
-            '02,영어,5,4,120,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5',
-            '',
-            '# === 차등배점 예시 (10문항 — 정답 뒤에 배점) ===',
-            '# 배점열에 "차등" 입력 → 정답10개 + 배점10개 = 총 20셀',
+            '=== 차등배점 예시 (10문항: 정답10개+배점10개) ===',
             '03,수학,5,차등,100,1,2,3,4,5,1,2,3,4,5,8,8,8,8,8,12,12,12,12,12',
+            '========= 21행부터 입력하세요 =========',
         ];
         this._downloadFile(lines.join('\n'), '과목_CSV_양식.csv');
     },
@@ -705,15 +724,27 @@ const SubjectManager = {
     // 시험 인원 CSV 양식 다운로드
     downloadStudentCSVTemplate() {
         const lines = [
-            '# [시험 인원 CSV 양식 설명]',
-            '# 열 순서: 이름, 생년월일, 수험번호, 핸드폰번호',
-            '# 모든 열을 채우지 않아도 됨 (필요한 것만 입력)',
-            '# 생년월일/핸드폰번호 앞자리 0은 자동 보존됨',
-            '#',
-            '이름,생년월일,수험번호,핸드폰번호',
+            '========================================',
+            '시험 인원 CSV 양식',
+            '========================================',
+            '',
+            '[열 순서]',
+            '이름  생년월일  수험번호  핸드폰번호',
+            '',
+            '[참고]',
+            '- 모든 열을 채우지 않아도 됨 (필요한 것만 입력)',
+            '- 생년월일/핸드폰번호 앞자리 0은 자동 보존됨',
+            '- 헤더 행은 불필요 (21행부터 바로 데이터 입력)',
+            '- 이 설명 영역(1~20행)은 자동으로 무시됩니다',
+            '',
+            '=== 예시 ===',
             '홍길동,010101,20260001,01012345678',
             '김철수,020202,,01098765432',
-            '이영희,,,',
+            '이영희,030303,20260003,',
+            '',
+            '',
+            '',
+            '========= 21행부터 입력하세요 =========',
         ];
         this._downloadFile(lines.join('\n'), '시험인원_CSV_양식.csv');
     },
@@ -724,10 +755,15 @@ const SubjectManager = {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const lines = e.target.result.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-                if (lines.length === 0) { Toast.error('빈 CSV'); return; }
+                const allLines = e.target.result.split('\n').map(l => l.trim());
+                // 21행 이전 스킵
+                let lines = allLines.slice(20).filter(l => l && !l.startsWith('#') && !l.startsWith('='));
+                if (lines.length === 0) {
+                    lines = allLines.filter(l => l && !l.startsWith('#') && !l.startsWith('=') && l.indexOf(',') >= 0);
+                    if (lines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
+                }
                 const first = this._parseCSVLine(lines[0]);
-                const hasHeader = isNaN(parseInt(first[0])) && !/^\d/.test(first[0]);
+                const hasHeader = /[가-힣a-zA-Z]/.test(first[0]) && isNaN(parseInt(first[0]));
                 const dataLines = hasHeader ? lines.slice(1) : lines;
                 const students = this.getStudents();
                 let imported = 0;
