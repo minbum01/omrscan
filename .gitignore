@@ -1,11 +1,13 @@
 *.png
 *.jpg
 *.jpeg
+!로스쿨샘풀/**/*.png
+!로스쿨샘풀/**/*.jpg
+!로스쿨샘풀/**/*.jpeg
 console
 memory/
 GEMINI omr분석 기획
 보고용/
-로스쿨샘풀/
 devlog/
 *.txt
 node_modules/
