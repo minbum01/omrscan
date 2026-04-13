@@ -910,7 +910,7 @@ const Scoring = {
         const thBase = 'padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border:1px solid var(--border); position:sticky; top:0;';
 
         const choiceNums = [1,2,3,4,5,6,7];
-        const th2 = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#f9fafb; position:sticky; top:0; z-index:1;';
+        const th2 = 'padding:5px 6px; text-align:center; font-size:10px; font-weight:600; border:1px solid #d1d5db; background:#e5e7eb; color:#374151; position:sticky; top:0; z-index:1;';
 
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
