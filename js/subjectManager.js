@@ -122,7 +122,7 @@ const SubjectManager = {
                     ${useCode ? `
                     <input type="text" class="subject-input sm-code" value="${subj.code || ''}"
                         style="width:45px; text-align:center; font-size:12px; padding:3px;">
-                    ` : `<input type="hidden" class="sm-code" value="">`}
+                    ` : `<span style="font-size:11px; color:var(--text-muted); min-width:20px; text-align:center;">-</span><input type="hidden" class="sm-code" value="">`}
 
                     <div style="display:flex; flex-direction:column; gap:1px; flex:1;">
                         <label style="font-size:9px; color:var(--text-muted);">과목명</label>
@@ -414,10 +414,8 @@ const SubjectManager = {
     // ==========================================
     importCSV(file) {
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
+        this._readFileWithEncoding(file, (text) => {
             try {
-                const text = e.target.result;
                 const allLines = text.split('\n').map(l => l.trim());
                 // 21행 이전은 설명 영역 → 스킵
                 let dataRows = allLines.slice(20).filter(l => l && l.indexOf(',') >= 0);
@@ -506,8 +504,7 @@ const SubjectManager = {
                 console.error('CSV 파싱 오류:', err);
                 Toast.error('CSV 파싱 실패: ' + err.message);
             }
-        };
-        reader.readAsText(file, 'UTF-8');
+        });
     },
 
     _parseCSVLine(line) {
@@ -659,7 +656,7 @@ const SubjectManager = {
             html += `<tr style="border-bottom:1px solid var(--border-light);">
                 <td style="padding:3px 6px; text-align:center; color:var(--text-muted);">${idx + 1}</td>
                 <td><input type="text" class="st-name" value="${st.name || ''}" style="width:100%; border:none; padding:3px; font-size:12px;"></td>
-                <td><input type="text" class="st-birth" value="${st.birth || ''}" placeholder="YYMMDD" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
+                <td><input type="text" class="st-birth" value="${this.formatBirth(st.birth)}" placeholder="YY-MM-DD" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
                 <td><input type="text" class="st-examno" value="${st.examNo || ''}" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
                 <td><input type="text" class="st-phone" value="${st.phone || ''}" placeholder="01012345678" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
                 <td><button class="roi-delete-btn" onclick="SubjectManager.removeStudent(${idx})" style="font-size:10px;">✕</button></td>
@@ -697,7 +694,7 @@ const SubjectManager = {
         rows.forEach(row => {
             students.push({
                 name: (row.querySelector('.st-name') || {}).value || '',
-                birth: (row.querySelector('.st-birth') || {}).value || '',
+                birth: ((row.querySelector('.st-birth') || {}).value || '').replace(/[^0-9]/g, ''),
                 examNo: (row.querySelector('.st-examno') || {}).value || '',
                 phone: (row.querySelector('.st-phone') || {}).value || '',
             });
@@ -734,18 +731,25 @@ const SubjectManager = {
         if (!value) return '';
         let v = String(value).trim().replace(/[^0-9]/g, ''); // 숫자만 추출
         if (type === 'birth' && v.length > 0) {
-            while (v.length < 6) v = '0' + v; // 6자리 맞춤 (010101)
-            return v.substring(0, 6);
+            while (v.length < 6) v = '0' + v;
+            v = v.substring(0, 6);
+            return v; // 내부 저장은 010101, 표시는 formatBirth로
         }
         if (type === 'phone' && v.length > 0) {
-            if (v.length === 10 && !v.startsWith('0')) v = '0' + v; // 1012345678 → 01012345678
-            while (v.length < 11 && v.startsWith('010')) v = v; // 이미 올바른 형태
+            if (v.length === 10 && !v.startsWith('0')) v = '0' + v;
             return v;
         }
         if (type === 'examNo') {
-            return String(value).trim(); // 수험번호는 원본 유지 (문자 포함 가능)
+            return String(value).trim();
         }
         return String(value).trim();
+    },
+
+    // 생년월일 표시용: 010101 → 01-01-01
+    formatBirth(birth) {
+        if (!birth || birth.length < 6) return birth || '';
+        const v = birth.replace(/[^0-9]/g, '').padStart(6, '0').substring(0, 6);
+        return v.substring(0, 2) + '-' + v.substring(2, 4) + '-' + v.substring(4, 6);
     },
 
     // 시험 인원 CSV 양식 다운로드
@@ -778,19 +782,25 @@ const SubjectManager = {
     // 시험 인원 CSV 불러오기
     importStudentCSV(file) {
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
+        // 인코딩 자동 감지: UTF-8 먼저, 깨지면 EUC-KR
+        this._readFileWithEncoding(file, (text) => {
             try {
-                const allLines = e.target.result.split('\n').map(l => l.trim());
+                const allLines = text.split('\n').map(l => l.trim());
                 // 21행 이전 스킵
-                let lines = allLines.slice(20).filter(l => l && !l.startsWith('#') && !l.startsWith('='));
+                let lines = allLines.slice(20).filter(l => l && l.indexOf(',') >= 0);
                 if (lines.length === 0) {
-                    lines = allLines.filter(l => l && !l.startsWith('#') && !l.startsWith('=') && l.indexOf(',') >= 0);
-                    if (lines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
+                    // 하위호환: 전체에서 쉼표 있는 행만
+                    lines = allLines.filter(l => l && l.indexOf(',') >= 0);
+                    // 설명 행 제거 (양식/순서/참고 등의 키워드 포함 행)
+                    lines = lines.filter(l => !/열 순서|참고|양식|예시|입력하세요/.test(l));
                 }
-                const first = this._parseCSVLine(lines[0]);
-                const hasHeader = /[가-힣a-zA-Z]/.test(first[0]) && isNaN(parseInt(first[0]));
+                if (lines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
+
+                // 헤더 판별: "이름" "생년월일" 등 고정 헤더 키워드 포함 시 스킵
+                const firstLine = lines[0];
+                const hasHeader = /이름|생년월일|수험번호|핸드폰/.test(firstLine);
                 const dataLines = hasHeader ? lines.slice(1) : lines;
+
                 const students = this.getStudents();
                 let imported = 0;
                 dataLines.forEach(line => {
@@ -808,6 +818,22 @@ const SubjectManager = {
                 Toast.success(`CSV에서 ${imported}명 불러옴`);
             } catch (err) {
                 Toast.error('CSV 파싱 실패: ' + err.message);
+            }
+        });
+    },
+
+    // 파일 읽기 (인코딩 자동 감지: UTF-8 → EUC-KR 폴백)
+    _readFileWithEncoding(file, callback) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            // UTF-8로 읽었는데 깨진 문자(�)가 있으면 EUC-KR로 재시도
+            if (text.indexOf('�') >= 0 || text.indexOf('\ufffd') >= 0) {
+                const reader2 = new FileReader();
+                reader2.onload = (e2) => callback(e2.target.result);
+                reader2.readAsText(file, 'EUC-KR');
+            } else {
+                callback(text);
             }
         };
         reader.readAsText(file, 'UTF-8');
