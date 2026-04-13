@@ -9,8 +9,29 @@ const SessionManager = {
     LIST_KEY: 'omr_session_list',
     CURRENT_KEY: 'omr_current_session',
 
-    currentSessionName: null,
+    currentSessionName: null,    // 세션 키 (= examName_examDate)
+    currentExamName: null,       // 시험 이름
+    currentExamDate: null,       // 시험 일자 (YYYY-MM-DD)
     _hasUnsavedChanges: false,
+
+    _todayStr() {
+        const d = new Date();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${d.getFullYear()}-${m}-${day}`;
+    },
+
+    // 세션 키가 "시험이름_YYYY-MM-DD" 형식일 경우 파싱
+    _parseExamName(sessionName) {
+        if (!sessionName) return null;
+        const m = sessionName.match(/^(.*)_(\d{4}-\d{2}-\d{2})$/);
+        return m ? m[1] : sessionName;
+    },
+    _parseExamDate(sessionName) {
+        if (!sessionName) return null;
+        const m = sessionName.match(/_(\d{4}-\d{2}-\d{2})$/);
+        return m ? m[1] : null;
+    },
 
     // Electron 환경 여부
     get isElectron() {
@@ -85,14 +106,17 @@ const SessionManager = {
         const existing = document.getElementById('new-session-input-area');
         if (existing) { existing.querySelector('input').focus(); return; }
 
+        const today = this._todayStr();
         const div = document.createElement('div');
         div.id = 'new-session-input-area';
         div.style.cssText = 'padding:12px; border:2px solid var(--blue); border-radius:8px; margin-bottom:12px; background:var(--blue-light);';
         div.innerHTML = `
-            <div style="font-size:12px; font-weight:600; margin-bottom:6px;">세션 이름 입력</div>
-            <div style="display:flex; gap:6px;">
+            <div style="font-size:12px; font-weight:600; margin-bottom:6px;">시험 이름 · 시험 일자 입력</div>
+            <div style="display:flex; gap:6px; align-items:center;">
                 <input type="text" id="new-session-name" placeholder="예: 2026년 1회 모의고사"
                     style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                <input type="date" id="new-session-date" value="${today}"
+                    style="padding:8px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
                 <button class="btn btn-primary btn-sm" onclick="SessionManager._confirmNewSession()">생성</button>
                 <button class="btn btn-sm" onclick="document.getElementById('new-session-input-area').remove()">취소</button>
             </div>
@@ -109,12 +133,18 @@ const SessionManager = {
 
     _confirmNewSession() {
         const input = document.getElementById('new-session-name');
+        const dateInput = document.getElementById('new-session-date');
         if (!input) return;
-        const name = input.value.trim();
-        if (!name) { Toast.error('세션 이름을 입력하세요'); input.focus(); return; }
+        const examName = input.value.trim();
+        const examDate = (dateInput && dateInput.value) || this._todayStr();
+        if (!examName) { Toast.error('시험 이름을 입력하세요'); input.focus(); return; }
+
+        const name = `${examName}_${examDate}`;
 
         this._closeStartScreen();
         this.currentSessionName = name;
+        this.currentExamName = examName;
+        this.currentExamDate = examDate;
         this._hasUnsavedChanges = false;
 
         // 상태 초기화
@@ -183,6 +213,9 @@ const SessionManager = {
             App.state.currentIndex = -1;
 
             this.currentSessionName = name;
+            // 시험 이름/일자 복원 (없으면 세션 키에서 파싱 시도)
+            this.currentExamName = data.examName || this._parseExamName(name);
+            this.currentExamDate = data.examDate || this._parseExamDate(name);
             this._hasUnsavedChanges = false;
             this._updateHeader();
 
@@ -245,6 +278,8 @@ const SessionManager = {
         const name = this.currentSessionName;
         const data = {
             sessionName: name,
+            examName: this.currentExamName || null,
+            examDate: this.currentExamDate || null,
             version: 1,
             savedAt: new Date().toISOString(),
             subjects: App.state.subjects || [],
@@ -325,6 +360,8 @@ const SessionManager = {
 
         if (this.currentSessionName === name) {
             this.currentSessionName = null;
+            this.currentExamName = null;
+            this.currentExamDate = null;
             this._hasUnsavedChanges = false;
         }
         this._closeStartScreen();
@@ -366,22 +403,46 @@ const SessionManager = {
     },
 
     _updateHeader() {
-        let el = document.getElementById('session-header-name');
-        if (!el) {
-            const toolbar = document.querySelector('.toolbar-left');
-            if (toolbar) {
-                const span = document.createElement('span');
-                span.id = 'session-header-name';
-                span.style.cssText = 'font-size:12px; color:var(--text-secondary); margin-left:8px; font-weight:600; cursor:pointer;';
-                span.onclick = () => this.showStartScreen();
-                toolbar.appendChild(span);
+        // 메인 헤더 가운데 시험 정보 바
+        const bar = document.getElementById('exam-info-bar');
+        const nameEl = document.getElementById('exam-info-name');
+        const sepEl = document.getElementById('exam-info-sep');
+        const dateEl = document.getElementById('exam-info-date');
+        if (bar && nameEl && dateEl) {
+            if (this.currentExamName || this.currentSessionName) {
+                const displayName = this.currentExamName || this.currentSessionName;
+                const displayDate = this.currentExamDate || '';
+                nameEl.textContent = displayName + (this._hasUnsavedChanges ? ' *' : '');
+                dateEl.textContent = displayDate;
+                sepEl.textContent = displayDate ? '·' : '';
+                bar.style.display = '';
+            } else {
+                bar.style.display = 'none';
             }
-            el = document.getElementById('session-header-name');
         }
+
+        // 레거시: toolbar 옆 세션명 (기존 코드 호환 유지, 선택적 표시)
+        let el = document.getElementById('session-header-name');
         if (el) {
-            el.textContent = this.currentSessionName
-                ? `— ${this.currentSessionName}${this._hasUnsavedChanges ? ' *' : ''}`
-                : '';
+            // 이제 가운데 바로 옮겨졌으므로 숨김
+            el.textContent = '';
         }
+    },
+
+    // 시험 정보 편집 (헤더 클릭 시 호출)
+    editExamInfo() {
+        if (!this.currentSessionName) return;
+        const curName = this.currentExamName || this.currentSessionName;
+        const curDate = this.currentExamDate || this._todayStr();
+        const newName = prompt('시험 이름', curName);
+        if (newName === null) return;
+        const newDate = prompt('시험 일자 (YYYY-MM-DD)', curDate);
+        if (newDate === null) return;
+        const trimmedName = newName.trim();
+        if (!trimmedName) { Toast.error('시험 이름을 입력하세요'); return; }
+        this.currentExamName = trimmedName;
+        this.currentExamDate = newDate.trim() || this._todayStr();
+        this._hasUnsavedChanges = true;
+        this._updateHeader();
     }
 };
