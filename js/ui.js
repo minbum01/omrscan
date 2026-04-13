@@ -155,7 +155,7 @@ const UI = {
         if (hasAnyGrade) {
             html += `<div style="margin-bottom:8px;">
                 <button class="btn btn-sm" style="width:100%; font-size:11px; padding:5px; background:var(--blue-light); color:var(--blue); font-weight:600;"
-                    onclick="UI.openScoringPanel()">채점 통계 열기</button>
+                    onclick="switchMainTab('scoring')">채점 결과 보기</button>
             </div>`;
         }
 

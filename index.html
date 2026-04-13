@@ -67,8 +67,16 @@
     <input type="file" id="template-file-input" style="display:none;" accept=".json">
     <input type="file" id="session-file-input" style="display:none;" accept=".json">
 
-    <!-- 메인 3패널 -->
-    <div class="main-layout">
+    <!-- 메인 탭 전환 -->
+    <div id="main-tab-bar" style="display:flex; gap:0; border-bottom:2px solid var(--border); background:var(--bg-card);">
+        <button class="main-tab active" id="tab-analysis" onclick="switchMainTab('analysis')"
+            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--blue); color:#fff; cursor:pointer; border-radius:6px 6px 0 0;">분석</button>
+        <button class="main-tab" id="tab-scoring" onclick="switchMainTab('scoring')"
+            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점</button>
+    </div>
+
+    <!-- 분석 탭: 기존 3패널 -->
+    <div class="main-layout" id="analysis-view">
 
         <!-- 좌: 이미지 목록 -->
         <aside class="panel-left">
@@ -174,6 +182,40 @@
         </aside>
 
     </div>
+
+    <!-- 채점 탭: 전체 페이지 -->
+    <div id="scoring-view" style="display:none; flex:1; overflow-y:auto; padding:20px; background:var(--bg);">
+        <div id="scoring-content" style="max-width:1200px; margin:0 auto;"></div>
+    </div>
+
+    <script>
+    function switchMainTab(tab) {
+        const analysisView = document.getElementById('analysis-view');
+        const scoringView = document.getElementById('scoring-view');
+        const tabAnalysis = document.getElementById('tab-analysis');
+        const tabScoring = document.getElementById('tab-scoring');
+
+        if (tab === 'analysis') {
+            analysisView.style.display = '';
+            scoringView.style.display = 'none';
+            tabAnalysis.style.background = 'var(--blue)';
+            tabAnalysis.style.color = '#fff';
+            tabScoring.style.background = 'var(--bg-input)';
+            tabScoring.style.color = 'var(--text-secondary)';
+        } else {
+            analysisView.style.display = 'none';
+            scoringView.style.display = '';
+            tabScoring.style.background = 'var(--blue)';
+            tabScoring.style.color = '#fff';
+            tabAnalysis.style.background = 'var(--bg-input)';
+            tabAnalysis.style.color = 'var(--text-secondary)';
+            // 채점 탭 내용 렌더링
+            if (typeof Scoring !== 'undefined') {
+                Scoring.renderScoringPanel(document.getElementById('scoring-content'));
+            }
+        }
+    }
+    </script>
 
     <!-- 상태바 -->
     <footer class="status-bar">
