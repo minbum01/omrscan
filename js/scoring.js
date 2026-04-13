@@ -318,6 +318,21 @@ const Scoring = {
         return row.subjects[subjectName] || null;
     },
 
+    // 동명이인 감지: 이름이 같은데 수험번호가 다른 행들에 _sameName=true 표시
+    _markDuplicateNames(rows) {
+        const byName = {};
+        rows.forEach(r => {
+            const name = (r.name || '').trim();
+            if (!name) return;
+            if (!byName[name]) byName[name] = new Set();
+            byName[name].add(r.examNo || '');
+        });
+        rows.forEach(r => {
+            const name = (r.name || '').trim();
+            r._sameName = !!(name && byName[name] && byName[name].size > 1);
+        });
+    },
+
     // ==========================================
     // 통계 계산
     // ==========================================
@@ -574,6 +589,7 @@ const Scoring = {
     // ==========================================
     renderScoringPanel(container) {
         const rows = this.collectData();
+        this._markDuplicateNames(rows);
         const stats = this.calcStats(rows);
         const itemSubj = this._resolveSubject(rows, this._itemSubject);
         const items = this.calcItemAnalysis(rows, itemSubj);
@@ -752,9 +768,11 @@ const Scoring = {
         html += `</tr></thead><tbody>`;
 
         rows.forEach((r, ri) => {
-            const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
+            let bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
+            if (r._sameName) bg = 'background:#fef9c3;'; // 동명이인 노란 별색
             const noOmr = r._noOmr;
-            html += `<tr style="${bg} ${noOmr ? 'opacity:0.5;' : ''}">`;
+            const title = r._sameName ? ' title="동명이인 또는 체킹 오류 확인 필요"' : '';
+            html += `<tr style="${bg} ${noOmr ? 'opacity:0.5;' : ''}"${title}>`;
             cols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
                 let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
@@ -1238,8 +1256,10 @@ const Scoring = {
         html += `</thead><tbody>`;
 
         rows.forEach((r, ri) => {
-            const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            html += `<tr style="${bg}">`;
+            let bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
+            if (r._sameName) bg = 'background:#fef9c3;'; // 동명이인 노란 별색
+            const title = r._sameName ? ' title="동명이인 또는 체킹 오류 확인 필요"' : '';
+            html += `<tr style="${bg}"${title}>`;
 
             // 정보 셀
             infoCols.forEach(col => {
