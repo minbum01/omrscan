@@ -4,7 +4,78 @@
 
 const Scoring = {
     _activeTab: 'omr',
-    _defaultMaxQ: 40,  // 기본 표시 문항수
+    _defaultMaxQ: 40,
+    _showColumnSettings: false,
+
+    // OMR 결과표 열 설정 (사용자 커스터마이징)
+    _omrColumns: null, // null이면 기본값 사용
+    _getOMRColumns() {
+        if (this._omrColumns) return this._omrColumns;
+        // 기본 열 구성
+        const cols = [
+            { id: 'examNo', label: '응시번호', type: 'info', visible: true },
+            { id: 'name', label: '성명', type: 'info', visible: true },
+            { id: 'score', label: '점수', type: 'info', visible: true },
+        ];
+        for (let i = 1; i <= this._defaultMaxQ; i++) {
+            cols.push({ id: `q${i}`, label: `${i}번`, type: 'answer', qNum: i, visible: true });
+        }
+        for (let i = 1; i <= this._defaultMaxQ; i++) {
+            cols.push({ id: `ox${i}`, label: `${i}번`, type: 'ox', qNum: i, visible: true });
+        }
+        this._omrColumns = cols;
+        return cols;
+    },
+
+    // 열 토글
+    toggleColumn(colId) {
+        const cols = this._getOMRColumns();
+        const col = cols.find(c => c.id === colId);
+        if (col) col.visible = !col.visible;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 열 이름 변경
+    renameColumn(colId, newLabel) {
+        const cols = this._getOMRColumns();
+        const col = cols.find(c => c.id === colId);
+        if (col) col.label = newLabel;
+    },
+
+    // 열 순서 이동
+    moveColumn(colId, direction) {
+        const cols = this._getOMRColumns();
+        const idx = cols.findIndex(c => c.id === colId);
+        if (idx < 0) return;
+        const newIdx = idx + direction;
+        if (newIdx < 0 || newIdx >= cols.length) return;
+        [cols[idx], cols[newIdx]] = [cols[newIdx], cols[idx]];
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 열 추가
+    addColumn(afterColId, label) {
+        const cols = this._getOMRColumns();
+        const idx = afterColId ? cols.findIndex(c => c.id === afterColId) : cols.length - 1;
+        const newId = 'custom_' + Date.now();
+        cols.splice(idx + 1, 0, { id: newId, label: label || '새 열', type: 'custom', visible: true });
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 열 삭제
+    removeColumn(colId) {
+        const cols = this._getOMRColumns();
+        const idx = cols.findIndex(c => c.id === colId);
+        if (idx >= 0) cols.splice(idx, 1);
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 문항수 변경
+    setMaxQ(n) {
+        this._defaultMaxQ = Math.max(1, Math.min(100, parseInt(n) || 40));
+        this._omrColumns = null; // 리셋
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
 
     // ==========================================
     // 데이터 수집
@@ -261,46 +332,103 @@ const Scoring = {
     // OMR 결과표
     // ==========================================
     _renderOMR(rows) {
-        const maxQ = this._defaultMaxQ;
-        const th = 'style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; z-index:1;"';
-        const td = 'style="padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9;"';
+        const cols = this._getOMRColumns().filter(c => c.visible);
 
-        let html = `<div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+        // 상단 도구
+        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+                <label style="font-size:11px;">문항수:
+                    <input type="number" value="${this._defaultMaxQ}" min="1" max="100" style="width:50px; padding:3px; font-size:11px; border:1px solid var(--border); border-radius:4px;"
+                        onchange="Scoring.setMaxQ(this.value)">
+                </label>
+                <button class="btn btn-sm" style="font-size:10px; padding:3px 8px;"
+                    onclick="Scoring._showColumnSettings=!Scoring._showColumnSettings; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">
+                    ${this._showColumnSettings ? '설정 닫기' : '열 설정'}
+                </button>
+            </div>
             <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
-        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
-        <table style="border-collapse:collapse; width:100%; min-width:${300 + maxQ * 50}px;">
-        <thead><tr>
-            <th ${th}>응시번호</th>
-            <th ${th}>성명</th>
-            <th ${th} style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; z-index:1; color:var(--blue);">점수</th>`;
+        // 열 설정 패널
+        if (this._showColumnSettings) {
+            const allCols = this._getOMRColumns();
+            // info 열만 설정 표시 (answer/ox는 문항수로 관리)
+            const infoCols = allCols.filter(c => c.type === 'info' || c.type === 'custom');
+            html += `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+                <div style="font-size:11px; font-weight:600; margin-bottom:6px;">기본 열 관리 (드래그로 순서 변경 / 이름 수정 / 토글)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">`;
+            infoCols.forEach(col => {
+                html += `<div style="display:flex; align-items:center; gap:3px; padding:3px 6px; border:1px solid var(--border); border-radius:4px; background:${col.visible ? 'white' : '#f1f5f9'}; font-size:10px;">
+                    <button style="border:none; background:none; cursor:pointer; padding:0; font-size:10px;" onclick="Scoring.moveColumn('${col.id}',-1)">◀</button>
+                    <input type="text" value="${col.label}" style="width:${Math.max(40, col.label.length * 10)}px; border:none; font-size:10px; font-weight:600; text-align:center; background:transparent;"
+                        onchange="Scoring.renameColumn('${col.id}', this.value)">
+                    <button style="border:none; background:none; cursor:pointer; padding:0; font-size:10px;" onclick="Scoring.moveColumn('${col.id}',1)">▶</button>
+                    <input type="checkbox" ${col.visible ? 'checked' : ''} onchange="Scoring.toggleColumn('${col.id}')" style="margin:0;">
+                    ${col.type === 'custom' ? `<button style="border:none; background:none; cursor:pointer; color:red; font-size:10px;" onclick="Scoring.removeColumn('${col.id}')">✕</button>` : ''}
+                </div>`;
+            });
+            html += `</div>
+                <div style="display:flex; gap:4px;">
+                    <button class="btn btn-sm" style="font-size:10px; padding:2px 8px;" onclick="Scoring.addColumn(null, prompt('열 이름:') || '새 열')">+ 열 추가</button>
+                    <label style="font-size:10px; display:flex; align-items:center; gap:3px;">
+                        <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
+                            onchange="Scoring._toggleAnswerCols(this.checked)"> 마킹 내용
+                    </label>
+                    <label style="font-size:10px; display:flex; align-items:center; gap:3px;">
+                        <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
+                            onchange="Scoring._toggleOXCols(this.checked)"> 정오표(O/X)
+                    </label>
+                </div>
+            </div>`;
+        }
 
-        for (let i = 1; i <= maxQ; i++) html += `<th ${th}>${i}</th>`;
-        for (let i = 1; i <= maxQ; i++) html += `<th ${th} style="padding:6px 4px; text-align:center; font-size:10px; font-weight:600; border-bottom:2px solid var(--border); background:#fef3c7; position:sticky; top:0; z-index:1;">${i}</th>`;
+        // 테이블
+        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
+        <table style="border-collapse:collapse; width:100%;">
+        <thead><tr>`;
+
+        cols.forEach(col => {
+            const bg = col.type === 'ox' ? 'background:#fef3c7;' : col.id === 'score' ? 'color:var(--blue);' : 'background:#f8fafc;';
+            html += `<th style="padding:6px 6px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} position:sticky; top:0; z-index:1; white-space:nowrap;">${col.label}</th>`;
+        });
         html += `</tr></thead><tbody>`;
 
         rows.forEach((r, ri) => {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
-            html += `<tr style="${bg}">
-                <td ${td}>${r.examNo}</td>
-                <td ${td} style="padding:5px 6px; font-size:11px; border-bottom:1px solid #f1f5f9; font-weight:600;">${r.name}</td>
-                <td ${td} style="padding:5px 6px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700; color:var(--blue);">${r.score}</td>`;
-            for (let i = 1; i <= maxQ; i++) {
-                const a = r.answers.find(x => x.q === i);
-                html += `<td ${td}>${a ? a.markedLabel : ''}</td>`;
-            }
-            for (let i = 1; i <= maxQ; i++) {
-                const a = r.answers.find(x => x.q === i);
-                const ox = a ? (a.isCorrect ? 'O' : 'X') : '';
-                const c = ox === 'O' ? 'color:#22c55e;' : ox === 'X' ? 'color:#ef4444;' : '';
-                html += `<td style="padding:5px 4px; text-align:center; font-size:10px; font-weight:700; border-bottom:1px solid #f1f5f9; ${c}">${ox}</td>`;
-            }
+            html += `<tr style="${bg}">`;
+            cols.forEach(col => {
+                let val = '', style = 'padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9;';
+                if (col.id === 'examNo') val = r.examNo;
+                else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
+                else if (col.id === 'score') { val = r.score; style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
+                else if (col.type === 'answer') {
+                    const a = r.answers.find(x => x.q === col.qNum);
+                    val = a ? a.markedLabel : '';
+                } else if (col.type === 'ox') {
+                    const a = r.answers.find(x => x.q === col.qNum);
+                    val = a ? (a.isCorrect ? 'O' : 'X') : '';
+                    if (val === 'O') style += 'color:#22c55e; font-weight:700;';
+                    else if (val === 'X') style += 'color:#ef4444; font-weight:700;';
+                } else if (col.type === 'custom') {
+                    val = ''; // 커스텀 열은 비어있음
+                }
+                html += `<td style="${style}">${val}</td>`;
+            });
             html += `</tr>`;
         });
 
         html += `</tbody></table></div>`;
         return html;
+    },
+
+    // 마킹/정오 열 일괄 토글
+    _toggleAnswerCols(show) {
+        this._getOMRColumns().forEach(c => { if (c.type === 'answer') c.visible = show; });
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+    _toggleOXCols(show) {
+        this._getOMRColumns().forEach(c => { if (c.type === 'ox') c.visible = show; });
+        this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
     // ==========================================
