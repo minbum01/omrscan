@@ -1,5 +1,5 @@
 // ============================================
-// subjectManager.js - 과목 관리 (코드/이름/정답/배점)
+// subjectManager.js - 시험 관리 (과목/정답/배점/시험인원)
 // ============================================
 
 const SubjectManager = {
@@ -8,6 +8,7 @@ const SubjectManager = {
     init() {
         document.getElementById('btn-subject-manager').addEventListener('click', () => this.openModal());
         this.loadFromStorage();
+        this.loadStudents();
     },
 
     loadFromStorage() {
@@ -47,33 +48,29 @@ const SubjectManager = {
         const overlay = document.createElement('div');
         overlay.id = 'subject-modal';
         overlay.className = 'modal-overlay';
+        const activeTab = this._activeTab || 'subjects';
         overlay.innerHTML = `
             <div class="modal" style="width:720px; max-height:90vh;">
                 <div class="modal-header">
-                    <h2>과목 관리</h2>
-                    <p>과목별 코드, 이름, 정답, 배점을 관리합니다.</p>
+                    <h2>시험 관리</h2>
+                    <div style="display:flex; gap:4px; margin-top:6px;">
+                        <button class="btn btn-sm ${activeTab === 'subjects' ? 'btn-primary' : ''}" onclick="SubjectManager.switchTab('subjects')">과목/정답</button>
+                        <button class="btn btn-sm ${activeTab === 'students' ? 'btn-primary' : ''}" onclick="SubjectManager.switchTab('students')">시험 인원</button>
+                    </div>
                 </div>
-                <div class="modal-body" id="subject-list" style="overflow-y:auto; max-height:60vh;"></div>
-                <div class="modal-footer">
-                    <button class="btn" id="sm-add">+ 과목 추가</button>
-                    <label class="btn btn-sm" style="cursor:pointer;">
-                        CSV 불러오기
-                        <input type="file" id="sm-csv" accept=".csv" style="display:none;">
-                    </label>
-                    <div style="flex:1;"></div>
-                    <button class="btn" id="sm-cancel">닫기</button>
-                    <button class="btn btn-primary" id="sm-save">저장</button>
+                <div class="modal-body" style="overflow-y:auto; max-height:60vh;">
+                    <div id="subject-list" style="display:${activeTab === 'subjects' ? 'block' : 'none'};"></div>
+                    <div id="student-list" style="display:${activeTab === 'students' ? 'block' : 'none'};"></div>
                 </div>
+                <div class="modal-footer" id="sm-footer"></div>
             </div>
         `;
 
         document.body.appendChild(overlay);
-        document.getElementById('sm-cancel').addEventListener('click', () => overlay.remove());
-        document.getElementById('sm-add').addEventListener('click', () => this.addRow());
-        document.getElementById('sm-save').addEventListener('click', () => this.save(overlay));
-        document.getElementById('sm-csv').addEventListener('change', (e) => this.importCSV(e.target.files[0]));
+        this._renderFooter(activeTab, overlay);
 
-        this.renderList();
+        if (activeTab === 'subjects') this.renderList();
+        else this.renderStudentList();
     },
 
     // ==========================================
@@ -485,5 +482,207 @@ const SubjectManager = {
         }
         result.push(current);
         return result;
+    },
+
+    // ==========================================
+    // 탭 전환
+    // ==========================================
+    _activeTab: 'subjects',
+
+    switchTab(tab) {
+        this._activeTab = tab;
+        const subjDiv = document.getElementById('subject-list');
+        const studDiv = document.getElementById('student-list');
+        if (subjDiv) subjDiv.style.display = tab === 'subjects' ? 'block' : 'none';
+        if (studDiv) studDiv.style.display = tab === 'students' ? 'block' : 'none';
+
+        // 버튼 활성화
+        const overlay = document.getElementById('subject-modal');
+        if (overlay) {
+            overlay.querySelectorAll('.modal-header .btn-sm').forEach(btn => {
+                btn.classList.toggle('btn-primary', btn.textContent.includes(tab === 'subjects' ? '과목' : '시험 인원'));
+            });
+        }
+        this._renderFooter(tab, overlay);
+        if (tab === 'students') this.renderStudentList();
+    },
+
+    _renderFooter(tab, overlay) {
+        const footer = document.getElementById('sm-footer');
+        if (!footer) return;
+
+        if (tab === 'subjects') {
+            footer.innerHTML = `
+                <button class="btn" id="sm-add">+ 과목 추가</button>
+                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
+                <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
+                <div style="flex:1;"></div>
+                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                <button class="btn btn-primary" id="sm-save">저장</button>
+            `;
+            document.getElementById('sm-add').addEventListener('click', () => this.addRow());
+            document.getElementById('sm-save').addEventListener('click', () => this.save(overlay));
+            document.getElementById('sm-csv').addEventListener('change', (e) => this.importCSV(e.target.files[0]));
+        } else {
+            footer.innerHTML = `
+                <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
+                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
+                <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
+                <div style="flex:1;"></div>
+                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
+            `;
+            const csvInput = document.getElementById('sm-student-csv');
+            if (csvInput) csvInput.addEventListener('change', (e) => this.importStudentCSV(e.target.files[0]));
+        }
+    },
+
+    // ==========================================
+    // CSV 양식 다운로드 (과목)
+    // ==========================================
+    downloadCSVTemplate() {
+        const header = '과목코드,과목명,선택지수,배점,총점,1번,2번,3번,4번,5번,6번,7번,8번,9번,10번,11번,12번,13번,14번,15번,16번,17번,18번,19번,20번';
+        const sample1 = '01,국어,5,4,100,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5';
+        const sample2 = '02,영어,5,4,100,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5';
+        const csv = [header, sample1, sample2].join('\n');
+        this._downloadFile(csv, '과목_CSV_양식.csv');
+    },
+
+    // ==========================================
+    // 시험 인원 관리
+    // ==========================================
+    getStudents() {
+        if (!App.state.students) App.state.students = [];
+        return App.state.students;
+    },
+
+    renderStudentList() {
+        const list = document.getElementById('student-list');
+        if (!list) return;
+        const students = this.getStudents();
+
+        if (students.length === 0) {
+            list.innerHTML = `<div style="text-align:center; padding:24px; color:var(--text-muted); font-size:13px;">
+                시험 인원이 없습니다. "인원 추가" 또는 "CSV 불러오기"를 사용하세요.
+            </div>`;
+            return;
+        }
+
+        let html = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead><tr style="background:var(--bg-input);">
+                <th style="padding:4px 6px; text-align:center; width:30px;">#</th>
+                <th style="padding:4px 6px;">이름</th>
+                <th style="padding:4px 6px;">생년월일</th>
+                <th style="padding:4px 6px;">수험번호</th>
+                <th style="padding:4px 6px;">핸드폰</th>
+                <th style="padding:4px 6px; width:30px;"></th>
+            </tr></thead><tbody>`;
+
+        students.forEach((st, idx) => {
+            html += `<tr style="border-bottom:1px solid var(--border-light);">
+                <td style="padding:3px 6px; text-align:center; color:var(--text-muted);">${idx + 1}</td>
+                <td><input type="text" class="st-name" value="${st.name || ''}" style="width:100%; border:none; padding:3px; font-size:12px;"></td>
+                <td><input type="text" class="st-birth" value="${st.birth || ''}" placeholder="YYMMDD" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
+                <td><input type="text" class="st-examno" value="${st.examNo || ''}" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
+                <td><input type="text" class="st-phone" value="${st.phone || ''}" placeholder="01012345678" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
+                <td><button class="roi-delete-btn" onclick="SubjectManager.removeStudent(${idx})" style="font-size:10px;">✕</button></td>
+            </tr>`;
+        });
+
+        html += `</tbody></table>
+            <div style="text-align:right; margin-top:4px; font-size:11px; color:var(--text-muted);">총 ${students.length}명</div>`;
+        list.innerHTML = html;
+    },
+
+    addStudent() {
+        this._saveStudentsFromDOM();
+        this.getStudents().push({ name: '', birth: '', examNo: '', phone: '' });
+        this.renderStudentList();
+    },
+
+    removeStudent(idx) {
+        this._saveStudentsFromDOM();
+        this.getStudents().splice(idx, 1);
+        this.renderStudentList();
+    },
+
+    _saveStudentsFromDOM() {
+        const rows = document.querySelectorAll('#student-list tbody tr');
+        const students = [];
+        rows.forEach(row => {
+            students.push({
+                name: (row.querySelector('.st-name') || {}).value || '',
+                birth: (row.querySelector('.st-birth') || {}).value || '',
+                examNo: (row.querySelector('.st-examno') || {}).value || '',
+                phone: (row.querySelector('.st-phone') || {}).value || '',
+            });
+        });
+        App.state.students = students;
+    },
+
+    saveStudents() {
+        this._saveStudentsFromDOM();
+        try {
+            localStorage.setItem('omr_students_v1', JSON.stringify(App.state.students));
+        } catch (e) { console.warn('인원 저장 실패:', e); }
+        Toast.success(`${App.state.students.length}명 인원 저장 완료`);
+    },
+
+    loadStudents() {
+        try {
+            const raw = localStorage.getItem('omr_students_v1');
+            if (raw) App.state.students = JSON.parse(raw);
+        } catch (e) { console.warn('인원 불러오기 실패:', e); }
+    },
+
+    // 시험 인원 CSV 양식 다운로드
+    downloadStudentCSVTemplate() {
+        const csv = '이름,생년월일,수험번호,핸드폰번호\n홍길동,010101,20260001,01012345678\n김철수,020202,20260002,01098765432';
+        this._downloadFile(csv, '시험인원_CSV_양식.csv');
+    },
+
+    // 시험 인원 CSV 불러오기
+    importStudentCSV(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const lines = e.target.result.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length === 0) { Toast.error('빈 CSV'); return; }
+                const first = this._parseCSVLine(lines[0]);
+                const hasHeader = isNaN(parseInt(first[0])) && !/^\d{6}$/.test(first[0]);
+                const dataLines = hasHeader ? lines.slice(1) : lines;
+                const students = this.getStudents();
+                let imported = 0;
+                dataLines.forEach(line => {
+                    const cells = this._parseCSVLine(line);
+                    if (cells.length < 1) return;
+                    students.push({
+                        name: (cells[0] || '').trim(),
+                        birth: (cells[1] || '').trim(),
+                        examNo: (cells[2] || '').trim(),
+                        phone: (cells[3] || '').trim(),
+                    });
+                    imported++;
+                });
+                this.renderStudentList();
+                Toast.success(`CSV에서 ${imported}명 불러옴`);
+            } catch (err) {
+                Toast.error('CSV 파싱 실패: ' + err.message);
+            }
+        };
+        reader.readAsText(file, 'UTF-8');
+    },
+
+    // 파일 다운로드 헬퍼
+    _downloadFile(content, filename) {
+        const bom = '\uFEFF'; // UTF-8 BOM (엑셀 한글 호환)
+        const blob = new Blob([bom + content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 };
