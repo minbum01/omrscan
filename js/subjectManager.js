@@ -412,7 +412,7 @@ const SubjectManager = {
         reader.onload = (e) => {
             try {
                 const text = e.target.result;
-                const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
                 if (lines.length === 0) { Toast.error('빈 CSV 파일입니다'); return; }
 
                 const firstCells = this._parseCSVLine(lines[0]);
@@ -541,11 +541,24 @@ const SubjectManager = {
     // CSV 양식 다운로드 (과목)
     // ==========================================
     downloadCSVTemplate() {
-        const header = '과목코드,과목명,선택지수,배점,총점,1번,2번,3번,4번,5번,6번,7번,8번,9번,10번,11번,12번,13번,14번,15번,16번,17번,18번,19번,20번';
-        const sample1 = '01,국어,5,4,100,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5';
-        const sample2 = '02,영어,5,4,100,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5';
-        const csv = [header, sample1, sample2].join('\n');
-        this._downloadFile(csv, '과목_CSV_양식.csv');
+        const lines = [
+            '# [과목 CSV 양식 설명]',
+            '# 열 순서: 과목코드, 과목명, 선택지수, 배점, 총점, 1번답, 2번답, ...',
+            '# 배점 열에 숫자 = 일괄배점 / "차등" = 정답 뒤에 문항별 배점 추가',
+            '# 과목별 문항수가 달라도 됨 (열 수가 달라도 자동 처리)',
+            '#',
+            '# === 일괄배점 예시 (20문항) ===',
+            '과목코드,과목명,선택지수,배점,총점,1번,2번,3번,4번,5번,6번,7번,8번,9번,10번,11번,12번,13번,14번,15번,16번,17번,18번,19번,20번',
+            '01,국어,5,5,100,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5,1,2,3,4,5',
+            '',
+            '# === 일괄배점 예시 (30문항 — 문항수 다름) ===',
+            '02,영어,5,4,120,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5,3,1,4,2,5',
+            '',
+            '# === 차등배점 예시 (10문항 — 정답 뒤에 배점) ===',
+            '# 배점열에 "차등" 입력 → 정답10개 + 배점10개 = 총 20셀',
+            '03,수학,5,차등,100,1,2,3,4,5,1,2,3,4,5,8,8,8,8,8,12,12,12,12,12',
+        ];
+        this._downloadFile(lines.join('\n'), '과목_CSV_양식.csv');
     },
 
     // ==========================================
@@ -556,10 +569,28 @@ const SubjectManager = {
         return App.state.students;
     },
 
+    // 매칭에 사용할 필드 (사용자 선택)
+    getMatchFields() {
+        if (!App.state.matchFields) App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
+        return App.state.matchFields;
+    },
+
     renderStudentList() {
         const list = document.getElementById('student-list');
         if (!list) return;
         const students = this.getStudents();
+        const mf = this.getMatchFields();
+
+        // 매칭 필드 선택 UI
+        let matchHtml = `<div style="padding:6px 8px; margin-bottom:8px; background:var(--bg-input); border-radius:6px;">
+            <span style="font-size:11px; font-weight:600;">OMR 매칭 기준 (체크한 항목으로 학생 식별)</span>
+            <div style="display:flex; gap:12px; margin-top:4px;">
+                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="name" ${mf.name ? 'checked' : ''}> 이름</label>
+                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="birth" ${mf.birth ? 'checked' : ''}> 생년월일</label>
+                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="examNo" ${mf.examNo ? 'checked' : ''}> 수험번호</label>
+                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="phone" ${mf.phone ? 'checked' : ''}> 핸드폰</label>
+            </div>
+        </div>`;
 
         if (students.length === 0) {
             list.innerHTML = `<div style="text-align:center; padding:24px; color:var(--text-muted); font-size:13px;">
@@ -591,7 +622,15 @@ const SubjectManager = {
 
         html += `</tbody></table>
             <div style="text-align:right; margin-top:4px; font-size:11px; color:var(--text-muted);">총 ${students.length}명</div>`;
-        list.innerHTML = html;
+        list.innerHTML = matchHtml + html;
+
+        // 매칭 필드 체크박스 이벤트
+        list.querySelectorAll('.mf-check').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const mf = this.getMatchFields();
+                mf[cb.dataset.field] = cb.checked;
+            });
+        });
     },
 
     addStudent() {
@@ -622,8 +661,15 @@ const SubjectManager = {
 
     saveStudents() {
         this._saveStudentsFromDOM();
+        // 생년월일/핸드폰 앞자리 0 보존 처리
+        (App.state.students || []).forEach(st => {
+            st.birth = this._normalizeField(st.birth, 'birth');
+            st.phone = this._normalizeField(st.phone, 'phone');
+            st.examNo = this._normalizeField(st.examNo, 'examNo');
+        });
         try {
             localStorage.setItem('omr_students_v1', JSON.stringify(App.state.students));
+            localStorage.setItem('omr_match_fields_v1', JSON.stringify(App.state.matchFields));
         } catch (e) { console.warn('인원 저장 실패:', e); }
         Toast.success(`${App.state.students.length}명 인원 저장 완료`);
     },
@@ -632,13 +678,44 @@ const SubjectManager = {
         try {
             const raw = localStorage.getItem('omr_students_v1');
             if (raw) App.state.students = JSON.parse(raw);
+            const mf = localStorage.getItem('omr_match_fields_v1');
+            if (mf) App.state.matchFields = JSON.parse(mf);
         } catch (e) { console.warn('인원 불러오기 실패:', e); }
+    },
+
+    // 숫자 앞자리 0 보존 (생년월일 6자리, 핸드폰 11자리)
+    _normalizeField(value, type) {
+        if (!value) return '';
+        let v = String(value).trim().replace(/[^0-9]/g, ''); // 숫자만 추출
+        if (type === 'birth' && v.length > 0) {
+            while (v.length < 6) v = '0' + v; // 6자리 맞춤 (010101)
+            return v.substring(0, 6);
+        }
+        if (type === 'phone' && v.length > 0) {
+            if (v.length === 10 && !v.startsWith('0')) v = '0' + v; // 1012345678 → 01012345678
+            while (v.length < 11 && v.startsWith('010')) v = v; // 이미 올바른 형태
+            return v;
+        }
+        if (type === 'examNo') {
+            return String(value).trim(); // 수험번호는 원본 유지 (문자 포함 가능)
+        }
+        return String(value).trim();
     },
 
     // 시험 인원 CSV 양식 다운로드
     downloadStudentCSVTemplate() {
-        const csv = '이름,생년월일,수험번호,핸드폰번호\n홍길동,010101,20260001,01012345678\n김철수,020202,20260002,01098765432';
-        this._downloadFile(csv, '시험인원_CSV_양식.csv');
+        const lines = [
+            '# [시험 인원 CSV 양식 설명]',
+            '# 열 순서: 이름, 생년월일, 수험번호, 핸드폰번호',
+            '# 모든 열을 채우지 않아도 됨 (필요한 것만 입력)',
+            '# 생년월일/핸드폰번호 앞자리 0은 자동 보존됨',
+            '#',
+            '이름,생년월일,수험번호,핸드폰번호',
+            '홍길동,010101,20260001,01012345678',
+            '김철수,020202,,01098765432',
+            '이영희,,,',
+        ];
+        this._downloadFile(lines.join('\n'), '시험인원_CSV_양식.csv');
     },
 
     // 시험 인원 CSV 불러오기
@@ -647,21 +724,21 @@ const SubjectManager = {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const lines = e.target.result.split('\n').map(l => l.trim()).filter(l => l);
+                const lines = e.target.result.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
                 if (lines.length === 0) { Toast.error('빈 CSV'); return; }
                 const first = this._parseCSVLine(lines[0]);
-                const hasHeader = isNaN(parseInt(first[0])) && !/^\d{6}$/.test(first[0]);
+                const hasHeader = isNaN(parseInt(first[0])) && !/^\d/.test(first[0]);
                 const dataLines = hasHeader ? lines.slice(1) : lines;
                 const students = this.getStudents();
                 let imported = 0;
                 dataLines.forEach(line => {
                     const cells = this._parseCSVLine(line);
-                    if (cells.length < 1) return;
+                    if (cells.length < 1 || !cells[0].trim()) return;
                     students.push({
                         name: (cells[0] || '').trim(),
-                        birth: (cells[1] || '').trim(),
-                        examNo: (cells[2] || '').trim(),
-                        phone: (cells[3] || '').trim(),
+                        birth: this._normalizeField(cells[1], 'birth'),
+                        examNo: this._normalizeField(cells[2], 'examNo'),
+                        phone: this._normalizeField(cells[3], 'phone'),
                     });
                     imported++;
                 });
