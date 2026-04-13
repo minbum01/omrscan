@@ -637,12 +637,27 @@ const OmrEngine = {
 
         // Stage 3에서 열평균을 못 구한 경우 → fallback
         if (!colAvgPositions) {
-            if (rowGroups.length > 0) {
-                const bestRow = [...rowGroups].sort((a, b) => b.length - a.length)[0];
-                const sorted = [...bestRow].sort((a, b) => a[sortProp] - b[sortProp]);
-                colAvgPositions = sorted.slice(0, numC).map(b => b[sortProp]);
-            } else {
-                return { rows: [], maxCols: 0 };
+            // [신규 분기] Stage 1의 colGroups(x축 클러스터)를 활용한 fallback
+            // Stage 3가 실패하는 케이스(중복 블롭으로 '정상 행' 없음)에서도
+            // _groupByAxis가 이미 올바르게 만든 컬럼 클러스터를 재활용
+            const colSrc = isVert ? grid.colGroups : grid.rowGroups;
+            if (colSrc && colSrc.length === numC) {
+                const means = colSrc
+                    .map(g => g.reduce((s, b) => s + b[sortProp], 0) / g.length)
+                    .sort((a, b) => a - b);
+                colAvgPositions = means;
+                this._log(`[Stage1.5-fallback] colGroups 평균 사용 = [${means.map(Math.round).join(',')}]`);
+            }
+
+            // 위 신규 분기가 실패했을 때만 기존 fallback 실행 (기존 로직 그대로)
+            if (!colAvgPositions) {
+                if (rowGroups.length > 0) {
+                    const bestRow = [...rowGroups].sort((a, b) => b.length - a.length)[0];
+                    const sorted = [...bestRow].sort((a, b) => a[sortProp] - b[sortProp]);
+                    colAvgPositions = sorted.slice(0, numC).map(b => b[sortProp]);
+                } else {
+                    return { rows: [], maxCols: 0 };
+                }
             }
         }
 
