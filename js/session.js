@@ -242,39 +242,71 @@ const SessionManager = {
                     const img = new Image();
                     img.onload = () => {
                         const thumb = typeof ImageManager !== 'undefined' ? ImageManager.createThumbnail(img) : null;
-                        // 저장된 결과 복원 (우선 파일명 매칭 → 없으면 idx 기반 fallback)
+                        // 저장된 결과 복원 (파일명 매칭 → fallback: idx 기반)
                         const isDeleted = deletedMap.has(imgFile.filename);
                         const savedResult = isDeleted
                             ? deletedMap.get(imgFile.filename)
                             : (activeMap.get(imgFile.filename) || (data.imageResults && data.imageResults[idx]) || null);
+
+                        // 교시 분배: savedResult.periodId → 해당 period.images 에 push
+                        const periodId = (savedResult && savedResult.periodId) || 'p1';
+
                         const imgObj = {
-                            name: imgFile.filename,
+                            name:          imgFile.filename,
                             _originalName: imgFile.filename,
-                            // 원본(pristine) 파일명 — 재저장 시 prefix 적용 기준
                             _pristineName: (savedResult && savedResult.pristineFilename) || imgFile.filename,
-                            imgElement: img,
+                            imgElement:    img,
                             thumb,
-                            rois: savedResult ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null })) : [],
-                            results: savedResult && savedResult.results ? savedResult.results : null,
+                            periodId,
+                            rois: savedResult
+                                ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null }))
+                                : [],
+                            results:     savedResult && savedResult.results ? savedResult.results : null,
                             gradeResult: savedResult ? savedResult.gradeResult : null,
                         };
-                        if (isDeleted) App.state.deletedImages.push(imgObj);
-                        else App.state.images.push(imgObj);
+
+                        if (isDeleted) {
+                            App.state.deletedImages.push(imgObj);
+                        } else {
+                            // periodId 기반으로 정확한 교시 배열에 push
+                            const targetPeriod = (App.state.periods || []).find(p => p.id === periodId)
+                                || App.state.periods[0];
+                            if (targetPeriod) {
+                                targetPeriod.images.push(imgObj);
+                            } else {
+                                App.state.images.push(imgObj); // fallback
+                            }
+                        }
+
                         loaded++;
                         if (loaded === imageFiles.length) {
+                            // 현재 교시의 images 를 App.state.images 로 동기화
+                            const cp = App.getCurrentPeriod();
+                            if (cp) App.state.images = cp.images;
+
+                            if (typeof PeriodManager !== 'undefined') PeriodManager.render();
                             if (typeof ImageManager !== 'undefined') {
                                 ImageManager.updateList();
                                 if (App.state.images.length > 0) ImageManager.select(0);
                             }
                             if (typeof UI !== 'undefined') UI.updateRightPanel();
-                            const activeCount = App.state.images.length;
+
+                            const totalActive  = (App.state.periods || []).reduce((s, p) => s + p.images.length, 0);
                             const deletedCount = App.state.deletedImages.length;
-                            Toast.success(`세션 "${name}" 로드 완료 (활성 ${activeCount}장${deletedCount > 0 ? `, 삭제됨 ${deletedCount}장` : ''})`);
+                            const periodCount  = (App.state.periods || []).length;
+                            const pLabel = periodCount > 1 ? ` (${periodCount}교시)` : '';
+                            Toast.success(`세션 "${name}" 로드 완료 (활성 ${totalActive}장${pLabel}${deletedCount > 0 ? `, 삭제됨 ${deletedCount}장` : ''})`);
                         }
                     };
                     img.onerror = () => {
                         loaded++;
                         console.warn(`이미지 로드 실패: ${imgFile.filename}`);
+                        if (loaded === imageFiles.length) {
+                            const cp = App.getCurrentPeriod();
+                            if (cp) App.state.images = cp.images;
+                            if (typeof PeriodManager !== 'undefined') PeriodManager.render();
+                            if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+                        }
                     };
                     img.src = imgFile.url;
                 });
@@ -301,74 +333,84 @@ const SessionManager = {
 
         const name = this.currentSessionName;
 
-        // 매칭된 값 수집 (파일명 renaming용)
-        // imgIdx → { name, examNo, phone, birthday }
-        const rowByImgIdx = new Map();
+        // 저장 전: 현재 교시의 최신 값을 period 에 동기화
+        App.syncAnswerKey();
+        App.syncSubjects();
+        const curPeriod = App.getCurrentPeriod();
+        if (curPeriod) curPeriod.images = App.state.images;
+
+        // ── 매칭된 행 수집 (파일명 renaming용) ──
+        // "periodId:localIdx" → { name, examNo, phone, birthday }
+        const rowByRef = new Map();
         try {
             if (typeof Scoring !== 'undefined') {
                 const rows = Scoring.collectData() || [];
                 rows.forEach(r => {
-                    if (typeof r.imgIdx === 'number' && r.imgIdx >= 0) rowByImgIdx.set(r.imgIdx, r);
+                    if (r._periodRows) {
+                        // 다교시 merged row
+                        r._periodRows.forEach(pr => {
+                            rowByRef.set(`${pr.periodId}:${pr._localIdx}`, r);
+                        });
+                    } else if (r.periodId !== undefined && r._localIdx !== undefined) {
+                        rowByRef.set(`${r.periodId}:${r._localIdx}`, r);
+                    } else if (typeof r.imgIdx === 'number' && r.imgIdx >= 0) {
+                        // 단일 교시 하위호환
+                        rowByRef.set(`${App.state.currentPeriodId || 'p1'}:${r.imgIdx}`, r);
+                    }
                 });
             }
         } catch (_) { /* 매칭 실패해도 저장은 진행 */ }
 
-        // FS 안전 문자만 유지 (한글 허용)
-        const sanitize = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, '').trim();
-
-        // pristine 파일명 (원본) 가져오기
+        const sanitize   = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, '').trim();
         const getPristine = (img) => img._pristineName || img._originalName || img.name || '';
 
-        // 활성 이미지 파일명 = {이름}_{연락처}_{수험번호}_{생년월일}_원본
-        const buildFilename = (img, imgIdx) => {
+        const buildFilenameByRef = (img, periodId, localIdx) => {
             const pristine = getPristine(img);
-            if (imgIdx === undefined || imgIdx < 0) return pristine;
-            const r = rowByImgIdx.get(imgIdx);
+            const r = rowByRef.get(`${periodId}:${localIdx}`);
             if (!r || r._noOmr) return pristine;
             const parts = [];
-            if (r.name) parts.push(sanitize(r.name));
-            if (r.phone) parts.push(sanitize(r.phone));
-            if (r.examNo) parts.push(sanitize(r.examNo));
+            if (r.name)     parts.push(sanitize(r.name));
+            if (r.phone)    parts.push(sanitize(r.phone));
+            if (r.examNo)   parts.push(sanitize(r.examNo));
             if (r.birthday) parts.push(sanitize(r.birthday));
             const prefix = parts.filter(Boolean).join('_');
             return prefix ? `${prefix}_${pristine}` : pristine;
         };
 
         // 이미지 1개 → 저장용 메타로 변환
-        const serializeImage = (img, overrideFilename) => ({
-            filename: overrideFilename || getPristine(img),
+        const serializeImage = (img, overrideFilename, periodId) => ({
+            filename:        overrideFilename || getPristine(img),
             pristineFilename: getPristine(img),
+            periodId:        periodId || img.periodId || 'p1',  // 교시 분배용
             rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
             gradeResult: img.gradeResult || null,
             results: (img.results || []).map(res => ({
-                roiIndex: res.roiIndex,
+                roiIndex:     res.roiIndex,
                 numQuestions: res.numQuestions,
-                numChoices: res.numChoices,
+                numChoices:   res.numChoices,
                 rows: (res.rows || []).map(row => ({
                     questionNumber: row.questionNumber,
-                    markedAnswer: row.markedAnswer,
-                    markedIndices: row.markedIndices,
-                    multiMarked: row.multiMarked,
-                    numChoices: row.numChoices,
-                    corrected: row.corrected || false,
+                    markedAnswer:   row.markedAnswer,
+                    markedIndices:  row.markedIndices,
+                    multiMarked:    row.multiMarked,
+                    numChoices:     row.numChoices,
+                    corrected:      row.corrected      || false,
                     _userCorrected: row._userCorrected || false,
-                    undetected: row.undetected || false,
+                    undetected:     row.undetected     || false,
                 })),
             })),
         });
 
-        // 활성 이미지의 최종 파일명 (매칭 prefix 포함)
-        const activeImages = App.state.images || [];
-        const activeFilenames = activeImages.map((img, idx) => buildFilename(img, idx));
-        // 삭제 이미지는 pristine 유지
-        const deletedImages = App.state.deletedImages || [];
-        const deletedFilenames = deletedImages.map(img => getPristine(img));
+        // ── 모든 교시의 활성 이미지 수집 ──
+        const allPeriodEntries = [];
+        (App.state.periods || []).forEach(period => {
+            (period.images || []).forEach((img, localIdx) => {
+                allPeriodEntries.push({ img, periodId: period.id, localIdx });
+            });
+        });
 
-        // 저장 전: 현재 교시의 최신 값을 period 에 동기화
-        App.syncAnswerKey();
-        App.syncSubjects();
-        const curPeriod = App.getCurrentPeriod();
-        if (curPeriod) curPeriod.images = App.state.images;
+        // 삭제 이미지는 별도 (periodId 그대로 유지)
+        const deletedImages = App.state.deletedImages || [];
 
         // 교시 메타데이터 (id, name, answerKey, subjects 저장)
         const periodsMetadata = (App.state.periods || []).map(p => ({
@@ -380,38 +422,46 @@ const SessionManager = {
 
         const data = {
             sessionName: name,
-            examName: this.currentExamName || null,
-            examDate: this.currentExamDate || null,
+            examName:    this.currentExamName || null,
+            examDate:    this.currentExamDate || null,
             version: 1,
             savedAt: new Date().toISOString(),
-            subjects: App.state.subjects || [],
-            students: App.state.students || [],
+            subjects:    App.state.subjects  || [],
+            students:    App.state.students  || [],
             matchFields: App.state.matchFields || {},
-            answerKey: App.state.answerKey || null,
-            imageCount: activeImages.length,
-            imageResults: activeImages.map((img, idx) => serializeImage(img, activeFilenames[idx])),
+            answerKey:   App.state.answerKey  || null,
+            imageCount:  allPeriodEntries.length,
+            // 모든 교시 이미지 (periodId 포함)
+            imageResults: allPeriodEntries.map(({ img, periodId, localIdx }) =>
+                serializeImage(img, buildFilenameByRef(img, periodId, localIdx), periodId)
+            ),
             // 삭제된 이미지도 세션에 보존 (복원 가능)
-            deletedImageResults: deletedImages.map((img, idx) => serializeImage(img, deletedFilenames[idx])),
-            // 교시 구성 저장 (Step 2+에서 교시별 이미지 분배에 활용)
-            periods: periodsMetadata,
+            deletedImageResults: deletedImages.map(img =>
+                serializeImage(img, getPristine(img), img.periodId || 'p1')
+            ),
+            // 교시 구성 저장
+            periods:        periodsMetadata,
             currentPeriodId: App.state.currentPeriodId || 'p1',
         };
 
         try {
             if (this.isElectron) {
-                // 이미지 → base64 변환 (활성 + 삭제 모두 저장하여 복원 가능)
-                // filename은 매칭값으로 prefix된 이름을 사용 (disk와 metadata 일치)
+                // 이미지 → base64 변환 (모든 교시 활성 + 삭제 모두 저장)
                 const imgToData = (img, filename) => {
                     try {
                         const c = document.createElement('canvas');
-                        c.width = img.imgElement.naturalWidth || img.imgElement.width;
+                        c.width  = img.imgElement.naturalWidth  || img.imgElement.width;
                         c.height = img.imgElement.naturalHeight || img.imgElement.height;
                         c.getContext('2d').drawImage(img.imgElement, 0, 0);
                         return { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
                     } catch (e) { return null; }
                 };
-                const activeArr = activeImages.map((img, idx) => imgToData(img, activeFilenames[idx])).filter(Boolean);
-                const deletedArr = deletedImages.map((img, idx) => imgToData(img, deletedFilenames[idx])).filter(Boolean);
+                const activeArr  = allPeriodEntries.map(({ img, periodId, localIdx }) =>
+                    imgToData(img, buildFilenameByRef(img, periodId, localIdx))
+                ).filter(Boolean);
+                const deletedArr = deletedImages.map(img =>
+                    imgToData(img, getPristine(img))
+                ).filter(Boolean);
                 const imageDataArr = [...activeArr, ...deletedArr];
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);
