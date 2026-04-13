@@ -485,17 +485,42 @@ const Scoring = {
     downloadReport(rows) {
         if (!rows.length) return;
         const etcKeys = [...new Set(rows.flatMap(r => Object.keys(r.etcFields)))];
-        let csv = '응시번호,성명,생년월일,수험번호';
+        const subjects = this.getSubjectList(rows);
+        const groups = subjects.length > 0
+            ? [...subjects.map(s => ({ key: s, label: s, isTotal: false })),
+               ...(subjects.length > 1 ? [{ key: '__total__', label: '총점', isTotal: true }] : [])]
+            : [{ key: '__total__', label: '전체', isTotal: true }];
+        const metrics = ['맞은수', '점수', '표준점수', '석차', '백분위'];
+
+        // 헤더
+        let csv = '응시번호,성명,생년월일';
         etcKeys.forEach(k => csv += `,${k}`);
-        csv += ',맞은수,점수,표준점수,석차,백분위\n';
+        groups.forEach(g => {
+            metrics.forEach(m => csv += `,${g.label}_${m}`);
+        });
+        csv += '\n';
+
+        // 데이터
         rows.forEach(r => {
-            csv += `${r.examNo},${r.name},${r.birthday},${r.examNo}`;
+            csv += `${r.examNo},${r.name},${r.birthday}`;
             etcKeys.forEach(k => csv += `,${r.etcFields[k] || ''}`);
             if (r._noOmr) {
-                csv += ',,,,,\n';
-            } else {
-                csv += `,${r.correctCount},${r.score},${r.tScore ? r.tScore.toFixed(1) : ''},${r.rank || ''},${r.percentile ? r.percentile.toFixed(1) : ''}\n`;
+                groups.forEach(() => csv += ',,,,,');
+                csv += '\n';
+                return;
             }
+            groups.forEach(g => {
+                const src = g.isTotal
+                    ? { correctCount: r.totalCorrect, score: r.totalScore, tScore: r.tScore, rank: r.rank, percentile: r.percentile }
+                    : (r.subjects && r.subjects[g.key]) || {};
+                const cc = src.correctCount !== undefined ? src.correctCount : '';
+                const sc = src.score !== undefined ? src.score : '';
+                const ts = src.tScore ? src.tScore.toFixed(1) : '';
+                const rk = src.rank || '';
+                const pc = src.percentile ? src.percentile.toFixed(1) : '';
+                csv += `,${cc},${sc},${ts},${rk},${pc}`;
+            });
+            csv += '\n';
         });
         this._dl(csv, '성적일람표');
     },
@@ -798,15 +823,15 @@ const Scoring = {
         });
         etcNames.forEach(name => cols.push({ id: 'etc_' + name, label: name, type: 'info', visible: true, etcName: name }));
 
-        // 성적 열
+        // 성적 열 (group: 'score' → 과목별로 반복 렌더링)
         cols.push(
-            { id: 'correctCount', label: '맞은개수', type: 'info', visible: true },
-            { id: 'score', label: '점수', type: 'info', visible: true },
-            { id: 'tScore', label: '표준점수', type: 'info', visible: true },
-            { id: 'rank', label: '석차', type: 'info', visible: true },
-            { id: 'percentile', label: '백분위', type: 'info', visible: true },
-            { id: 'wrongCount', label: '틀린개수', type: 'info', visible: false },
-            { id: 'totalPossible', label: '만점', type: 'info', visible: false },
+            { id: 'correctCount', label: '맞은개수', type: 'info', group: 'score', visible: true },
+            { id: 'score', label: '점수', type: 'info', group: 'score', visible: true },
+            { id: 'tScore', label: '표준점수', type: 'info', group: 'score', visible: true },
+            { id: 'rank', label: '석차', type: 'info', group: 'score', visible: true },
+            { id: 'percentile', label: '백분위', type: 'info', group: 'score', visible: true },
+            { id: 'wrongCount', label: '틀린개수', type: 'info', group: 'score', visible: false },
+            { id: 'totalPossible', label: '만점', type: 'info', group: 'score', visible: false },
         );
         this._reportColumns = cols;
         return cols;
@@ -1116,7 +1141,15 @@ const Scoring = {
     // 성적일람표
     // ==========================================
     _renderReport(rows) {
-        const cols = this._getReportColumns().filter(c => c.visible);
+        const allCols = this._getReportColumns().filter(c => c.visible);
+        const infoCols = allCols.filter(c => c.group !== 'score');
+        const scoreCols = allCols.filter(c => c.group === 'score');
+        const subjects = this.getSubjectList(rows);
+        // 과목 그룹 목록: 각 과목 + 총점 (과목이 1개여도 총점 컬럼 생략 대신 '총점' 안 붙임)
+        const groups = subjects.length > 0
+            ? [...subjects.map(s => ({ key: s, label: s, isTotal: false })),
+               ...(subjects.length > 1 ? [{ key: '__total__', label: '총점', isTotal: true }] : [])]
+            : [{ key: '__total__', label: '전체', isTotal: true }];
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <div style="display:flex; gap:4px;">${this._renderSortButtons()}</div>
@@ -1126,10 +1159,6 @@ const Scoring = {
         // 뱃지 바
         html += this._renderBadgeBar(this._getReportColumns, 'toggleReportColumn', 'report');
 
-        const th = 'style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap;"';
-        const td = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9;"';
-
-        // 열별 특수 스타일
         const colStyle = {
             score: 'background:#eff6ff;', correctCount: 'background:#ecfdf5;',
             tScore: 'background:#f5f3ff;', rank: 'background:#fef3c7;', percentile: 'background:#fce7f3;',
@@ -1137,36 +1166,92 @@ const Scoring = {
 
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
-        <thead><tr>`;
-        cols.forEach(col => {
-            const extra = colStyle[col.id] || '';
-            const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
-            html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${extra} ${hl}">${col.label}</th>`;
-        });
-        html += `</tr></thead><tbody>`;
+        <thead>`;
+
+        // 과목 그룹 헤더 (정보열 rowspan + 과목별 colspan)
+        if (scoreCols.length > 0 && groups.length > 0) {
+            html += `<tr>`;
+            infoCols.forEach(col => {
+                const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
+                html += `<th rowspan="2" style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); border-right:1px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
+            });
+            groups.forEach(g => {
+                const bg = g.isTotal ? 'background:#fef3c7;' : 'background:#dbeafe;';
+                html += `<th colspan="${scoreCols.length}" style="padding:8px 10px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid var(--border); border-right:2px solid var(--border); ${bg} position:sticky; top:0; white-space:nowrap;">${g.label}</th>`;
+            });
+            html += `</tr><tr>`;
+            groups.forEach((g, gi) => {
+                scoreCols.forEach((col, ci) => {
+                    const extra = colStyle[col.id] || '';
+                    const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
+                    const rightBorder = ci === scoreCols.length - 1 ? 'border-right:2px solid var(--border);' : '';
+                    html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); position:sticky; top:30px; white-space:nowrap; ${extra} ${hl} ${rightBorder}">${col.label}</th>`;
+                });
+            });
+            html += `</tr>`;
+        } else {
+            // 성적 열 0개 — 정보 열만
+            html += `<tr>`;
+            infoCols.forEach(col => {
+                const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
+                html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
+            });
+            html += `</tr>`;
+        }
+
+        html += `</thead><tbody>`;
 
         rows.forEach((r, ri) => {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             html += `<tr style="${bg}">`;
-            cols.forEach(col => {
+
+            // 정보 셀
+            infoCols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
-                let val = '', style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; ${hl}"`;
+                let val = '';
+                let style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; border-right:1px solid #f1f5f9; ${hl}"`;
                 if (col.id === 'examNo') val = r.examNo;
-                else if (col.id === 'name') { val = r.name; style = `style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9; ${hl}"`; }
+                else if (col.id === 'name') { val = r.name; style = `style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9; border-right:1px solid #f1f5f9; ${hl}"`; }
                 else if (col.id === 'birthday') val = r.birthday;
                 else if (col.id === 'phone') val = r.phone;
                 else if (col.id === 'subjectCode') val = r.subjectCode || '';
                 else if (col.id === 'filename') val = r.filename;
-                else if (col.id === 'correctCount') { val = r.correctCount; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600; ${hl}"`; }
-                else if (col.id === 'score') { val = r.score; style = `style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700; ${hl}"`; }
-                else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
-                else if (col.id === 'rank') { val = r.rank || ''; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700; ${hl}"`; }
-                else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
-                else if (col.id === 'wrongCount') val = r.wrongCount;
-                else if (col.id === 'totalPossible') val = r.totalPossible;
                 else if (col.id && col.id.startsWith('etc_')) val = r.etcFields[col.etcName || col.id.replace('etc_', '')] || '';
                 html += `<td ${style}>${val}</td>`;
             });
+
+            // 과목별 성적 셀
+            groups.forEach(g => {
+                // 해당 그룹의 성적 값 선택
+                const src = g.isTotal
+                    ? { score: r.totalScore !== '' ? r.totalScore : '', correctCount: r.totalCorrect, wrongCount: r.totalWrong,
+                        totalPossible: r.totalMax, rank: r.rank, tScore: r.tScore, percentile: r.percentile }
+                    : (r.subjects && r.subjects[g.key]
+                        ? { score: r.subjects[g.key].score, correctCount: r.subjects[g.key].correctCount,
+                            wrongCount: r.subjects[g.key].wrongCount, totalPossible: r.subjects[g.key].totalPossible,
+                            rank: r.subjects[g.key].rank, tScore: r.subjects[g.key].tScore, percentile: r.subjects[g.key].percentile }
+                        : null);
+
+                scoreCols.forEach((col, ci) => {
+                    const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
+                    const rightBorder = ci === scoreCols.length - 1 ? 'border-right:2px solid var(--border);' : '';
+                    let val = '';
+                    let style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; ${hl} ${rightBorder}"`;
+                    if (r._noOmr || !src) {
+                        html += `<td ${style}></td>`;
+                        return;
+                    }
+                    if (col.id === 'correctCount') { val = src.correctCount; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600; ${hl} ${rightBorder}"`; }
+                    else if (col.id === 'score') { val = src.score; style = `style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700; ${hl} ${rightBorder}"`; }
+                    else if (col.id === 'tScore') val = src.tScore ? src.tScore.toFixed(1) : '';
+                    else if (col.id === 'rank') { val = src.rank || ''; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700; ${hl} ${rightBorder}"`; }
+                    else if (col.id === 'percentile') val = src.percentile ? src.percentile.toFixed(1) + '%' : '';
+                    else if (col.id === 'wrongCount') val = src.wrongCount;
+                    else if (col.id === 'totalPossible') val = src.totalPossible;
+                    html += `<td ${style}>${val}</td>`;
+                });
+            });
+
             html += `</tr>`;
         });
 
