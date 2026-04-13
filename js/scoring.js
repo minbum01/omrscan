@@ -349,38 +349,67 @@ const Scoring = {
             <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
-        // 열 설정 패널
-        if (this._showColumnSettings) {
-            const allCols = this._getOMRColumns();
-            // info 열만 설정 표시 (answer/ox는 문항수로 관리)
-            const infoCols = allCols.filter(c => c.type === 'info' || c.type === 'custom');
-            html += `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
-                <div style="font-size:11px; font-weight:600; margin-bottom:6px;">기본 열 관리 (드래그로 순서 변경 / 이름 수정 / 토글)</div>
-                <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">`;
-            infoCols.forEach(col => {
-                html += `<div style="display:flex; align-items:center; gap:3px; padding:3px 6px; border:1px solid var(--border); border-radius:4px; background:${col.visible ? 'white' : '#f1f5f9'}; font-size:10px;">
-                    <button style="border:none; background:none; cursor:pointer; padding:0; font-size:10px;" onclick="Scoring.moveColumn('${col.id}',-1)">◀</button>
-                    <input type="text" value="${col.label}" style="width:${Math.max(40, col.label.length * 10)}px; border:none; font-size:10px; font-weight:600; text-align:center; background:transparent;"
-                        onchange="Scoring.renameColumn('${col.id}', this.value)">
-                    <button style="border:none; background:none; cursor:pointer; padding:0; font-size:10px;" onclick="Scoring.moveColumn('${col.id}',1)">▶</button>
-                    <input type="checkbox" ${col.visible ? 'checked' : ''} onchange="Scoring.toggleColumn('${col.id}')" style="margin:0;">
-                    ${col.type === 'custom' ? `<button style="border:none; background:none; cursor:pointer; color:red; font-size:10px;" onclick="Scoring.removeColumn('${col.id}')">✕</button>` : ''}
-                </div>`;
-            });
-            html += `</div>
-                <div style="display:flex; gap:4px;">
-                    <button class="btn btn-sm" style="font-size:10px; padding:2px 8px;" onclick="Scoring.addColumn(null, prompt('열 이름:') || '새 열')">+ 열 추가</button>
-                    <label style="font-size:10px; display:flex; align-items:center; gap:3px;">
-                        <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
-                            onchange="Scoring._toggleAnswerCols(this.checked)"> 마킹 내용
-                    </label>
-                    <label style="font-size:10px; display:flex; align-items:center; gap:3px;">
-                        <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
-                            onchange="Scoring._toggleOXCols(this.checked)"> 정오표(O/X)
-                    </label>
+        // 뱃지 영역: 사용 가능한 항목들
+        const allCols = this._getOMRColumns();
+        const activeCols = allCols.filter(c => c.visible);
+        const inactiveCols = allCols.filter(c => !c.visible && (c.type === 'info' || c.type === 'custom'));
+
+        html += `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+            <!-- 사용 가능한 항목 -->
+            <div style="margin-bottom:8px;">
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">사용 가능한 항목 (클릭하여 추가)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px;" id="scoring-available-badges">
+                    ${inactiveCols.map(col => `
+                        <span class="scoring-badge inactive" data-col-id="${col.id}" onclick="Scoring.toggleColumn('${col.id}')"
+                            style="padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer; border:1px dashed var(--border); color:var(--text-muted); background:white;
+                            transition:all 0.15s; user-select:none;" onmouseover="this.style.borderColor='var(--blue)'; this.style.color='var(--blue)';"
+                            onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text-muted)';">${col.label}</span>
+                    `).join('')}
+                    ${inactiveCols.length === 0 ? '<span style="font-size:10px; color:var(--text-muted);">모든 항목이 표에 추가되어 있습니다</span>' : ''}
                 </div>
-            </div>`;
-        }
+            </div>
+
+            <!-- 현재 표 헤더 (드래그로 순서 변경, 클릭으로 제거) -->
+            <div>
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">현재 표 헤더 (드래그로 순서 변경 · 더블클릭으로 이름 변경 · 클릭으로 제거)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px; min-height:30px; padding:4px; border:1px solid var(--border); border-radius:6px; background:white;"
+                    id="scoring-active-badges"
+                    ondragover="event.preventDefault(); this.style.background='#eff6ff';"
+                    ondragleave="this.style.background='white';"
+                    ondrop="this.style.background='white'; Scoring._onDropBadge(event);">`;
+
+        const infoCols = activeCols.filter(c => c.type === 'info' || c.type === 'custom');
+        infoCols.forEach(col => {
+            html += `<span class="scoring-badge active" draggable="true" data-col-id="${col.id}"
+                ondragstart="Scoring._onDragStart(event, '${col.id}')"
+                onclick="Scoring.toggleColumn('${col.id}')"
+                ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${col.label}'); if(n) Scoring.renameColumn('${col.id}',n); Scoring.renderScoringPanel(document.getElementById('scoring-content'));"
+                style="padding:4px 10px; border-radius:12px; font-size:11px; cursor:grab; border:1px solid var(--blue); color:var(--blue); background:#eff6ff;
+                font-weight:600; user-select:none; transition:all 0.15s;">${col.label}</span>`;
+        });
+
+        html += `</div>
+            </div>
+
+            <!-- 마킹/정오 토글 + 문항수 -->
+            <div style="display:flex; align-items:center; gap:12px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+                <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                    <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
+                        onchange="Scoring._toggleAnswerCols(this.checked)">
+                    <span style="padding:2px 8px; border-radius:10px; background:#e0f2fe; color:#0369a1; font-size:10px; font-weight:600;">마킹 내용</span>
+                </label>
+                <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                    <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
+                        onchange="Scoring._toggleOXCols(this.checked)">
+                    <span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:600;">정오표(O/X)</span>
+                </label>
+                <span style="font-size:10px; color:var(--text-muted); margin-left:auto;">
+                    문항수: <input type="number" value="${this._defaultMaxQ}" min="1" max="100"
+                        style="width:45px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
+                        onchange="Scoring.setMaxQ(this.value)">
+                </span>
+            </div>
+        </div>`;
 
         // 테이블
         html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
@@ -419,6 +448,44 @@ const Scoring = {
 
         html += `</tbody></table></div>`;
         return html;
+    },
+
+    // 드래그 앤 드롭
+    _dragColId: null,
+    _onDragStart(e, colId) {
+        this._dragColId = colId;
+        e.dataTransfer.effectAllowed = 'move';
+        e.target.style.opacity = '0.5';
+        setTimeout(() => { if (e.target) e.target.style.opacity = '1'; }, 200);
+    },
+    _onDropBadge(e) {
+        e.preventDefault();
+        if (!this._dragColId) return;
+        // 드롭 위치의 가장 가까운 뱃지 찾기
+        const badges = document.querySelectorAll('#scoring-active-badges .scoring-badge');
+        const dropX = e.clientX;
+        let insertBeforeId = null;
+        badges.forEach(badge => {
+            const rect = badge.getBoundingClientRect();
+            if (dropX < rect.left + rect.width / 2) {
+                if (!insertBeforeId) insertBeforeId = badge.dataset.colId;
+            }
+        });
+        // 순서 변경
+        const cols = this._getOMRColumns();
+        const fromIdx = cols.findIndex(c => c.id === this._dragColId);
+        if (fromIdx < 0) return;
+        const [moved] = cols.splice(fromIdx, 1);
+        if (insertBeforeId) {
+            const toIdx = cols.findIndex(c => c.id === insertBeforeId);
+            cols.splice(toIdx, 0, moved);
+        } else {
+            // 맨 끝에 추가 (info/custom 영역 끝)
+            const lastInfoIdx = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, -1);
+            cols.splice(lastInfoIdx + 1, 0, moved);
+        }
+        this._dragColId = null;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
     // 마킹/정오 열 일괄 토글
