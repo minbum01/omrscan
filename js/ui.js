@@ -7,7 +7,8 @@ const UI = {
     ROI_TYPES: {
         'subject_answer': { label: '과목 답안', icon: '📝' },
         'birthday':       { label: '생년월일', icon: '📅' },
-        'phone_exam':     { label: '수험번호/전화번호', icon: '🔢' },
+        'exam_no':        { label: '수험번호', icon: '🔢' },
+        'phone':          { label: '전화번호', icon: '📞' },
         'subject_code':   { label: '과목 코드', icon: '📋' },
     },
 
@@ -275,7 +276,7 @@ const UI = {
                         </div>
                     </div>`;
                     html += this.renderChoicesUI(idx, s);
-                } else if (s.type === 'phone_exam') {
+                } else if (s.type === 'exam_no' || s.type === 'phone') {
                     html += `<div class="roi-fields">
                         <div class="roi-field" style="flex:1;">
                             <span class="roi-field-label">자릿수</span>
@@ -401,7 +402,7 @@ const UI = {
                     const labels = s.choiceLabels || null;
                     const numC = s.numChoices || res.numChoices || 5;
 
-                    if (s.type === 'birthday' || s.type === 'phone_exam' || s.type === 'subject_code') {
+                    if (s.type === 'birthday' || s.type === 'exam_no' || s.type === 'phone' || s.type === 'subject_code') {
                         // 숫자 판독 결과 (그리드 대신 문자열)
                         const digits = res.rows.map(r => {
                             if (r.markedAnswer !== null) {
@@ -909,7 +910,7 @@ const UI = {
             s.numQuestions = 6;
             s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';
-        } else if (s.type === 'phone_exam') {
+        } else if (s.type === 'exam_no' || s.type === 'phone') {
             s.numQuestions = 11;
             s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';

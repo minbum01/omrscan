@@ -338,18 +338,23 @@ const ImageManager = {
         Toast.info('이미지가 삭제 목록으로 이동됨');
     },
 
-    // 채점 후 수험번호/전화번호로 이미지명 자동 변경
+    // 분석 후 수험번호/전화번호/이름으로 파일명 자동 변경
+    // 형식: 이름_수험번호OR전화번호_원본파일명
     applyPhonePrefix(imgObj) {
         if (!imgObj || !imgObj.results || !imgObj.rois) return;
 
-        // phone_exam 타입 영역 찾기
-        let phoneDigits = null;
+        // 원본 파일명 보존 (최초 1회)
+        if (!imgObj._originalName) imgObj._originalName = imgObj.name;
+
+        // 각 타입별 감지값 추출
+        let detectedName = '', detectedExamNo = '', detectedPhone = '';
+
         imgObj.rois.forEach((roi, idx) => {
-            if (!roi.settings || roi.settings.type !== 'phone_exam') return;
+            if (!roi.settings) return;
             const res = imgObj.results[idx];
             if (!res || !res.rows) return;
 
-            const fullNumber = res.rows.map(r => {
+            const digits = res.rows.map(r => {
                 if (r.markedAnswer !== null) {
                     const labels = roi.settings.choiceLabels;
                     return labels && labels[r.markedAnswer - 1] ? labels[r.markedAnswer - 1] : `${r.markedAnswer}`;
@@ -357,16 +362,37 @@ const ImageManager = {
                 return '?';
             }).join('');
 
-            if (fullNumber.length >= 4) phoneDigits = fullNumber.slice(-4);
+            if (roi.settings.type === 'exam_no' && digits.length > 0) {
+                detectedExamNo = digits;
+            } else if (roi.settings.type === 'phone' && digits.length > 0) {
+                detectedPhone = digits;
+            }
         });
 
-        if (!phoneDigits) return;
+        // 시험인원에서 이름 매칭 시도
+        if (App.state.students && App.state.students.length > 0 && App.state.matchFields) {
+            const mf = App.state.matchFields;
+            const matched = App.state.students.find(st => {
+                if (mf.examNo && detectedExamNo && st.examNo) {
+                    return st.examNo === detectedExamNo;
+                }
+                if (mf.phone && detectedPhone && st.phone) {
+                    return st.phone === detectedPhone;
+                }
+                return false;
+            });
+            if (matched && matched.name) detectedName = matched.name;
+        }
 
-        const prefix = `(H)${phoneDigits}_`;
+        // 파일명 생성: 이름_식별번호_원본파일명
+        const idPart = detectedExamNo || detectedPhone || '';
+        if (!idPart && !detectedName) return; // 식별 정보 없으면 변경 안 함
 
-        // 기존 접두사 제거 후 교체 (자릿수 관계없이)
-        const stripped = imgObj.name.replace(/^\(H\)[^_]*_/, '');
-        imgObj.name = prefix + stripped;
+        const parts = [];
+        if (detectedName) parts.push(detectedName);
+        if (idPart) parts.push(idPart);
+        parts.push(imgObj._originalName);
+        imgObj.name = parts.join('_');
     },
 
     restoreImage(deletedIdx) {

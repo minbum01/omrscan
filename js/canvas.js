@@ -913,7 +913,11 @@ const CanvasManager = {
             const hasGrade = imgObj.gradeResult !== null;
             const details = hasGrade ? imgObj.gradeResult.details : null;
 
-            imgObj.results.forEach(roiResult => {
+            imgObj.results.forEach((roiResult, roiIdx) => {
+                // 해당 ROI가 과목답안인지 확인 (채점 색상은 과목답안만)
+                const roiSettings = imgObj.rois[roiIdx] ? imgObj.rois[roiIdx].settings : null;
+                const isAnswerRoi = roiSettings && roiSettings.type === 'subject_answer';
+
                 roiResult.rows.forEach(row => {
                     const isMulti = row.multiMarked;
                     const isBlankRow = !row.undetected && row.markedAnswer === null && !isMulti;
@@ -929,12 +933,14 @@ const CanvasManager = {
                             } else if (isMulti) {
                                 ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
                                 ctx.strokeStyle = '#dc2626';
-                            } else if (hasGrade && details) {
+                            } else if (isAnswerRoi && hasGrade && details) {
+                                // 채점 색상: 과목답안 영역만 적용
                                 const d = details.find(d => d.questionNumber === row.questionNumber);
                                 const isCorrect = d ? d.isCorrect : true;
                                 ctx.fillStyle = isCorrect ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)';
                                 ctx.strokeStyle = isCorrect ? '#16a34a' : '#dc2626';
                             } else {
+                                // 비답안 영역 (생년월일/수험번호/전화번호 등): 파란색
                                 ctx.fillStyle = 'rgba(74, 124, 255, 0.35)';
                                 ctx.strokeStyle = '#4A7CFF';
                             }
