@@ -561,32 +561,43 @@ const SubjectManager = {
         const footer = document.getElementById('sm-footer');
         if (!footer) return;
 
+        const csvNotice = `<div style="font-size:11px; color:var(--text-muted); padding:6px 2px 4px; width:100%;">ℹ Excel로 편집 시 반드시 '데이터 &gt; 가져오기 &gt; 텍스트/CSV' 메뉴 사용</div>`;
+
         if (tab === 'subjects') {
             footer.innerHTML = `
-                <button class="btn" id="sm-add">+ 과목 추가</button>
-                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
-                <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
-                <button class="btn btn-sm" onclick="SubjectManager.exportSubjectsCSV()">현재 내용 CSV 다운로드</button>
-                <div style="flex:1;"></div>
-                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
-                <button class="btn btn-primary" id="sm-save">저장</button>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%;">
+                    <button class="btn" id="sm-add">+ 과목 추가</button>
+                    <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
+                    <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
+                    <button class="btn btn-sm" onclick="SubjectManager.exportSubjectsCSV()">현재 내용 CSV 다운로드</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn btn-primary" id="sm-save">저장</button>
+                </div>
+                ${csvNotice}
             `;
             document.getElementById('sm-add').addEventListener('click', () => this.addRow());
             document.getElementById('sm-save').addEventListener('click', () => this.save(overlay));
             document.getElementById('sm-csv').addEventListener('change', (e) => this.importCSV(e.target.files[0]));
         } else {
             footer.innerHTML = `
-                <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
-                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
-                <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
-                <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
-                <div style="flex:1;"></div>
-                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
-                <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%;">
+                    <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
+                    <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
+                    <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
+                    <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
+                </div>
+                ${csvNotice}
             `;
             const csvInput = document.getElementById('sm-student-csv');
             if (csvInput) csvInput.addEventListener('change', (e) => this.importStudentCSV(e.target.files[0]));
         }
+        // 모달 푸터 내부에서 버튼 행 + 안내 행이 세로로 쌓이도록
+        footer.style.flexDirection = 'column';
+        footer.style.alignItems = 'stretch';
     },
 
     // ==========================================
