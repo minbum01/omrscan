@@ -283,8 +283,8 @@ const SubjectManager = {
 
     // 차등 배점 토글
     toggleCustomScore(idx, checked) {
-        const subj = this.getSubjects()[idx]; if (!subj) return;
         this._saveCurrentToData();
+        const subj = this.getSubjects()[idx]; if (!subj) return;
         subj.useCustomScore = checked;
         if (checked) {
             const numQ = subj.numQuestions || 20;
@@ -343,6 +343,7 @@ const SubjectManager = {
     // 추가/삭제
     // ==========================================
     addRow() {
+        this._saveCurrentToData();
         this.getSubjects().push({
             code: '', name: '',
             numQuestions: 20, numChoices: 5,
