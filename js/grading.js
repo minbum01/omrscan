@@ -193,10 +193,8 @@ const Grading = {
 
         if (s.type !== 'subject_answer') return null;
 
-        // ROI의 answerKey 사용 (subject에서 이미 슬라이스 로드됨)
-        if (s.answerSource === 'direct' || !s.answerSource) {
-            // 직접 입력된 정답
-            if (!s.answerKey) return null;
+        // ROI의 answerKey 사용 (과목관리에서 슬라이스 로드됨 또는 직접 입력)
+        if (s.answerKey) {
             return this.parseAnswerString(s.answerKey, s.numChoices || 5, s.choiceLabels);
         }
 
