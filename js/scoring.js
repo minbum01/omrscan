@@ -558,7 +558,7 @@ const Scoring = {
                         ondragend="this.classList.remove('dragging')"
                         onclick="Scoring._onBadgeClick('${c.id}')"
                         ondblclick="Scoring._startBadgeRename(this,'${c.id}','${toggleFn}')"
-                        onkeydown="if(event.key==='Delete')Scoring._deleteBadge('${c.id}','${toggleFn}')"
+                        onkeydown="if(event.key==='Delete')Scoring._deleteBadge('${c.id}','${toggleFn}'); if(event.key==='Escape')Scoring._clearHighlight();"
                         >${c.label}</span>`).join('')}
                 </div>
             </div>
@@ -668,8 +668,22 @@ const Scoring = {
     },
 
     _onBadgeClick(colId) {
-        this._highlightCol = (this._highlightCol === colId) ? null : colId;
+        // 같은 뱃지 다시 클릭해도 선택 유지 (Escape로 해제)
+        this._highlightCol = colId;
         this.renderScoringPanel(document.getElementById('scoring-content'));
+        // 포커스 유지 (Delete 키 수신용)
+        setTimeout(() => {
+            const badge = document.querySelector(`.scoring-badge-item[data-col-id="${colId}"]`);
+            if (badge) badge.focus();
+        }, 50);
+    },
+
+    // Escape로 선택 해제
+    _clearHighlight() {
+        if (this._highlightCol) {
+            this._highlightCol = null;
+            this.renderScoringPanel(document.getElementById('scoring-content'));
+        }
     },
 
     // Delete 키로 뱃지 제거 (비활성화)
@@ -802,7 +816,8 @@ const Scoring = {
         <thead><tr>`;
         cols.forEach(col => {
             const extra = colStyle[col.id] || '';
-            html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${extra}">${col.label}</th>`;
+            const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
+            html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${extra} ${hl}">${col.label}</th>`;
         });
         html += `</tr></thead><tbody>`;
 
@@ -810,17 +825,18 @@ const Scoring = {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             html += `<tr style="${bg}">`;
             cols.forEach(col => {
-                let val = '', style = td;
+                const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
+                let val = '', style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; ${hl}"`;
                 if (col.id === 'examNo') val = r.examNo;
-                else if (col.id === 'name') { val = r.name; style = 'style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9;"'; }
+                else if (col.id === 'name') { val = r.name; style = `style="padding:6px 8px; font-size:12px; font-weight:600; border-bottom:1px solid #f1f5f9; ${hl}"`; }
                 else if (col.id === 'birthday') val = r.birthday;
                 else if (col.id === 'phone') val = r.phone;
                 else if (col.id === 'subjectCode') val = r.subjectCode || '';
                 else if (col.id === 'filename') val = r.filename;
-                else if (col.id === 'correctCount') { val = r.correctCount; style = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600;"'; }
-                else if (col.id === 'score') { val = r.score; style = 'style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700;"'; }
+                else if (col.id === 'correctCount') { val = r.correctCount; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600; ${hl}"`; }
+                else if (col.id === 'score') { val = r.score; style = `style="padding:6px 8px; text-align:center; font-size:13px; border-bottom:1px solid #f1f5f9; color:var(--blue); font-weight:700; ${hl}"`; }
                 else if (col.id === 'tScore') val = r.tScore ? r.tScore.toFixed(1) : '';
-                else if (col.id === 'rank') { val = r.rank || ''; style = 'style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700;"'; }
+                else if (col.id === 'rank') { val = r.rank || ''; style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; font-weight:700; ${hl}"`; }
                 else if (col.id === 'percentile') val = r.percentile ? r.percentile.toFixed(1) + '%' : '';
                 else if (col.id === 'wrongCount') val = r.wrongCount;
                 else if (col.id === 'totalPossible') val = r.totalPossible;
