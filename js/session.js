@@ -1,6 +1,7 @@
 // ============================================
-// session.js - 세션 관리 (localStorage 임시 → Electron 전환 예정)
-// 프로그램 시작 시 세션 선택 화면 표시
+// session.js - 세션 관리
+// Electron: 파일 시스템 (userData/OMR_Data/sessions/)
+// 웹: localStorage 폴백
 // ============================================
 
 const SessionManager = {
@@ -10,6 +11,11 @@ const SessionManager = {
 
     currentSessionName: null,
     _hasUnsavedChanges: false,
+
+    // Electron 환경 여부
+    get isElectron() {
+        return typeof window !== 'undefined' && window.electronAPI && window.electronAPI.isElectron;
+    },
 
     init() {
         // 기존 버튼 이벤트 (있으면)
@@ -27,8 +33,8 @@ const SessionManager = {
     // ==========================================
     // 시작 화면
     // ==========================================
-    showStartScreen() {
-        const sessions = this.getSessionList().filter(s => !s.deleted);
+    async showStartScreen() {
+        const sessions = await this._getSessionList();
 
         const overlay = document.createElement('div');
         overlay.id = 'session-start-screen';
@@ -107,29 +113,35 @@ const SessionManager = {
     // ==========================================
     // 세션 로드
     // ==========================================
-    loadSession(name) {
+    async loadSession(name) {
         if (this._hasUnsavedChanges) {
             if (!confirm('저장하지 않은 변경사항이 있습니다.\n세션을 전환하시겠습니까?')) return;
         }
         this._closeStartScreen();
 
         try {
-            const raw = localStorage.getItem(this.STORAGE_PREFIX + name);
-            if (!raw) {
-                // 데이터 없이 메타만 있는 경우 → 빈 세션으로 시작
+            let data = null;
+
+            if (this.isElectron) {
+                const result = await window.electronAPI.loadSession(name);
+                if (result.success) data = result.data;
+            } else {
+                const raw = localStorage.getItem(this.STORAGE_PREFIX + name);
+                if (raw) data = JSON.parse(raw);
+            }
+
+            if (!data) {
                 this.currentSessionName = name;
                 App.state.subjects = [];
                 App.state.students = [];
                 App.state.images = [];
                 App.state.currentIndex = -1;
                 this._hasUnsavedChanges = false;
-                localStorage.setItem(this.CURRENT_KEY, name);
                 this._updateHeader();
                 Toast.info(`세션 "${name}" (새 세션)`);
                 return;
             }
 
-            const data = JSON.parse(raw);
             App.state.subjects = data.subjects || [];
             App.state.students = data.students || [];
             App.state.matchFields = data.matchFields || { name: true, birth: false, examNo: false, phone: false };
@@ -139,9 +151,6 @@ const SessionManager = {
 
             this.currentSessionName = name;
             this._hasUnsavedChanges = false;
-            localStorage.setItem(this.CURRENT_KEY, name);
-            this._updateSessionMeta(name, { lastUsedAt: new Date().toISOString() });
-
             this._updateHeader();
             if (typeof ImageManager !== 'undefined') ImageManager.updateList();
             if (typeof UI !== 'undefined') UI.updateRightPanel();
@@ -157,7 +166,7 @@ const SessionManager = {
     // ==========================================
     // 세션 저장
     // ==========================================
-    saveCurrentSession() {
+    async saveCurrentSession() {
         if (!this.currentSessionName) {
             const name = prompt('세션 이름을 입력하세요');
             if (!name || !name.trim()) return;
@@ -174,7 +183,6 @@ const SessionManager = {
             matchFields: App.state.matchFields || {},
             answerKey: App.state.answerKey || null,
             imageCount: (App.state.images || []).length,
-            // ROI 설정 + 채점 결과 (이미지 데이터 제외)
             imageResults: (App.state.images || []).map(img => ({
                 filename: img.name || '',
                 rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
@@ -183,32 +191,39 @@ const SessionManager = {
         };
 
         try {
-            localStorage.setItem(this.STORAGE_PREFIX + name, JSON.stringify(data));
-            localStorage.setItem(this.CURRENT_KEY, name);
-            this._updateSessionMeta(name, {
-                lastUsedAt: new Date().toISOString(),
-                subjectCount: (data.subjects || []).length,
-                studentCount: (data.students || []).length,
-                imageCount: data.imageCount,
-            });
+            if (this.isElectron) {
+                const result = await window.electronAPI.saveSession(name, data);
+                if (!result.success) throw new Error(result.error);
+                console.log(`[세션] 파일 저장: ${result.path}`);
+            } else {
+                localStorage.setItem(this.STORAGE_PREFIX + name, JSON.stringify(data));
+                this._updateSessionMeta(name, {
+                    lastUsedAt: new Date().toISOString(),
+                    subjectCount: (data.subjects || []).length,
+                    studentCount: (data.students || []).length,
+                    imageCount: data.imageCount,
+                });
+            }
             this._hasUnsavedChanges = false;
             this._updateHeader();
             Toast.success(`세션 "${name}" 저장 완료`);
         } catch (e) {
-            if (e.name === 'QuotaExceededError') {
-                Toast.error('저장 용량 초과! 다른 세션을 삭제하세요.');
-            } else {
-                Toast.error('세션 저장 실패: ' + e.message);
-            }
+            Toast.error('세션 저장 실패: ' + e.message);
         }
     },
 
     // ==========================================
     // 세션 삭제 (소프트 — 목록에서만 숨김, 데이터 보존)
     // ==========================================
-    deleteSession(name) {
+    async deleteSession(name) {
         if (!confirm(`"${name}" 세션을 삭제하시겠습니까?`)) return;
-        this._updateSessionMeta(name, { deleted: true, deletedAt: new Date().toISOString() });
+
+        if (this.isElectron) {
+            await window.electronAPI.deleteSession(name);
+        } else {
+            this._updateSessionMeta(name, { deleted: true, deletedAt: new Date().toISOString() });
+        }
+
         if (this.currentSessionName === name) {
             this.currentSessionName = null;
             this._hasUnsavedChanges = false;
@@ -221,6 +236,13 @@ const SessionManager = {
     // ==========================================
     // 세션 목록
     // ==========================================
+    async _getSessionList() {
+        if (this.isElectron) {
+            return await window.electronAPI.listSessions();
+        }
+        return this.getSessionList().filter(s => !s.deleted);
+    },
+
     getSessionList() {
         try {
             const raw = localStorage.getItem(this.LIST_KEY);

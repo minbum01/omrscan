@@ -8,3 +8,6 @@ GEMINI omr분석 기획
 로스쿨샘풀/
 devlog/
 *.txt
+node_modules/
+dist/
+package-lock.json
