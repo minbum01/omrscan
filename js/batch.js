@@ -50,9 +50,11 @@ const BatchProcess = {
                 }));
             }
 
-            // 개별수정 유지 모드: 수기 교정된 row 백업
+            // 수기 교정된 row 백업 (항상 수행)
+            // run(false): 모든 교정 복원
+            // run(true): OMR이 여전히 미인식(undetected/빈칸)일 때만 복원
             const correctedBackup = {};
-            if (!this._forceReset && imgObj.results) {
+            if (imgObj.results) {
                 imgObj.results.forEach((res, resIdx) => {
                     if (res && res.rows) {
                         res.rows.forEach(row => {
@@ -134,24 +136,31 @@ const BatchProcess = {
             });
 
             // 수기 교정 복원
+            // run(false): 항상 복원
+            // run(true): OMR이 미인식(undetected) 또는 빈 답(markedAnswer===null)일 때만 복원
             if (Object.keys(correctedBackup).length > 0) {
                 imgObj.results.forEach((res, resIdx) => {
                     if (res && res.rows) {
                         res.rows.forEach(row => {
                             const key = `${resIdx}_${row.questionNumber}`;
                             if (correctedBackup[key]) {
-                                row.markedAnswer = correctedBackup[key].markedAnswer;
-                                row.markedIndices = correctedBackup[key].markedIndices;
-                                row.corrected = true;
-                                row._userCorrected = true;
-                                row.undetected = false;
-                                // blob isMarked 동기화 (오버레이 색상 반영)
-                                if (row.blobs) {
-                                    row.blobs.forEach((b, bi) => {
-                                        b.isMarked = Array.isArray(row.markedIndices)
-                                            ? row.markedIndices.includes(bi + 1)
-                                            : (row.markedAnswer === bi + 1);
-                                    });
+                                const shouldRestore = !this._forceReset
+                                    || row.undetected
+                                    || row.markedAnswer === null;
+                                if (shouldRestore) {
+                                    row.markedAnswer = correctedBackup[key].markedAnswer;
+                                    row.markedIndices = correctedBackup[key].markedIndices;
+                                    row.corrected = true;
+                                    row._userCorrected = true;
+                                    row.undetected = false;
+                                    // blob isMarked 동기화 (오버레이 색상 반영)
+                                    if (row.blobs) {
+                                        row.blobs.forEach((b, bi) => {
+                                            b.isMarked = Array.isArray(row.markedIndices)
+                                                ? row.markedIndices.includes(bi + 1)
+                                                : (row.markedAnswer === bi + 1);
+                                        });
+                                    }
                                 }
                             }
                         });
@@ -261,9 +270,9 @@ const BatchProcess = {
                 }));
             }
 
-            // 수기 교정 백업
+            // 수기 교정 백업 (항상 수행)
             const correctedBackup = {};
-            if (!forceResetAll && imgObj.results) {
+            if (imgObj.results) {
                 imgObj.results.forEach((res, ri) => {
                     if (res && res.rows) {
                         res.rows.forEach(row => {
@@ -320,12 +329,18 @@ const BatchProcess = {
             });
 
             // 수기 교정 복원
+            // run(false): 항상 복원
+            // run(true): OMR이 미인식(undetected) 또는 빈 답(markedAnswer===null)일 때만 복원
             if (Object.keys(correctedBackup).length > 0) {
                 imgObj.results.forEach((res, ri) => {
                     if (res && res.rows) {
                         res.rows.forEach(row => {
                             const k = `${ri}_${row.questionNumber}`;
                             if (correctedBackup[k]) {
+                                const shouldRestore = !forceResetAll
+                                    || row.undetected
+                                    || row.markedAnswer === null;
+                                if (shouldRestore) {
                                     row.markedAnswer  = correctedBackup[k].markedAnswer;
                                     row.markedIndices = correctedBackup[k].markedIndices;
                                     row.corrected     = true;
@@ -339,6 +354,7 @@ const BatchProcess = {
                                         });
                                     }
                                 }
+                            }
                         });
                     }
                 });
