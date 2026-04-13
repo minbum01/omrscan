@@ -75,23 +75,32 @@ const OmrEngine = {
         // 침식(4-neighbor erosion): 어두운 픽셀이 4방향 모두 어두울 때만 살아남음
         // → 얇은 선(테두리·숫자)은 사라지고, 두꺼운 마킹 덩어리만 남음
         // 중앙 영역에서만 침식 결과 카운트 (기존 centerFill과 동일 영역)
+        // + 사분면(TL/TR/BL/BR)별 erodedFill 분리 계산 → 균일성 판정용
         let erodedDark = 0;
+        const qDark = [0, 0, 0, 0];    // TL, TR, BL, BR
+        const qTotal = [0, 0, 0, 0];
+        const midX = sw / 2, midY = sh / 2;
         for (let yy = cmy; yy < sh - cmy; yy++) {
             for (let xx = cmx; xx < sw - cmx; xx++) {
+                // 사분면 인덱스 결정
+                const qi = (xx < midX ? 0 : 1) + (yy < midY ? 0 : 2);
+                qTotal[qi]++;
                 const i = yy * sw + xx;
                 if (!mask[i]) continue;
                 const up    = yy > 0       ? mask[(yy - 1) * sw + xx] : 0;
                 const down  = yy < sh - 1  ? mask[(yy + 1) * sw + xx] : 0;
                 const left  = xx > 0       ? mask[yy * sw + (xx - 1)] : 0;
                 const right = xx < sw - 1  ? mask[yy * sw + (xx + 1)] : 0;
-                if (up && down && left && right) erodedDark++;
+                if (up && down && left && right) { erodedDark++; qDark[qi]++; }
             }
         }
+        const erodedQuadrants = [0, 1, 2, 3].map(q => qTotal[q] > 0 ? qDark[q] / qTotal[q] : 0);
         return {
             brightness: localMean,
             darkRatio: darkCount / total,
             centerFill: centerTotal > 0 ? centerDark / centerTotal : 0,
             erodedFill: centerTotal > 0 ? erodedDark / centerTotal : 0,
+            erodedQuadrants,  // [TL, TR, BL, BR]
         };
     },
 
@@ -495,7 +504,7 @@ const OmrEngine = {
             blob.inkRatio = sample.darkRatio;
             blob.centerFillRatio = sample.centerFill;
             blob.isMarked = false;
-            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill });
+            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
         });
 
         // 마킹 재판별
@@ -525,9 +534,11 @@ const OmrEngine = {
             const minFill = Math.min(...cellScores.map(c => c.centerFill));
             if (maxFill < 0.5 && (maxFill - minFill) < 0.15) primaryMarked = -1; // 백지
 
-            // 침식 필터: 얇은 선(테두리·숫자)은 침식되어 사라짐 → 진짜 마킹만 통과
-            if (primaryMarked !== -1 && cellScores[primaryMarked].erodedFill < 0.30) {
-                primaryMarked = -1;
+            // 침식 + 사분면 균일성 필터
+            if (primaryMarked !== -1) {
+                const c = cellScores[primaryMarked];
+                const qMin = Math.min(...c.erodedQuadrants);
+                if (c.erodedFill < 0.30 || qMin < 0.40) primaryMarked = -1;
             }
         }
 
@@ -668,7 +679,7 @@ const OmrEngine = {
                 const sample = this.sampleCell(grayData, width, height, cx, cy, sw, sh);
                 const score = (sample.darkRatio * 300) + (255 - sample.brightness) + (sample.centerFill * 800);
 
-                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill });
+                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
                 blobs.push({
                     x: Math.round(cx - sw / 2) + offsetX, y: Math.round(cy - sh / 2) + offsetY,
                     w: Math.round(sw), h: Math.round(sh),
@@ -730,18 +741,25 @@ const OmrEngine = {
             } else if (numC === 1) primaryMarked = 0;
 
             // ─────────────────────────────────────────────────
-            // 침식 필터 (Morphological Erosion):
-            // 얇은 선(테두리·인쇄 숫자)은 침식되어 사라지므로,
-            // 침식 후에도 충분히 살아남은 셀만 진짜 마킹으로 인정
+            // 침식 + 사분면 균일성 필터:
+            // 1) 침식 후 중앙 fill이 충분히 살아남아야 (얇은 선 제거)
+            // 2) 4사분면(TL/TR/BL/BR) 중 최소값이 임계 이상이어야 (숫자는 불균일)
+            //    진짜 마킹은 4사분면이 모두 진함, 숫자는 어느 한 사분면이 비어 있음
             // ─────────────────────────────────────────────────
             const ERODED_THRESHOLD = 0.30;
+            const QUAD_MIN_THRESHOLD = 0.40;
             if (primaryMarked !== -1) {
-                if (cellScores[primaryMarked].erodedFill < ERODED_THRESHOLD) {
+                const c = cellScores[primaryMarked];
+                const qMin = Math.min(...c.erodedQuadrants);
+                if (c.erodedFill < ERODED_THRESHOLD || qMin < QUAD_MIN_THRESHOLD) {
                     primaryMarked = -1;
                 }
             }
 
-            this._log(`  Q${q + 1}: ${cellScores.map(c => `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)}`).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
+            this._log(`  Q${q + 1}: ${cellScores.map(c => {
+                const qMin = Math.min(...c.erodedQuadrants);
+                return `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)} qMin=${qMin.toFixed(3)}`;
+            }).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
             // 중복 감지
             const markedIndices = [];
