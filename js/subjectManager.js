@@ -566,6 +566,7 @@ const SubjectManager = {
                 <button class="btn" id="sm-add">+ 과목 추가</button>
                 <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
                 <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
+                <button class="btn btn-sm" onclick="SubjectManager.exportSubjectsCSV()">현재 내용 CSV 다운로드</button>
                 <div style="flex:1;"></div>
                 <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
                 <button class="btn btn-primary" id="sm-save">저장</button>
@@ -578,6 +579,7 @@ const SubjectManager = {
                 <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
                 <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
                 <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
+                <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
                 <div style="flex:1;"></div>
                 <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
                 <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
@@ -585,6 +587,94 @@ const SubjectManager = {
             const csvInput = document.getElementById('sm-student-csv');
             if (csvInput) csvInput.addEventListener('change', (e) => this.importStudentCSV(e.target.files[0]));
         }
+    },
+
+    // ==========================================
+    // 현재 적용 중인 내용 CSV 다운로드
+    // ==========================================
+    exportSubjectsCSV() {
+        this._saveCurrentToData();
+        const subjects = this.getSubjects();
+        if (!subjects || subjects.length === 0) { Toast.error('저장된 과목이 없습니다'); return; }
+
+        // 양식 헤더 (1~20행)와 동일 포맷 유지 → 다시 불러올 때 그대로 사용 가능
+        const lines = [
+            '과목/정답 CSV (현재 내용)',
+            '',
+            '[열 순서]',
+            '과목코드,과목명,선택지수,배점,총점,1번답,2번답,...',
+            '과목코드가 없으면 - 를 입력',
+            '',
+            '',
+            '[배점] 숫자 = 일괄배점 / 차등 = 정답 뒤에 문항별 배점',
+            '[참고] 과목별 문항수 달라도 됨 / 헤더 불필요',
+            '이 설명(1~20행)은 자동 무시됩니다',
+            '',
+            '', '', '', '', '', '', '',
+            '21행부터 입력하세요',
+            '',
+        ];
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
+
+        subjects.forEach(s => {
+            const code = s.code && s.code.trim() ? s.code : '-';
+            const name = s.name || '';
+            const nc = s.numChoices || 5;
+            const useCustom = !!s.useCustomScore && Array.isArray(s.scoreMap) && s.scoreMap.length > 0;
+            const score = useCustom ? '차등' : (s.scorePerQuestion || 5);
+            const total = s.totalScore || '';
+            const answers = (s.answers || '').split(',').map(a => (a || '').trim());
+            const fields = [code, name, nc, score, total, ...answers];
+            if (useCustom) {
+                // 차등 배점이면 답 뒤에 배점 배열을 이어 붙임
+                s.scoreMap.forEach(v => fields.push(v !== undefined && v !== null ? v : ''));
+            }
+            lines.push(fields.join(','));
+        });
+
+        const date = new Date().toISOString().slice(0, 10);
+        this._downloadFile(lines.join('\n'), `과목_현재내용_${date}.csv`);
+        Toast.success(`${subjects.length}개 과목 다운로드 완료`);
+    },
+
+    exportStudentsCSV() {
+        const students = this.getStudents();
+        if (!students || students.length === 0) { Toast.error('저장된 인원이 없습니다'); return; }
+
+        const lines = [
+            '시험 인원 CSV (현재 내용)',
+            '',
+            '[열 순서]',
+            '이름,생년월일,수험번호,핸드폰번호(01012345678)',
+            '',
+            '[참고사항]',
+            '모든 열을 채우지 않아도 됨 (필요한 것만 입력)',
+            '생년월일과 핸드폰번호 앞자리 0은 자동 보존됨',
+            '헤더 행은 불필요',
+            '이 설명 영역(1~20행)은 자동으로 무시됩니다',
+            '', '', '', '', '', '', '',
+            '21행부터 입력하세요',
+            '',
+        ];
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
+
+        students.forEach(st => {
+            // 앞자리 0 보존: 생년월일/전화번호에 작은따옴표 대신 = "..." 기법은 엑셀 전용.
+            // 현재 import가 순수 텍스트로 읽으므로 그냥 텍스트로 저장
+            const fields = [
+                st.name || '',
+                st.birth || '',
+                st.examNo || '',
+                st.phone || '',
+            ];
+            lines.push(fields.join(','));
+        });
+
+        const date = new Date().toISOString().slice(0, 10);
+        this._downloadFile(lines.join('\n'), `시험인원_현재내용_${date}.csv`);
+        Toast.success(`${students.length}명 다운로드 완료`);
     },
 
     // ==========================================
