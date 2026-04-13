@@ -6,7 +6,8 @@ const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
     _showColumnSettings: false,
-    _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 성적 내림차순
+    _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 총점 내림차순, 'subject_desc' = 과목별 내림차순
+    _subjectSortName: null, // 'subject_desc' 시 정렬 기준 과목명
     _currentSubject: null,   // OMR 결과표: 선택된 과목 (null = 자동으로 첫 과목 사용)
     _itemSubject: null,      // 문항분석표: 선택된 과목
     _personalIdx: 0,         // 개인별 성적표: 현재 학생 인덱스
@@ -302,6 +303,16 @@ const Scoring = {
                 if (a._noOmr && b._noOmr) return 0;
                 return (b.score || 0) - (a.score || 0);
             });
+        } else if (this._sortMode === 'subject_desc' && this._subjectSortName) {
+            const sn = this._subjectSortName;
+            rows.sort((a, b) => {
+                if (a._noOmr && !b._noOmr) return 1;
+                if (!a._noOmr && b._noOmr) return -1;
+                if (a._noOmr && b._noOmr) return 0;
+                const aS = (a.subjects && a.subjects[sn] && a.subjects[sn].score) || 0;
+                const bS = (b.subjects && b.subjects[sn] && b.subjects[sn].score) || 0;
+                return bS - aS;
+            });
         }
         // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
 
@@ -503,6 +514,16 @@ const Scoring = {
                 if (!a._noOmr && b._noOmr) return -1;
                 if (a._noOmr && b._noOmr)  return 0;
                 return (b.score || 0) - (a.score || 0);
+            });
+        } else if (this._sortMode === 'subject_desc' && this._subjectSortName) {
+            const sn = this._subjectSortName;
+            rows.sort((a, b) => {
+                if (a._noOmr && !b._noOmr) return 1;
+                if (!a._noOmr && b._noOmr) return -1;
+                if (a._noOmr && b._noOmr)  return 0;
+                const aS = (a.subjects && a.subjects[sn] && a.subjects[sn].score) || 0;
+                const bS = (b.subjects && b.subjects[sn] && b.subjects[sn].score) || 0;
+                return bS - aS;
             });
         }
         return rows;
@@ -950,7 +971,7 @@ const Scoring = {
         // 정렬 + 마킹/정오 토글 + 문항수
         const allCols = this._getOMRColumns();
         html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:14px; padding:8px 12px; background:#f8fafc; border-radius:8px; flex-wrap:wrap;">
-            ${this._renderSortButtons()}
+            ${this._renderSortButtons(rows)}
             <div style="width:1px; height:20px; background:var(--border);"></div>
             <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
                 <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
@@ -1025,15 +1046,25 @@ const Scoring = {
         return html;
     },
 
-    // 정렬 버튼
-    _renderSortButtons() {
+    // 정렬 버튼 (rows: collectData() 결과)
+    _renderSortButtons(rows) {
         const isStudent = this._sortMode === 'student';
-        const isScore = this._sortMode === 'score_desc';
-        return `
+        const isScore   = this._sortMode === 'score_desc';
+        const subjects  = this.getSubjectList(rows || []);
+
+        let html = `
             <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isStudent ? 'background:var(--blue); color:#fff;' : ''}"
                 onclick="Scoring._sortMode='student'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">인원명단순</button>
             <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isScore ? 'background:var(--blue); color:#fff;' : ''}"
-                onclick="Scoring._sortMode='score_desc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 내림차순</button>`;
+                onclick="Scoring._sortMode='score_desc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">총점↓</button>`;
+
+        subjects.forEach(subj => {
+            const isActive = this._sortMode === 'subject_desc' && this._subjectSortName === subj;
+            const safe = subj.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            html += `<button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isActive ? 'background:var(--blue); color:#fff;' : ''}"
+                onclick="Scoring._sortMode='subject_desc'; Scoring._subjectSortName='${safe}'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">${subj}↓</button>`;
+        });
+        return html;
     },
 
     // 셀 별색 토글 (수동)
@@ -1429,7 +1460,7 @@ const Scoring = {
             : [{ key: '__total__', label: '전체', isTotal: true }];
 
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="display:flex; gap:4px;">${this._renderSortButtons()}</div>
+            <div style="display:flex; gap:4px; flex-wrap:wrap;">${this._renderSortButtons(rows)}</div>
             <button class="btn btn-sm" onclick="Scoring.downloadReport(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 

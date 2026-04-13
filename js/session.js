@@ -251,10 +251,12 @@ const SessionManager = {
                         // 교시 분배: savedResult.periodId → 해당 period.images 에 push
                         const periodId = (savedResult && savedResult.periodId) || 'p1';
 
+                        // 저장 시 붙인 교시 접두사 제거: 표시명은 원본 파일명으로
+                        const pristine = (savedResult && savedResult.pristineFilename) || imgFile.filename;
                         const imgObj = {
-                            name:          imgFile.filename,
-                            _originalName: imgFile.filename,
-                            _pristineName: (savedResult && savedResult.pristineFilename) || imgFile.filename,
+                            name:          pristine,
+                            _originalName: pristine,
+                            _pristineName: pristine,
                             imgElement:    img,
                             thumb,
                             periodId,
@@ -366,15 +368,20 @@ const SessionManager = {
 
         const buildFilenameByRef = (img, periodId, localIdx) => {
             const pristine = getPristine(img);
+            // 다교시 세션에서 파일명 충돌 방지 — 항상 교시 번호 접두사 추가
+            const periods = App.state.periods || [];
+            const periodIdx = periods.findIndex(p => p.id === periodId);
+            const periodPrefix = periods.length > 1 ? `${periodIdx + 1}교시_` : '';
+
             const r = rowByRef.get(`${periodId}:${localIdx}`);
-            if (!r || r._noOmr) return pristine;
+            if (!r || r._noOmr) return periodPrefix + pristine;
             const parts = [];
             if (r.name)     parts.push(sanitize(r.name));
             if (r.phone)    parts.push(sanitize(r.phone));
             if (r.examNo)   parts.push(sanitize(r.examNo));
             if (r.birthday) parts.push(sanitize(r.birthday));
             const prefix = parts.filter(Boolean).join('_');
-            return prefix ? `${prefix}_${pristine}` : pristine;
+            return periodPrefix + (prefix ? `${prefix}_${pristine}` : pristine);
         };
 
         // 이미지 1개 → 저장용 메타로 변환
@@ -397,6 +404,11 @@ const SessionManager = {
                     corrected:      row.corrected      || false,
                     _userCorrected: row._userCorrected || false,
                     undetected:     row.undetected     || false,
+                    // 오버레이 렌더링용 blob 위치 저장
+                    blobs: (row.blobs || []).map(b => ({
+                        cx: b.cx, cy: b.cy, w: b.w, h: b.h,
+                        isMarked: b.isMarked || false,
+                    })),
                 })),
             })),
         });

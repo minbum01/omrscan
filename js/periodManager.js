@@ -22,11 +22,21 @@ const PeriodManager = {
     // ─────────────────────────────────────────
     // 탭 렌더링
     // ─────────────────────────────────────────
+    // 채점 드롭다운 레이블을 현재 교시명으로 동적 갱신
+    _updateBatchLabels() {
+        const name = (App.getCurrentPeriod() && App.getCurrentPeriod().name) || '현재 교시';
+        const item1 = document.getElementById('batch-item-1');
+        const item2 = document.getElementById('batch-item-2');
+        if (item1) item1.textContent = `${name} 개별수정 후 전체채점`;
+        if (item2) item2.textContent = `${name} 현재 설정으로 전체채점`;
+    },
+
     render() {
         const bar = document.getElementById('period-tab-bar');
         if (!bar) return;
 
         bar.innerHTML = '';
+        this._updateBatchLabels();
 
         // 레이블
         const label = document.createElement('span');
@@ -43,15 +53,15 @@ const PeriodManager = {
             tabsWrap.appendChild(this._createTab(p));
         });
 
-        bar.appendChild(tabsWrap);
-
-        // + 버튼
+        // + 버튼 — 탭 바로 옆에 위치
         const addBtn = document.createElement('button');
         addBtn.className = 'period-tab-add';
         addBtn.title = '교시 추가 (자동 이름)';
         addBtn.textContent = '+';
         addBtn.onclick = () => this.addPeriod();
-        bar.appendChild(addBtn);
+        tabsWrap.appendChild(addBtn);
+
+        bar.appendChild(tabsWrap);
     },
 
     _createTab(period) {
@@ -242,6 +252,7 @@ const PeriodManager = {
 
         App.setCurrentPeriod(periodId);
         this.render();
+        this._updateBatchLabels();
 
         // 이미지 목록 갱신
         if (typeof ImageManager !== 'undefined') {

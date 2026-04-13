@@ -117,13 +117,10 @@
                     <span class="kbd" style="background:rgba(255,255,255,0.2);">Enter</span>
                 </button>
                 <div class="dropdown" style="margin-left:4px;">
-                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">일괄 채점 ▾</button>
+                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">채점 ▾</button>
                     <div class="dropdown-menu">
-                        <button class="dropdown-item" onclick="BatchProcess.run(false)">현재 교시 일괄 채점</button>
-                        <button class="dropdown-item" onclick="BatchProcess.run(true)">현재 교시 재설정 후 채점</button>
-                        <div class="dropdown-divider"></div>
-                        <button class="dropdown-item" onclick="BatchProcess.runAllPeriods(false)">전체 교시 일괄 채점</button>
-                        <button class="dropdown-item" onclick="BatchProcess.runAllPeriods(true)">전체 교시 재설정 후 채점</button>
+                        <button id="batch-item-1" class="dropdown-item" onclick="BatchProcess.run(false)">현재 교시 개별수정 후 전체채점</button>
+                        <button id="batch-item-2" class="dropdown-item" onclick="BatchProcess.run(true)">현재 교시 현재 설정으로 전체채점</button>
                     </div>
                 </div>
             </div>
