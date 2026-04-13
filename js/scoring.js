@@ -1083,49 +1083,58 @@ const Scoring = {
             return h;
         };
 
+        // 클릭 가능 셀 헬퍼
+        const cc = (key, val, extra) => {
+            const bg = allHL[key] ? 'background:'+allHL[key]+';' : '';
+            return `<td style="${td} cursor:pointer; ${extra || ''} ${bg}" onclick="Scoring._toggleCellHL('${key}')">${val}</td>`;
+        };
+        const ccR = (key, val, extra) => {
+            const bg = allHL[key] ? 'background:'+allHL[key]+';' : '';
+            return `<td rowspan="3" style="${td} cursor:pointer; vertical-align:middle; ${extra || ''} ${bg}" onclick="Scoring._toggleCellHL('${key}')">${val}</td>`;
+        };
+
         items.forEach((item, ri) => {
             const totalCorrect = item.upper.correct + item.mid.correct + item.lower.correct;
             const totalWrong = item.upper.wrong + item.mid.wrong + item.lower.wrong;
             const totalAll = totalCorrect + totalWrong;
             const ca = item.correctAnswer;
+            const q = item.q;
 
             // 행 1: 정답수
             html += `<tr>
-                <td rowspan="3" style="${td} font-weight:700; font-size:11px; vertical-align:middle; border-right:2px solid #d1d5db; background:#e5e7eb;">${item.q}</td>
-                <td rowspan="3" style="${td} font-weight:600; vertical-align:middle;">${ca || ''}</td>
-                <td style="${td} font-size:9px; font-weight:600;">정답</td>
-                <td style="${td}">${item.upper.correct}</td>
-                <td style="${td}">${item.mid.correct}</td>
-                <td style="${td}">${item.lower.correct}</td>
-                <td style="${td} font-weight:600;">${totalCorrect}</td>
-                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; cursor:pointer; ${allHL['q'+item.q+'_rate'] ? 'background:'+allHL['q'+item.q+'_rate']+';' : ''}"
-                    onclick="Scoring._toggleCellHL('q${item.q}_rate')">${item.correctRate.toFixed(1)}%</td>
-                <td rowspan="3" style="${td} font-weight:700; vertical-align:middle; border-right:2px solid #d1d5db; cursor:pointer; ${allHL['q'+item.q+'_disc'] ? 'background:'+allHL['q'+item.q+'_disc']+';' : ''}"
-                    onclick="Scoring._toggleCellHL('q${item.q}_disc')">${item.discrimination.toFixed(3)}</td>
-                <td style="${td} font-size:9px; font-weight:600;">상50%</td>
-                ${distCells(item.distUpper, ca, item.q, 'u')}
+                ${ccR('q'+q+'_num', q, 'font-weight:700; font-size:11px; border-right:2px solid #d1d5db; background:#e5e7eb;')}
+                ${ccR('q'+q+'_ans', ca || '', 'font-weight:600;')}
+                ${cc('q'+q+'_r1_lbl', '정답', 'font-size:9px; font-weight:600;')}
+                ${cc('q'+q+'_uc', item.upper.correct, '')}
+                ${cc('q'+q+'_mc', item.mid.correct, '')}
+                ${cc('q'+q+'_lc', item.lower.correct, '')}
+                ${cc('q'+q+'_tc', totalCorrect, 'font-weight:600;')}
+                ${ccR('q'+q+'_rate', item.correctRate.toFixed(1)+'%', 'font-weight:700;')}
+                ${ccR('q'+q+'_disc', item.discrimination.toFixed(3), 'font-weight:700; border-right:2px solid #d1d5db;')}
+                ${cc('q'+q+'_d1_lbl', '상50%', 'font-size:9px; font-weight:600;')}
+                ${distCells(item.distUpper, ca, q, 'u')}
             </tr>`;
 
             // 행 2: 오답수
             html += `<tr>
-                <td style="${td} font-size:9px; font-weight:600;">오답</td>
-                <td style="${td}">${item.upper.wrong}</td>
-                <td style="${td}">${item.mid.wrong}</td>
-                <td style="${td}">${item.lower.wrong}</td>
-                <td style="${td} font-weight:600;">${totalWrong}</td>
-                <td style="${td} font-size:9px; font-weight:600;">하50%</td>
-                ${distCells(item.distLower, ca, item.q, 'l')}
+                ${cc('q'+q+'_r2_lbl', '오답', 'font-size:9px; font-weight:600;')}
+                ${cc('q'+q+'_uw', item.upper.wrong, '')}
+                ${cc('q'+q+'_mw', item.mid.wrong, '')}
+                ${cc('q'+q+'_lw', item.lower.wrong, '')}
+                ${cc('q'+q+'_tw', totalWrong, 'font-weight:600;')}
+                ${cc('q'+q+'_d2_lbl', '하50%', 'font-size:9px; font-weight:600;')}
+                ${distCells(item.distLower, ca, q, 'l')}
             </tr>`;
 
             // 행 3: 계
             html += `<tr style="border-bottom:2px solid #94a3b8;">
-                <td style="${td} font-size:9px; font-weight:700;">계</td>
-                <td style="${td} font-weight:700;">${item.upper.total}</td>
-                <td style="${td} font-weight:700;">${item.mid.total}</td>
-                <td style="${td} font-weight:700;">${item.lower.total}</td>
-                <td style="${td} font-weight:700;">${totalAll}</td>
-                <td style="${td} font-size:9px; font-weight:700;">계</td>
-                ${distCells(item.distTotal, ca, item.q, 't')}
+                ${cc('q'+q+'_r3_lbl', '계', 'font-size:9px; font-weight:700;')}
+                ${cc('q'+q+'_ut', item.upper.total, 'font-weight:700;')}
+                ${cc('q'+q+'_mt', item.mid.total, 'font-weight:700;')}
+                ${cc('q'+q+'_lt', item.lower.total, 'font-weight:700;')}
+                ${cc('q'+q+'_tt', totalAll, 'font-weight:700;')}
+                ${cc('q'+q+'_d3_lbl', '계', 'font-size:9px; font-weight:700;')}
+                ${distCells(item.distTotal, ca, q, 't')}
             </tr>`;
         });
 
