@@ -1526,21 +1526,6 @@ const Scoring = {
         setTimeout(() => document.body.classList.remove('printing-report'), 500);
     },
 
-    // 등급 기준 (만점 대비 %)
-    _gradeBands: [
-        { min: 90, label: 'S', color: '#0ea5e9' },
-        { min: 80, label: 'A', color: '#22c55e' },
-        { min: 70, label: 'B', color: '#84cc16' },
-        { min: 60, label: 'C', color: '#f59e0b' },
-        { min: 50, label: 'D', color: '#f97316' },
-        { min: 0,  label: 'E', color: '#ef4444' },
-    ],
-    _gradeOf(score, totalMax) {
-        if (!totalMax || totalMax === '') return { label: '-', color: '#94a3b8' };
-        const pct = (score / totalMax) * 100;
-        return this._gradeBands.find(b => pct >= b.min) || this._gradeBands[this._gradeBands.length - 1];
-    },
-
     // 과목별 통계 (mean/stdDev/max/min) — calcStats와 중복되지만 접근 편의용
     _calcSubjectStats(rows) {
         const valid = rows.filter(r => !r._noOmr);
@@ -1648,18 +1633,16 @@ const Scoring = {
     _rptHeader(r) {
         const sessionName = (typeof SessionManager !== 'undefined' && SessionManager.currentSessionName) || '성적표';
         const today = new Date().toISOString().slice(0, 10);
-        return `<div style="background: linear-gradient(135deg, #0f172a, #1e3a8a); color:white; border-radius:8px; padding:10px 18px; display:flex; align-items:center; justify-content:space-between;">
-            <div>
-                <div style="font-size:9pt; opacity:0.7; font-weight:500; letter-spacing:0.05em;">${sessionName}</div>
-                <div style="font-size:8pt; opacity:0.6; margin-top:2px;">시행일: ${today}</div>
+        return `<div style="background: linear-gradient(120deg, #09090b 0%, #27272a 60%, #3f3f46 100%); color:#fafafa; border-radius:6px; padding:14px 20px; display:flex; align-items:center; justify-content:space-between; position:relative; overflow:hidden;">
+            <div style="position:absolute; top:0; right:0; width:40%; height:100%; background:radial-gradient(ellipse at top right, rgba(255,255,255,0.08), transparent 70%); pointer-events:none;"></div>
+            <div style="position:relative;">
+                <div style="font-size:8pt; color:#a1a1aa; font-weight:500; letter-spacing:0.12em; text-transform:uppercase;">Individual Report</div>
+                <div style="font-size:12pt; font-weight:500; margin-top:4px; color:#e4e4e7;">${sessionName}</div>
+                <div style="font-size:8pt; color:#71717a; margin-top:2px;">${today}</div>
             </div>
-            <div style="text-align:center;">
-                <div style="font-size:7pt; opacity:0.7; letter-spacing:0.1em;">INDIVIDUAL REPORT</div>
-                <div class="rpt-h1" style="color:white; font-size:20pt;">${r.name || '(이름 없음)'}</div>
-            </div>
-            <div style="text-align:right; font-size:8pt; opacity:0.7;">
-                <div>OMR 채점 시스템</div>
-                <div>v 1.0</div>
+            <div style="text-align:right; position:relative;">
+                <div style="font-size:7.5pt; color:#a1a1aa; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:2px;">Examinee</div>
+                <div style="font-size:24pt; font-weight:300; letter-spacing:-0.02em; line-height:1; color:#fafafa;">${r.name || '(이름 없음)'}</div>
             </div>
         </div>`;
     },
@@ -1671,16 +1654,14 @@ const Scoring = {
             ['성명', r.name || '-'],
             ['생년월일', r.birthday || '-'],
             ['전화번호', r.phone || '-'],
-            ['과목코드', r.subjectCode || '-'],
         ];
         Object.keys(r.etcFields || {}).forEach(k => fields.push([k, r.etcFields[k] || '-']));
-        if (r.filename) fields.push(['파일명', r.filename]);
 
-        return `<div style="display:flex; align-items:stretch; background:white; border:1px solid #e2e8f0; border-radius:8px; padding:6px 4px; margin-top:4mm;">
+        return `<div style="display:flex; align-items:stretch; background:linear-gradient(180deg, #fafafa, #f4f4f5); border:1px solid #e4e4e7; border-radius:6px; padding:6px 4px; margin-top:4mm;">
             ${fields.map((f, i) => `
-                <div style="flex:1; padding:2px 10px; ${i<fields.length-1?'border-right:1px solid #e2e8f0;':''} min-width:0;">
-                    <div class="rpt-mini">${f[0]}</div>
-                    <div style="font-size:10.5pt; font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f[1]}</div>
+                <div style="flex:1; padding:2px 12px; ${i<fields.length-1?'border-right:1px solid #e4e4e7;':''} min-width:0;">
+                    <div style="font-size:7.5pt; color:#71717a; font-weight:500; letter-spacing:0.08em; text-transform:uppercase;">${f[0]}</div>
+                    <div style="font-size:11pt; font-weight:600; color:#18181b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:1px;">${f[1]}</div>
                 </div>
             `).join('')}
         </div>`;
@@ -1691,72 +1672,62 @@ const Scoring = {
         const totalScore = r._noOmr ? 0 : (typeof r.totalScore === 'number' ? r.totalScore : 0);
         const totalMax = r._noOmr ? 0 : (typeof r.totalMax === 'number' ? r.totalMax : 0);
         const pct = totalMax > 0 ? (totalScore / totalMax) * 100 : 0;
-        const grade = this._gradeOf(totalScore, totalMax);
         const rank = r.rank || '-';
         const N = stats ? stats.N : '-';
         const mean = stats ? stats.mean : 0;
         const delta = stats && typeof r.totalScore === 'number' ? (r.totalScore - mean) : 0;
         const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
-        const deltaColor = delta >= 0 ? '#22c55e' : '#ef4444';
         const deltaArrow = delta >= 0 ? '▲' : '▼';
         const percentile = typeof r.percentile === 'number' ? r.percentile.toFixed(1) : '-';
         const tScore = typeof r.tScore === 'number' ? r.tScore.toFixed(1) : '-';
 
-        // 등급 밴드
-        const bands = this._gradeBands.slice().reverse(); // E → S
-        const bandsHtml = bands.map(b => {
-            const active = b.label === grade.label;
-            return `<div style="flex:1; padding:4px 0; text-align:center; font-size:10pt; font-weight:${active?'800':'500'};
-                background:${active?b.color:'#f1f5f9'}; color:${active?'white':'#64748b'};
-                border-radius:4px; ${active?'transform:scale(1.1); box-shadow:0 2px 6px '+b.color+'66;':''}">
-                ${b.label}
-            </div>`;
-        }).join('');
-
         return `<aside style="display:flex; flex-direction:column; gap:3mm;">
             <!-- 종합 점수 블록 -->
-            <div style="background:linear-gradient(135deg, #1e40af, #3b82f6); color:white; border-radius:10px; padding:12px 14px; text-align:center;">
-                <div style="font-size:8pt; opacity:0.8; letter-spacing:0.08em; font-weight:600;">TOTAL SCORE</div>
-                <div style="display:flex; align-items:baseline; justify-content:center; gap:4px; margin-top:2px;">
-                    <span style="font-size:40pt; font-weight:800; line-height:1;">${totalScore}</span>
-                    <span style="font-size:14pt; opacity:0.8;">/ ${totalMax}</span>
+            <div style="background:linear-gradient(145deg, #18181b 0%, #27272a 55%, #3f3f46 100%); color:#fafafa; border-radius:6px; padding:14px 16px; position:relative; overflow:hidden;">
+                <div style="position:absolute; top:-20%; right:-10%; width:60%; height:140%; background:radial-gradient(ellipse, rgba(255,255,255,0.06), transparent 70%); pointer-events:none;"></div>
+                <div style="font-size:7.5pt; color:#a1a1aa; letter-spacing:0.15em; font-weight:500; text-transform:uppercase; position:relative;">Total Score</div>
+                <div style="display:flex; align-items:baseline; gap:6px; margin-top:6px; position:relative;">
+                    <span style="font-size:44pt; font-weight:200; letter-spacing:-0.04em; line-height:1; color:#fafafa;">${totalScore}</span>
+                    <span style="font-size:13pt; color:#71717a; font-weight:300;">/ ${totalMax}</span>
                 </div>
-                <div style="font-size:13pt; font-weight:700; margin-top:2px;">${pct.toFixed(1)}%</div>
-            </div>
-
-            <!-- 등급 밴드 -->
-            <div>
-                <div class="rpt-section-title">등급 (Grade)</div>
-                <div style="display:flex; gap:3px;">${bandsHtml}</div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:6px; position:relative;">
+                    <div style="flex:1; height:3px; background:#3f3f46; border-radius:2px; overflow:hidden;">
+                        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, #a1a1aa, #fafafa);"></div>
+                    </div>
+                    <span style="font-size:10pt; font-weight:500; color:#e4e4e7;">${pct.toFixed(1)}%</span>
+                </div>
             </div>
 
             <!-- 지표 그리드 -->
-            <div class="rpt-grid" style="grid-template-columns:1fr 1fr; gap:3mm;">
-                <div class="rpt-card" style="border-left:3px solid #3b82f6;">
-                    <div class="rpt-metric-label">전체 석차</div>
-                    <div class="rpt-metric-value">${rank} <span style="font-size:9pt; color:#64748b; font-weight:500;">/ ${N}명</span></div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:2mm;">
+                <div style="background:linear-gradient(180deg, #fafafa, #f4f4f5); border:1px solid #e4e4e7; border-radius:5px; padding:7px 10px;">
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">석차</div>
+                    <div style="font-size:17pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${rank}<span style="font-size:9pt; color:#a1a1aa; font-weight:400;"> / ${N}</span></div>
                 </div>
-                <div class="rpt-card" style="border-left:3px solid #8b5cf6;">
-                    <div class="rpt-metric-label">백분위</div>
-                    <div class="rpt-metric-value">${percentile}</div>
+                <div style="background:linear-gradient(180deg, #fafafa, #f4f4f5); border:1px solid #e4e4e7; border-radius:5px; padding:7px 10px;">
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">백분위</div>
+                    <div style="font-size:17pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${percentile}</div>
                 </div>
-                <div class="rpt-card" style="border-left:3px solid #06b6d4;">
-                    <div class="rpt-metric-label">표준점수(T)</div>
-                    <div class="rpt-metric-value">${tScore}</div>
+                <div style="background:linear-gradient(180deg, #fafafa, #f4f4f5); border:1px solid #e4e4e7; border-radius:5px; padding:7px 10px;">
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">표준점수</div>
+                    <div style="font-size:17pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${tScore}</div>
                 </div>
-                <div class="rpt-card" style="border-left:3px solid #64748b;">
-                    <div class="rpt-metric-label">평균</div>
-                    <div class="rpt-metric-value">${mean ? mean.toFixed(1) : '-'}</div>
-                </div>
-                <div class="rpt-card" style="grid-column: 1 / -1; border-left:3px solid ${deltaColor};">
-                    <div class="rpt-metric-label">평균 대비</div>
-                    <div class="rpt-metric-value" style="color:${deltaColor};">${deltaArrow} ${deltaStr}점</div>
+                <div style="background:linear-gradient(180deg, #fafafa, #f4f4f5); border:1px solid #e4e4e7; border-radius:5px; padding:7px 10px;">
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">평균</div>
+                    <div style="font-size:17pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${mean ? mean.toFixed(1) : '-'}</div>
                 </div>
             </div>
 
-            <div class="rpt-card" style="padding:6px 10px; background:#fef3c7; border:none;">
-                <div class="rpt-metric-label" style="color:#92400e;">맞은 개수</div>
-                <div style="font-size:14pt; font-weight:800; color:#92400e;">${r.totalCorrect || 0} <span style="font-size:9pt; font-weight:500;">문항</span></div>
+            <!-- 평균 대비 -->
+            <div style="background:linear-gradient(135deg, #fafafa, #e4e4e7); border:1px solid #d4d4d8; border-radius:5px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">평균 대비</div>
+                    <div style="font-size:18pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${deltaArrow} ${deltaStr}<span style="font-size:9pt; color:#71717a; font-weight:400;"> 점</span></div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:7.5pt; color:#71717a; letter-spacing:0.08em; font-weight:500; text-transform:uppercase;">맞은 개수</div>
+                    <div style="font-size:18pt; font-weight:300; letter-spacing:-0.02em; color:#18181b; line-height:1.1; margin-top:2px;">${r.totalCorrect || 0}<span style="font-size:9pt; color:#71717a; font-weight:400;"> 문항</span></div>
+                </div>
             </div>
         </aside>`;
     },
@@ -1764,11 +1735,10 @@ const Scoring = {
     // ── ④ 과목별 카드 그리드 ───────────
     _rptSubjectsGrid(r, subjects, subjStats) {
         if (subjects.length === 0) {
-            return `<section style="display:flex; align-items:center; justify-content:center; background:#f8fafc; border-radius:8px; padding:20mm; color:#94a3b8;">
+            return `<section style="display:flex; align-items:center; justify-content:center; background:#fafafa; border:1px solid #e4e4e7; border-radius:6px; padding:20mm; color:#a1a1aa; font-size:9pt;">
                 과목 데이터가 없습니다
             </section>`;
         }
-        // 레이아웃: 1→1열, 2→2열, 3→3열, 4→2×2, 5+→3열 wrap
         const cols = subjects.length <= 3 ? subjects.length : (subjects.length === 4 ? 2 : 3);
 
         const cards = subjects.map(name => {
@@ -1776,53 +1746,49 @@ const Scoring = {
             const score = typeof s.score === 'number' ? s.score : 0;
             const max = typeof s.totalPossible === 'number' ? s.totalPossible : 0;
             const pct = max > 0 ? (score / max) * 100 : 0;
-            const grade = this._gradeOf(score, max);
             const rk = s.rank || '-';
             const pc = typeof s.percentile === 'number' ? s.percentile.toFixed(1) : '-';
             const ts = typeof s.tScore === 'number' ? s.tScore.toFixed(1) : '-';
             const st = subjStats[name] || {};
             const mean = st.mean || 0;
             const delta = score - mean;
-            const deltaColor = delta >= 0 ? '#22c55e' : '#ef4444';
+            const deltaArrow = delta >= 0 ? '▲' : '▼';
             const deltaStr = delta >= 0 ? `+${delta.toFixed(1)}` : delta.toFixed(1);
 
-            return `<div style="background:white; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden;">
-                <!-- 헤더 -->
-                <div style="background:${grade.color}; color:white; padding:5px 10px; display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:11pt; font-weight:700;">${name}</div>
-                    <div style="font-size:8pt; opacity:0.9;">만점 ${max}</div>
+            return `<div style="background:linear-gradient(180deg, #ffffff, #fafafa); border:1px solid #e4e4e7; border-radius:6px; overflow:hidden; display:flex; flex-direction:column;">
+                <!-- 헤더 (무채색 그라데이션) -->
+                <div style="background:linear-gradient(135deg, #27272a, #52525b); color:#fafafa; padding:6px 12px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-size:10.5pt; font-weight:500; letter-spacing:0.02em;">${name}</div>
+                    <div style="font-size:7.5pt; color:#a1a1aa; letter-spacing:0.05em;">만점 ${max}</div>
                 </div>
                 <!-- 대형 점수 -->
-                <div style="padding:8px 10px;">
+                <div style="padding:10px 12px; flex:1;">
                     <div style="display:flex; align-items:baseline; justify-content:space-between;">
                         <div>
-                            <span style="font-size:26pt; font-weight:800; color:${grade.color};">${score}</span>
-                            <span style="font-size:9pt; color:#64748b;"> / ${max}</span>
+                            <span style="font-size:28pt; font-weight:200; letter-spacing:-0.03em; color:#18181b; line-height:1;">${score}</span>
+                            <span style="font-size:10pt; color:#a1a1aa; font-weight:400;"> / ${max}</span>
                         </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:9pt; font-weight:700; color:${grade.color};">${pct.toFixed(1)}%</div>
-                            <div style="font-size:13pt; font-weight:800; color:${grade.color};">${grade.label}</div>
-                        </div>
+                        <div style="font-size:11pt; font-weight:400; color:#52525b; letter-spacing:-0.01em;">${pct.toFixed(1)}%</div>
                     </div>
-                    <!-- 진행 바 -->
-                    <div style="height:6px; background:#f1f5f9; border-radius:3px; overflow:hidden; margin-top:6px;">
-                        <div style="height:100%; width:${pct}%; background:${grade.color}; transition: width 0.3s;"></div>
+                    <!-- 진행 바 (그라데이션) -->
+                    <div style="height:2px; background:#e4e4e7; border-radius:1px; overflow:hidden; margin-top:8px;">
+                        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, #52525b, #18181b);"></div>
                     </div>
                     <!-- 상세 지표 -->
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:2px 8px; margin-top:8px; font-size:8.5pt;">
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">맞은/틀림</span><span style="font-weight:700;">${s.correctCount || 0} / ${s.wrongCount || 0}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">석차</span><span style="font-weight:700;">${rk}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">백분위</span><span style="font-weight:700;">${pc}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">표준점수</span><span style="font-weight:700;">${ts}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">평균</span><span style="font-weight:700;">${mean.toFixed(1)}</span></div>
-                        <div style="display:flex; justify-content:space-between;"><span style="color:#64748b;">평균 대비</span><span style="font-weight:700; color:${deltaColor};">${deltaStr}</span></div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; margin-top:10px; font-size:8.5pt;">
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">맞은 / 틀림</span><span style="font-weight:600; color:#18181b;">${s.correctCount || 0} / ${s.wrongCount || 0}</span></div>
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">석차</span><span style="font-weight:600; color:#18181b;">${rk}</span></div>
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">백분위</span><span style="font-weight:600; color:#18181b;">${pc}</span></div>
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">표준점수</span><span style="font-weight:600; color:#18181b;">${ts}</span></div>
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">평균</span><span style="font-weight:600; color:#18181b;">${mean.toFixed(1)}</span></div>
+                        <div style="display:flex; justify-content:space-between;"><span style="color:#71717a; letter-spacing:0.02em;">평균 대비</span><span style="font-weight:600; color:#18181b;">${deltaArrow} ${deltaStr}</span></div>
                     </div>
                 </div>
             </div>`;
         }).join('');
 
         return `<section>
-            <div class="rpt-section-title">과목별 성적</div>
+            <div style="font-size:8pt; font-weight:500; color:#71717a; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:4px;">과목별 성적 · Subjects</div>
             <div style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:3mm;">${cards}</div>
         </section>`;
     },
@@ -1838,38 +1804,44 @@ const Scoring = {
         // 5-3. 레이더/도넛
         const radarSvg = subjects.length >= 3 ? this._rptRadar(r, subjects) : this._rptDonut(r, subjects);
 
+        const vizCard = (label, body) => `<div style="background:linear-gradient(180deg, #ffffff, #fafafa); border:1px solid #e4e4e7; border-radius:6px; padding:10px 12px;">
+            <div style="font-size:7.5pt; font-weight:500; color:#71717a; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:6px;">${label}</div>
+            ${body}
+        </div>`;
+
         return `<section style="margin-top:4mm;">
-            <div class="rpt-section-title">시각화 분석</div>
+            <div style="font-size:8pt; font-weight:500; color:#71717a; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:4px;">시각화 · Visualization</div>
             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:3mm;">
-                <div style="background:white; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px;">
-                    <div style="font-size:8.5pt; font-weight:700; color:#475569; margin-bottom:4px;">과목별 점수 비교</div>
-                    ${barsSvg}
-                </div>
-                <div style="background:white; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px;">
-                    <div style="font-size:8.5pt; font-weight:700; color:#475569; margin-bottom:4px;">전체 점수 분포</div>
-                    ${histSvg}
-                </div>
-                <div style="background:white; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px;">
-                    <div style="font-size:8.5pt; font-weight:700; color:#475569; margin-bottom:4px;">${subjects.length >= 3 ? '표준점수 프로파일' : '정답률'}</div>
-                    ${radarSvg}
-                </div>
+                ${vizCard('과목별 점수 비교', barsSvg)}
+                ${vizCard('전체 점수 분포', histSvg)}
+                ${vizCard(subjects.length >= 3 ? '표준점수 프로파일' : '정답률', radarSvg)}
             </div>
         </section>`;
     },
 
     _rptBars(r, subjects, subjStats) {
-        if (subjects.length === 0) return '<div style="height:90px; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:9pt;">데이터 없음</div>';
+        if (subjects.length === 0) return '<div style="height:90px; display:flex; align-items:center; justify-content:center; color:#a1a1aa; font-size:9pt;">데이터 없음</div>';
         const W = 280, H = 110, pad = { l: 24, r: 8, t: 8, b: 22 };
         const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
         const n = subjects.length;
         const groupW = iw / n;
         const barW = groupW * 0.28;
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
-        // Y축: 0~100%
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">
+            <defs>
+                <linearGradient id="barMe" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#18181b"/>
+                    <stop offset="100%" stop-color="#52525b"/>
+                </linearGradient>
+                <linearGradient id="barAvg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#d4d4d8"/>
+                    <stop offset="100%" stop-color="#e4e4e7"/>
+                </linearGradient>
+            </defs>`;
+        // Y축
         [0, 25, 50, 75, 100].forEach(p => {
             const y = pad.t + ih - (p / 100) * ih;
-            svg += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" stroke="#e2e8f0" stroke-width="0.5"/>`;
-            svg += `<text x="${pad.l - 3}" y="${y + 2}" text-anchor="end" font-size="6" fill="#94a3b8">${p}</text>`;
+            svg += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" stroke="#f4f4f5" stroke-width="0.5"/>`;
+            svg += `<text x="${pad.l - 3}" y="${y + 2}" text-anchor="end" font-size="6" fill="#a1a1aa">${p}</text>`;
         });
 
         subjects.forEach((name, i) => {
@@ -1879,21 +1851,17 @@ const Scoring = {
             const myPct = ((s.score || 0) / max) * 100;
             const avgPct = ((st.mean || 0) / max) * 100;
             const gx = pad.l + groupW * i + groupW * 0.5;
-            // 내 점수 (파랑)
             const myH = (myPct / 100) * ih;
-            svg += `<rect x="${gx - barW - 2}" y="${pad.t + ih - myH}" width="${barW}" height="${myH}" fill="#3b82f6" rx="1"/>`;
-            svg += `<text x="${gx - barW / 2 - 2}" y="${pad.t + ih - myH - 2}" text-anchor="middle" font-size="6" fill="#1e3a8a" font-weight="700">${s.score || 0}</text>`;
-            // 평균 (회색)
+            svg += `<rect x="${gx - barW - 2}" y="${pad.t + ih - myH}" width="${barW}" height="${myH}" fill="url(#barMe)" rx="1"/>`;
+            svg += `<text x="${gx - barW / 2 - 2}" y="${pad.t + ih - myH - 2}" text-anchor="middle" font-size="6" fill="#18181b" font-weight="600">${s.score || 0}</text>`;
             const avgH = (avgPct / 100) * ih;
-            svg += `<rect x="${gx + 2}" y="${pad.t + ih - avgH}" width="${barW}" height="${avgH}" fill="#cbd5e1" rx="1"/>`;
-            svg += `<text x="${gx + barW / 2 + 2}" y="${pad.t + ih - avgH - 2}" text-anchor="middle" font-size="6" fill="#64748b">${(st.mean || 0).toFixed(0)}</text>`;
-            // 라벨
-            svg += `<text x="${gx}" y="${pad.t + ih + 10}" text-anchor="middle" font-size="7" font-weight="600" fill="#0f172a">${name.length > 6 ? name.slice(0, 6) + '…' : name}</text>`;
+            svg += `<rect x="${gx + 2}" y="${pad.t + ih - avgH}" width="${barW}" height="${avgH}" fill="url(#barAvg)" rx="1"/>`;
+            svg += `<text x="${gx + barW / 2 + 2}" y="${pad.t + ih - avgH - 2}" text-anchor="middle" font-size="6" fill="#71717a">${(st.mean || 0).toFixed(0)}</text>`;
+            svg += `<text x="${gx}" y="${pad.t + ih + 10}" text-anchor="middle" font-size="7" font-weight="500" fill="#27272a">${name.length > 6 ? name.slice(0, 6) + '…' : name}</text>`;
         });
-        // 범례
         svg += `<g transform="translate(${pad.l}, ${H - 6})">
-            <rect x="0" y="-4" width="5" height="4" fill="#3b82f6"/><text x="7" y="0" font-size="6" fill="#475569">내 점수</text>
-            <rect x="35" y="-4" width="5" height="4" fill="#cbd5e1"/><text x="42" y="0" font-size="6" fill="#475569">평균</text>
+            <rect x="0" y="-4" width="5" height="4" fill="#18181b"/><text x="7" y="0" font-size="6" fill="#52525b">내 점수</text>
+            <rect x="35" y="-4" width="5" height="4" fill="#d4d4d8"/><text x="42" y="0" font-size="6" fill="#52525b">평균</text>
         </g>`;
         svg += `</svg>`;
         return svg;
@@ -1902,7 +1870,7 @@ const Scoring = {
     _rptHistogram(r, rows) {
         const bin = 10;
         const { bins, min, max } = this._buildHistogram(rows, bin);
-        if (bins.length === 0) return '<div style="height:90px; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:9pt;">데이터 없음</div>';
+        if (bins.length === 0) return '<div style="height:90px; display:flex; align-items:center; justify-content:center; color:#a1a1aa; font-size:9pt;">데이터 없음</div>';
         const W = 280, H = 110, pad = { l: 20, r: 8, t: 8, b: 22 };
         const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
         const maxCount = Math.max(...bins.map(b => b.count)) || 1;
@@ -1910,30 +1878,36 @@ const Scoring = {
         const myScore = typeof r.totalScore === 'number' ? r.totalScore : 0;
         const range = max - min || 1;
 
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
-        // 막대
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">
+            <defs>
+                <linearGradient id="histBar" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#d4d4d8"/>
+                    <stop offset="100%" stop-color="#e4e4e7"/>
+                </linearGradient>
+                <linearGradient id="histMine" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#18181b"/>
+                    <stop offset="100%" stop-color="#52525b"/>
+                </linearGradient>
+            </defs>`;
         bins.forEach((b, i) => {
             const h = (b.count / maxCount) * ih;
             const x = pad.l + barW * i;
             const y = pad.t + ih - h;
             const isMine = myScore >= b.from && myScore < b.to;
-            svg += `<rect x="${x + 1}" y="${y}" width="${barW - 2}" height="${h}" fill="${isMine ? '#ef4444' : '#93c5fd'}" rx="1"/>`;
+            svg += `<rect x="${x + 1}" y="${y}" width="${barW - 2}" height="${h}" fill="${isMine ? 'url(#histMine)' : 'url(#histBar)'}" rx="1"/>`;
             if (b.count > 0) {
-                svg += `<text x="${x + barW / 2}" y="${y - 1}" text-anchor="middle" font-size="5.5" fill="#475569">${b.count}</text>`;
+                svg += `<text x="${x + barW / 2}" y="${y - 1}" text-anchor="middle" font-size="5.5" fill="#71717a">${b.count}</text>`;
             }
         });
-        // 바닥선
-        svg += `<line x1="${pad.l}" y1="${pad.t + ih}" x2="${W - pad.r}" y2="${pad.t + ih}" stroke="#cbd5e1" stroke-width="0.5"/>`;
-        // X축 라벨 (첫/중간/끝)
+        svg += `<line x1="${pad.l}" y1="${pad.t + ih}" x2="${W - pad.r}" y2="${pad.t + ih}" stroke="#d4d4d8" stroke-width="0.5"/>`;
         const ticks = [bins[0].from, bins[Math.floor(bins.length / 2)].from, bins[bins.length - 1].to];
         ticks.forEach((t, i) => {
             const x = pad.l + (iw * i) / 2;
-            svg += `<text x="${x}" y="${pad.t + ih + 8}" text-anchor="${i===0?'start':i===2?'end':'middle'}" font-size="6" fill="#94a3b8">${t}</text>`;
+            svg += `<text x="${x}" y="${pad.t + ih + 8}" text-anchor="${i===0?'start':i===2?'end':'middle'}" font-size="6" fill="#a1a1aa">${t}</text>`;
         });
-        // 내 점수 위치 라벨
         const myX = pad.l + ((myScore - min) / range) * iw;
-        svg += `<line x1="${myX}" y1="${pad.t}" x2="${myX}" y2="${pad.t + ih}" stroke="#ef4444" stroke-width="1" stroke-dasharray="2,1"/>`;
-        svg += `<text x="${myX}" y="${H - 2}" text-anchor="middle" font-size="7" fill="#ef4444" font-weight="700">나 ${myScore}</text>`;
+        svg += `<line x1="${myX}" y1="${pad.t}" x2="${myX}" y2="${pad.t + ih}" stroke="#18181b" stroke-width="0.8" stroke-dasharray="2,1.5"/>`;
+        svg += `<text x="${myX}" y="${H - 2}" text-anchor="middle" font-size="7" fill="#18181b" font-weight="600">나 ${myScore}</text>`;
         svg += `</svg>`;
         return svg;
     },
@@ -1941,26 +1915,28 @@ const Scoring = {
     _rptRadar(r, subjects) {
         const W = 200, H = 110, cx = W / 2, cy = H / 2 + 4, R = 40;
         const n = subjects.length;
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
-        // 배경 원 (T=30,50,70 라인)
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">
+            <defs>
+                <radialGradient id="radarFill" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="#52525b" stop-opacity="0.25"/>
+                    <stop offset="100%" stop-color="#18181b" stop-opacity="0.15"/>
+                </radialGradient>
+            </defs>`;
         [30, 50, 70].forEach(t => {
             const rr = ((t - 30) / 40) * R;
-            svg += `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="#e2e8f0" stroke-width="0.4"/>`;
+            svg += `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="#e4e4e7" stroke-width="0.4"/>`;
         });
-        // 축
         subjects.forEach((name, i) => {
             const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
             const x = cx + Math.cos(angle) * R;
             const y = cy + Math.sin(angle) * R;
-            svg += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#e2e8f0" stroke-width="0.4"/>`;
+            svg += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#e4e4e7" stroke-width="0.4"/>`;
             const lx = cx + Math.cos(angle) * (R + 8);
             const ly = cy + Math.sin(angle) * (R + 8);
-            svg += `<text x="${lx}" y="${ly + 2}" text-anchor="middle" font-size="6.5" font-weight="600" fill="#475569">${name.length > 4 ? name.slice(0, 4) : name}</text>`;
+            svg += `<text x="${lx}" y="${ly + 2}" text-anchor="middle" font-size="6.5" font-weight="500" fill="#52525b">${name.length > 4 ? name.slice(0, 4) : name}</text>`;
         });
-        // 평균선 (T=50 원)
         const avgR = ((50 - 30) / 40) * R;
-        svg += `<circle cx="${cx}" cy="${cy}" r="${avgR}" fill="none" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2,1"/>`;
-        // 내 점수 폴리곤
+        svg += `<circle cx="${cx}" cy="${cy}" r="${avgR}" fill="none" stroke="#a1a1aa" stroke-width="0.5" stroke-dasharray="2,1"/>`;
         let pts = '';
         subjects.forEach((name, i) => {
             const s = r.subjects[name] || {};
@@ -1971,36 +1947,36 @@ const Scoring = {
             const x = cx + Math.cos(angle) * rr;
             const y = cy + Math.sin(angle) * rr;
             pts += `${x},${y} `;
-            // 점
-            svg += `<circle cx="${x}" cy="${y}" r="1.6" fill="#3b82f6"/>`;
+            svg += `<circle cx="${x}" cy="${y}" r="1.6" fill="#18181b"/>`;
         });
-        svg += `<polygon points="${pts}" fill="#3b82f6" fill-opacity="0.2" stroke="#3b82f6" stroke-width="1"/>`;
-        // 눈금 라벨
-        svg += `<text x="${cx}" y="${cy - avgR - 1}" font-size="5" fill="#94a3b8" text-anchor="middle">T50</text>`;
+        svg += `<polygon points="${pts}" fill="url(#radarFill)" stroke="#18181b" stroke-width="1"/>`;
+        svg += `<text x="${cx}" y="${cy - avgR - 1}" font-size="5" fill="#a1a1aa" text-anchor="middle">T50</text>`;
         svg += `</svg>`;
         return svg;
     },
 
     _rptDonut(r, subjects) {
         const W = 200, H = 110, cx = W / 2, cy = H / 2 + 4, outer = 40, inner = 28;
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">
+            <defs>
+                <linearGradient id="donutArc" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="#27272a"/>
+                    <stop offset="100%" stop-color="#71717a"/>
+                </linearGradient>
+            </defs>`;
         if (subjects.length === 0) {
-            svg += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="8" fill="#94a3b8">데이터 없음</text>`;
+            svg += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="8" fill="#a1a1aa">데이터 없음</text>`;
             svg += `</svg>`;
             return svg;
         }
-        // 과목이 1~2개: 각 과목의 정답률을 2개 나란히
         const gap = 60;
         subjects.forEach((name, i) => {
             const s = r.subjects[name] || {};
             const max = s.totalPossible || 1;
             const pct = ((s.score || 0) / max);
             const thisCx = subjects.length === 1 ? cx : (cx - gap/2 + i * gap);
-            const grade = this._gradeOf(s.score || 0, max);
 
-            // 배경 원
-            svg += `<circle cx="${thisCx}" cy="${cy}" r="${outer}" fill="#f1f5f9"/>`;
-            // 진행 호
+            svg += `<circle cx="${thisCx}" cy="${cy}" r="${outer}" fill="#f4f4f5"/>`;
             const endAngle = Math.PI * 2 * pct - Math.PI / 2;
             const startAngle = -Math.PI / 2;
             const sx = thisCx + Math.cos(startAngle) * outer;
@@ -2009,15 +1985,13 @@ const Scoring = {
             const ey = cy + Math.sin(endAngle) * outer;
             const large = pct > 0.5 ? 1 : 0;
             if (pct >= 1) {
-                svg += `<circle cx="${thisCx}" cy="${cy}" r="${outer}" fill="${grade.color}"/>`;
+                svg += `<circle cx="${thisCx}" cy="${cy}" r="${outer}" fill="url(#donutArc)"/>`;
             } else if (pct > 0) {
-                svg += `<path d="M ${thisCx} ${cy} L ${sx} ${sy} A ${outer} ${outer} 0 ${large} 1 ${ex} ${ey} Z" fill="${grade.color}"/>`;
+                svg += `<path d="M ${thisCx} ${cy} L ${sx} ${sy} A ${outer} ${outer} 0 ${large} 1 ${ex} ${ey} Z" fill="url(#donutArc)"/>`;
             }
-            // 안쪽 구멍
             svg += `<circle cx="${thisCx}" cy="${cy}" r="${inner}" fill="white"/>`;
-            // 텍스트
-            svg += `<text x="${thisCx}" y="${cy - 1}" text-anchor="middle" font-size="11" font-weight="800" fill="${grade.color}">${(pct*100).toFixed(0)}%</text>`;
-            svg += `<text x="${thisCx}" y="${cy + 8}" text-anchor="middle" font-size="6.5" fill="#64748b">${name}</text>`;
+            svg += `<text x="${thisCx}" y="${cy - 1}" text-anchor="middle" font-size="11" font-weight="300" fill="#18181b" letter-spacing="-0.5">${(pct*100).toFixed(0)}%</text>`;
+            svg += `<text x="${thisCx}" y="${cy + 8}" text-anchor="middle" font-size="6.5" fill="#71717a">${name}</text>`;
         });
         svg += `</svg>`;
         return svg;
@@ -2030,25 +2004,29 @@ const Scoring = {
             const s = r.subjects[name] || {};
             const ans = s.answers || [];
             const cells = ans.map(a => {
-                let bg = '#f1f5f9', color = '#94a3b8', sym = '∅', border = 'none';
+                // 무채색: O=연한배경/검정글씨, X=검정배경/흰글씨, ∅=회색 배경
+                let bg = '#f4f4f5', color = '#a1a1aa', sym = '·', weight = '400';
                 if (a.marked !== null && a.marked !== undefined) {
-                    if (a.isCorrect) { bg = '#dcfce7'; color = '#15803d'; sym = 'O'; }
-                    else { bg = '#fee2e2'; color = '#b91c1c'; sym = 'X'; }
+                    if (a.isCorrect) { bg = '#e4e4e7'; color = '#18181b'; sym = 'O'; weight = '600'; }
+                    else { bg = 'linear-gradient(135deg, #18181b, #3f3f46)'; color = '#fafafa'; sym = 'X'; weight = '700'; }
                 }
                 return `<div style="display:inline-flex; flex-direction:column; align-items:center; margin:0 1px 1px 0; width:18px;">
-                    <div style="font-size:6pt; color:#64748b; line-height:1;">${a.q}</div>
-                    <div style="width:16px; height:16px; background:${bg}; color:${color}; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:8pt; font-weight:800; border:${border};">${sym}</div>
+                    <div style="font-size:6pt; color:#a1a1aa; line-height:1;">${a.q}</div>
+                    <div style="width:16px; height:16px; background:${bg}; color:${color}; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:8pt; font-weight:${weight};">${sym}</div>
                 </div>`;
             }).join('');
-            return `<div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:3px;">
-                <div style="min-width:50px; padding:3px 6px; background:#0f172a; color:white; border-radius:4px; font-size:8pt; font-weight:700; text-align:center;">${name}</div>
+            return `<div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:4px;">
+                <div style="min-width:56px; padding:4px 8px; background:linear-gradient(135deg, #27272a, #52525b); color:#fafafa; border-radius:4px; font-size:8pt; font-weight:500; text-align:center; letter-spacing:0.02em;">${name}</div>
                 <div style="flex:1; display:flex; flex-wrap:wrap;">${cells}</div>
             </div>`;
         }).join('');
 
         return `<section style="margin-top:4mm;">
-            <div class="rpt-section-title">문항별 정오표 <span style="color:#94a3b8; font-weight:500; text-transform:none; letter-spacing:0;">(O = 정답 · X = 오답 · ∅ = 미응답)</span></div>
-            <div style="background:white; border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px;">
+            <div style="font-size:8pt; font-weight:500; color:#71717a; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:4px;">
+                문항별 정오표 · Item Analysis
+                <span style="color:#a1a1aa; font-weight:400; text-transform:none; letter-spacing:0; margin-left:6px;">O 정답 · X 오답 · · 미응답</span>
+            </div>
+            <div style="background:linear-gradient(180deg, #ffffff, #fafafa); border:1px solid #e4e4e7; border-radius:6px; padding:8px 10px;">
                 ${rows}
             </div>
         </section>`;
@@ -2059,10 +2037,10 @@ const Scoring = {
         const now = new Date();
         const ts = now.toISOString().slice(0, 16).replace('T', ' ');
         const docId = `OMR-${(r.examNo || '0').padStart(8, '0')}-${now.getTime().toString().slice(-4)}`;
-        return `<footer style="position:absolute; bottom:4mm; left:8mm; right:8mm; display:flex; justify-content:space-between; font-size:7pt; color:#94a3b8; border-top:1px solid #e2e8f0; padding-top:4px;">
-            <span>발행: ${ts}</span>
-            <span>문서번호: ${docId}</span>
-            <span>OMR 채점 엔진 v1.0</span>
+        return `<footer style="position:absolute; bottom:4mm; left:8mm; right:8mm; display:flex; justify-content:space-between; font-size:7pt; color:#a1a1aa; border-top:1px solid #e4e4e7; padding-top:4px; letter-spacing:0.02em;">
+            <span>발행 · ${ts}</span>
+            <span>${docId}</span>
+            <span>OMR Scoring Engine v1.0</span>
             <span>Page 1 / 1</span>
         </footer>`;
     }
