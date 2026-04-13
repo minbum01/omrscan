@@ -382,66 +382,27 @@ const Scoring = {
             <button class="btn btn-sm" onclick="Scoring.downloadOMR(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
-        // 뱃지 영역: 사용 가능한 항목들
+        // 뱃지 영역 (공용 함수)
+        html += this._renderBadgeBar(this._getOMRColumns, 'toggleColumn', 'omr');
+
+        // 마킹/정오 토글 + 문항수
         const allCols = this._getOMRColumns();
-        const activeCols = allCols.filter(c => c.visible);
-        const inactiveCols = allCols.filter(c => !c.visible && (c.type === 'info' || c.type === 'custom'));
-
-        html += `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
-            <!-- 사용 가능한 항목 -->
-            <div style="margin-bottom:8px;">
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">사용 가능한 항목 (클릭하여 추가)</div>
-                <div style="display:flex; flex-wrap:wrap; gap:4px;" id="scoring-available-badges">
-                    ${inactiveCols.map(col => `
-                        <span class="scoring-badge inactive" data-col-id="${col.id}" onclick="Scoring.toggleColumn('${col.id}')"
-                            style="padding:4px 10px; border-radius:12px; font-size:11px; cursor:pointer; border:1px dashed var(--border); color:var(--text-muted); background:white;
-                            transition:all 0.15s; user-select:none;" onmouseover="this.style.borderColor='var(--blue)'; this.style.color='var(--blue)';"
-                            onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text-muted)';">${col.label}</span>
-                    `).join('')}
-                    ${inactiveCols.length === 0 ? '<span style="font-size:10px; color:var(--text-muted);">모든 항목이 표에 추가되어 있습니다</span>' : ''}
-                </div>
-            </div>
-
-            <!-- 현재 표 헤더 (드래그로 순서 변경, 클릭으로 제거) -->
-            <div>
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">현재 표 헤더 (드래그로 순서 변경 · 더블클릭으로 이름 변경 · 클릭으로 제거)</div>
-                <div style="display:flex; flex-wrap:wrap; gap:4px; min-height:30px; padding:4px; border:1px solid var(--border); border-radius:6px; background:white;"
-                    id="scoring-active-badges"
-                    ondragover="event.preventDefault(); this.style.background='#eff6ff';"
-                    ondragleave="this.style.background='white';"
-                    ondrop="this.style.background='white'; Scoring._onDropBadge(event);">`;
-
-        const infoCols = activeCols.filter(c => c.type === 'info' || c.type === 'custom');
-        infoCols.forEach(col => {
-            html += `<span class="scoring-badge active" draggable="true" data-col-id="${col.id}"
-                ondragstart="Scoring._onDragStart(event, '${col.id}')"
-                onclick="Scoring.toggleColumn('${col.id}')"
-                ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${col.label}'); if(n) Scoring.renameColumn('${col.id}',n); Scoring.renderScoringPanel(document.getElementById('scoring-content'));"
-                style="padding:4px 10px; border-radius:12px; font-size:11px; cursor:grab; border:1px solid var(--blue); color:var(--blue); background:#eff6ff;
-                font-weight:600; user-select:none; transition:all 0.15s;">${col.label}</span>`;
-        });
-
-        html += `</div>
-            </div>
-
-            <!-- 마킹/정오 토글 + 문항수 -->
-            <div style="display:flex; align-items:center; gap:12px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
-                <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                    <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
-                        onchange="Scoring._toggleAnswerCols(this.checked)">
-                    <span style="padding:2px 8px; border-radius:10px; background:#e0f2fe; color:#0369a1; font-size:10px; font-weight:600;">마킹 내용</span>
-                </label>
-                <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                    <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
-                        onchange="Scoring._toggleOXCols(this.checked)">
-                    <span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:600;">정오표(O/X)</span>
-                </label>
-                <span style="font-size:10px; color:var(--text-muted); margin-left:auto;">
-                    문항수: <input type="number" value="${this._defaultMaxQ}" min="1" max="100"
-                        style="width:45px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
-                        onchange="Scoring.setMaxQ(this.value)">
-                </span>
-            </div>
+        html += `<div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:8px 12px; background:#f8fafc; border-radius:8px;">
+            <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
+                    onchange="Scoring._toggleAnswerCols(this.checked)">
+                <span style="padding:2px 8px; border-radius:10px; background:#e0f2fe; color:#0369a1; font-size:10px; font-weight:600;">마킹 내용</span>
+            </label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <input type="checkbox" ${allCols.some(c => c.type === 'ox' && !c.visible) ? '' : 'checked'}
+                    onchange="Scoring._toggleOXCols(this.checked)">
+                <span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:600;">정오표(O/X)</span>
+            </label>
+            <span style="font-size:10px; color:var(--text-muted); margin-left:auto;">
+                문항수: <input type="number" value="${this._defaultMaxQ}" min="1" max="100"
+                    style="width:45px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
+                    onchange="Scoring.setMaxQ(this.value)">
+            </span>
         </div>`;
 
         // 테이블
@@ -450,8 +411,9 @@ const Scoring = {
         <thead><tr>`;
 
         cols.forEach(col => {
+            const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
             const bg = col.type === 'ox' ? 'background:#fef3c7;' : col.id === 'score' ? 'color:var(--blue);' : 'background:#f8fafc;';
-            html += `<th style="padding:6px 6px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} position:sticky; top:0; z-index:1; white-space:nowrap;">${col.label}</th>`;
+            html += `<th style="padding:6px 6px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} ${hl} position:sticky; top:0; z-index:1; white-space:nowrap;">${col.label}</th>`;
         });
         html += `</tr></thead><tbody>`;
 
@@ -459,7 +421,8 @@ const Scoring = {
             const bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             html += `<tr style="${bg}">`;
             cols.forEach(col => {
-                let val = '', style = 'padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9;';
+                const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
+                let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
                 if (col.id === 'examNo') val = r.examNo;
                 else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
                 else if (col.id === 'score') { val = r.score; style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
@@ -529,33 +492,129 @@ const Scoring = {
         return cols;
     },
 
+    // 선택된 열 하이라이트
+    _highlightCol: null,
+
     // 공용 뱃지 UI 렌더
     _renderBadgeBar(columnsGetter, toggleFn, prefix) {
         const allCols = columnsGetter.call(this);
         const active = allCols.filter(c => c.visible);
         const inactive = allCols.filter(c => !c.visible);
+        const fnName = columnsGetter.name || '_getOMRColumns';
 
-        let html = `<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
-            <div style="margin-bottom:6px;">
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:3px;">사용 가능한 항목 (클릭하여 추가)</div>
-                <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                    ${inactive.map(c => `<span onclick="Scoring.${toggleFn}('${c.id}')"
-                        style="padding:3px 10px; border-radius:12px; font-size:10px; cursor:pointer; border:1px dashed var(--border); color:var(--text-muted); background:white; transition:all 0.15s; user-select:none;"
-                        onmouseover="this.style.borderColor='var(--blue)'; this.style.color='var(--blue)';"
-                        onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text-muted)';">${c.label}</span>`).join('')}
-                    ${inactive.length === 0 ? '<span style="font-size:10px; color:var(--text-muted);">모든 항목 추가됨</span>' : ''}
+        let html = `
+        <style>
+            .badge-area { transition: background 0.2s; }
+            .badge-area.drag-over { background: #dbeafe !important; border-color: var(--blue) !important; }
+            .scoring-badge-item {
+                padding: 4px 12px; border-radius: 14px; font-size: 11px; cursor: grab;
+                user-select: none; transition: all 0.2s ease; display: inline-block;
+            }
+            .scoring-badge-item:active { cursor: grabbing; transform: scale(1.05); }
+            .scoring-badge-item.inactive {
+                border: 1.5px dashed #cbd5e1; color: #94a3b8; background: white;
+            }
+            .scoring-badge-item.inactive:hover {
+                border-color: var(--blue); color: var(--blue); background: #eff6ff;
+                transform: translateY(-1px); box-shadow: 0 2px 4px rgba(59,130,246,0.15);
+            }
+            .scoring-badge-item.active {
+                border: 1.5px solid var(--blue); color: var(--blue); background: #eff6ff; font-weight: 600;
+            }
+            .scoring-badge-item.active:hover {
+                background: #dbeafe; transform: translateY(-1px); box-shadow: 0 2px 6px rgba(59,130,246,0.2);
+            }
+            .scoring-badge-item.active.highlighted {
+                background: var(--blue); color: white; box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+            }
+            .scoring-badge-item.dragging { opacity: 0.4; transform: scale(0.95); }
+        </style>
+        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:14px;">
+            <div style="margin-bottom:8px;">
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">사용 가능한 항목 — 아래 헤더 영역으로 드래그하세요</div>
+                <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:30px; padding:6px; border-radius:6px;"
+                    id="${prefix}-available"
+                    ondragover="event.preventDefault(); this.classList.add('drag-over');"
+                    ondragleave="this.classList.remove('drag-over');"
+                    ondrop="this.classList.remove('drag-over'); Scoring._onBadgeDrop(event,'${toggleFn}','available');">
+                    ${inactive.map(c => `<span class="scoring-badge-item inactive" draggable="true" data-col-id="${c.id}"
+                        ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
+                        ondragend="this.classList.remove('dragging')">${c.label}</span>`).join('')}
+                    ${inactive.length === 0 ? '<span style="font-size:10px; color:var(--text-muted); padding:4px;">모든 항목이 추가됨</span>' : ''}
                 </div>
             </div>
             <div>
-                <div style="font-size:10px; color:var(--text-muted); margin-bottom:3px;">현재 표 헤더 (클릭으로 제거 · 더블클릭으로 이름 변경)</div>
-                <div style="display:flex; flex-wrap:wrap; gap:4px; min-height:28px; padding:4px; border:1px solid var(--border); border-radius:6px; background:white;">
-                    ${active.map(c => `<span onclick="Scoring.${toggleFn}('${c.id}')"
-                        ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${c.label}'); if(n){const col=Scoring.${columnsGetter.name.replace('bound ','')}().find(x=>x.id==='${c.id}'); if(col)col.label=n; Scoring.renderScoringPanel(document.getElementById('scoring-content'));}"
-                        style="padding:3px 10px; border-radius:12px; font-size:10px; cursor:pointer; border:1px solid var(--blue); color:var(--blue); background:#eff6ff; font-weight:600; user-select:none; transition:all 0.15s;">${c.label}</span>`).join('')}
+                <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px; font-weight:500;">현재 표 헤더 — 드래그로 순서 변경 · 위로 드래그하여 제거 · 클릭하면 열 하이라이트</div>
+                <div class="badge-area" style="display:flex; flex-wrap:wrap; gap:5px; min-height:34px; padding:6px; border:1.5px solid var(--border); border-radius:8px; background:white;"
+                    id="${prefix}-active"
+                    ondragover="event.preventDefault(); this.classList.add('drag-over');"
+                    ondragleave="this.classList.remove('drag-over');"
+                    ondrop="this.classList.remove('drag-over'); Scoring._onBadgeDrop(event,'${toggleFn}','active');">
+                    ${active.filter(c => c.type === 'info' || c.type === 'custom').map(c => `<span class="scoring-badge-item active ${this._highlightCol === c.id ? 'highlighted' : ''}"
+                        draggable="true" data-col-id="${c.id}"
+                        ondragstart="Scoring._onBadgeDragStart(event,'${c.id}')"
+                        ondragend="this.classList.remove('dragging')"
+                        onclick="Scoring._onBadgeClick('${c.id}')"
+                        ondblclick="event.stopPropagation(); const n=prompt('열 이름:','${c.label}'); if(n){const col=Scoring.${fnName}().find(x=>x.id==='${c.id}'); if(col)col.label=n; Scoring.renderScoringPanel(document.getElementById('scoring-content'));}"
+                        >${c.label}</span>`).join('')}
                 </div>
             </div>
         </div>`;
         return html;
+    },
+
+    _onBadgeDragStart(e, colId) {
+        this._dragColId = colId;
+        e.dataTransfer.effectAllowed = 'move';
+        e.target.classList.add('dragging');
+    },
+
+    _onBadgeDrop(e, toggleFn, target) {
+        e.preventDefault();
+        if (!this._dragColId) return;
+        const colId = this._dragColId;
+        this._dragColId = null;
+
+        // available에 드롭 = 제거, active에 드롭 = 추가/이동
+        const fn = this[toggleFn.replace('toggle', '_get').replace('Column', 'Columns')];
+        // 간단하게: toggleFn 호출로 토글
+        if (target === 'available') {
+            // 활성 → 비활성
+            const cols = toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
+            const col = cols.find(c => c.id === colId);
+            if (col && col.visible) { col.visible = false; this.renderScoringPanel(document.getElementById('scoring-content')); }
+        } else {
+            // 비활성 → 활성
+            const cols = toggleFn === 'toggleColumn' ? this._getOMRColumns() : this._getReportColumns();
+            const col = cols.find(c => c.id === colId);
+            if (col && !col.visible) { col.visible = true; this.renderScoringPanel(document.getElementById('scoring-content')); }
+            // 이미 활성인 경우 순서 변경 (드롭 위치)
+            else if (col && col.visible) {
+                const badges = e.currentTarget.querySelectorAll('.scoring-badge-item');
+                let insertBeforeId = null;
+                badges.forEach(b => {
+                    const rect = b.getBoundingClientRect();
+                    if (e.clientX < rect.left + rect.width / 2 && !insertBeforeId && b.dataset.colId !== colId) {
+                        insertBeforeId = b.dataset.colId;
+                    }
+                });
+                const fromIdx = cols.findIndex(c => c.id === colId);
+                const [moved] = cols.splice(fromIdx, 1);
+                if (insertBeforeId) {
+                    const toIdx = cols.findIndex(c => c.id === insertBeforeId);
+                    cols.splice(toIdx, 0, moved);
+                } else {
+                    const lastInfo = cols.reduce((last, c, i) => (c.type === 'info' || c.type === 'custom') ? i : last, -1);
+                    cols.splice(lastInfo + 1, 0, moved);
+                }
+                this.renderScoringPanel(document.getElementById('scoring-content'));
+            }
+        }
+    },
+
+    _onBadgeClick(colId) {
+        this._highlightCol = (this._highlightCol === colId) ? null : colId;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
     // 성적일람표 열 토글
