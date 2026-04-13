@@ -152,8 +152,12 @@ const SessionManager = {
         App.state.students = [];
         App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
         App.state.images = [];
+        App.state.deletedImages = [];
         App.state.currentIndex = -1;
         App.state.answerKey = null;
+
+        // 교시 초기화 — 반드시 App.state.images = [] 직후에 호출
+        App._initPeriods();
 
         if (!this.isElectron) {
             localStorage.setItem(this.CURRENT_KEY, name);
@@ -212,6 +216,10 @@ const SessionManager = {
             App.state.images = [];
             App.state.deletedImages = [];
             App.state.currentIndex = -1;
+
+            // 교시 복원 — 반드시 App.state.images = [] 직후에 호출
+            // 저장된 periods 배열이 있으면 교시 이름 복원, 없으면 자동 1교시 생성
+            App._initPeriods(data.periods || null);
 
             this.currentSessionName = name;
             // 시험 이름/일자 복원 (없으면 세션 키에서 파싱 시도)
@@ -356,6 +364,12 @@ const SessionManager = {
         const deletedImages = App.state.deletedImages || [];
         const deletedFilenames = deletedImages.map(img => getPristine(img));
 
+        // 교시 메타데이터 (id + name 만 저장 — 이미지는 imageResults 에 포함)
+        const periodsMetadata = (App.state.periods || []).map(p => ({
+            id: p.id,
+            name: p.name,
+        }));
+
         const data = {
             sessionName: name,
             examName: this.currentExamName || null,
@@ -370,6 +384,9 @@ const SessionManager = {
             imageResults: activeImages.map((img, idx) => serializeImage(img, activeFilenames[idx])),
             // 삭제된 이미지도 세션에 보존 (복원 가능)
             deletedImageResults: deletedImages.map((img, idx) => serializeImage(img, deletedFilenames[idx])),
+            // 교시 구성 저장 (Step 2+에서 교시별 이미지 분배에 활용)
+            periods: periodsMetadata,
+            currentPeriodId: App.state.currentPeriodId || 'p1',
         };
 
         try {

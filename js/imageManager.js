@@ -50,7 +50,8 @@ const ImageManager = {
                                 thumb,
                                 rois: [],
                                 results: null,
-                                gradeResult: null
+                                gradeResult: null,
+                                periodId: App.state.currentPeriodId || 'p1',
                             });
 
                             processFile(index + 1);
