@@ -362,9 +362,10 @@ const ImageManager = {
                 return '?';
             }).join('');
 
-            if (roi.settings.type === 'exam_no' && digits.length > 0) {
+            const rType = roi.settings.type;
+            if ((rType === 'exam_no' || rType === 'phone_exam') && digits.length > 0) {
                 detectedExamNo = digits;
-            } else if (roi.settings.type === 'phone' && digits.length > 0) {
+            } else if (rType === 'phone' && digits.length > 0) {
                 detectedPhone = digits;
             }
         });
