@@ -163,8 +163,13 @@ const ImageManager = {
         while (searchWrap.nextSibling) list.removeChild(searchWrap.nextSibling);
 
         if (App.state.images.length === 0) {
-            list.innerHTML += '<div class="image-list-empty">이미지를 업로드하세요.</div>';
-            return;
+            // 활성 이미지가 없을 때도 삭제됨 섹션은 계속 렌더링
+            // (deletedImages도 비어 있을 때만 안내 문구 후 종료)
+            if (!App.state.deletedImages || App.state.deletedImages.length === 0) {
+                list.innerHTML += '<div class="image-list-empty">이미지를 업로드하세요.</div>';
+                return;
+            }
+            list.innerHTML += '<div class="image-list-empty" style="padding:8px 12px;">활성 이미지 없음 (아래에서 복원)</div>';
         }
 
         const query = this._searchQuery.toLowerCase();
