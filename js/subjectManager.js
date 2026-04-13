@@ -936,17 +936,46 @@ const SubjectManager = {
     _readFileWithEncoding(file, callback) {
         const reader = new FileReader();
         reader.onload = (e) => {
-            const text = e.target.result;
-            // UTF-8로 읽었는데 깨진 문자(�)가 있으면 EUC-KR로 재시도
-            if (text.indexOf('�') >= 0 || text.indexOf('\ufffd') >= 0) {
-                const reader2 = new FileReader();
-                reader2.onload = (e2) => callback(e2.target.result);
-                reader2.readAsText(file, 'EUC-KR');
-            } else {
+            const bytes = new Uint8Array(e.target.result);
+
+            // 1) BOM 우선 검사 (가장 확실)
+            if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+                // UTF-8 BOM → UTF-8로 디코딩 후 BOM 제거
+                const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
                 callback(text);
+                return;
+            }
+            if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+                // UTF-16 LE
+                callback(new TextDecoder('utf-16le').decode(bytes).replace(/^\uFEFF/, ''));
+                return;
+            }
+            if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+                // UTF-16 BE
+                callback(new TextDecoder('utf-16be').decode(bytes).replace(/^\uFEFF/, ''));
+                return;
+            }
+
+            // 2) BOM 없음 → 엄격 UTF-8로 시도 (fatal: true → 유효하지 않으면 throw)
+            try {
+                const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+                callback(text.replace(/^\uFEFF/, ''));
+                return;
+            } catch (_) {
+                // UTF-8 아님 → EUC-KR/CP949 시도
+            }
+
+            // 3) EUC-KR (Chrome/Electron TextDecoder는 CP949 상위 호환으로 처리)
+            try {
+                const text = new TextDecoder('euc-kr').decode(bytes);
+                callback(text);
+                return;
+            } catch (_) {
+                // 최후 수단: 교체문자 허용 UTF-8
+                callback(new TextDecoder('utf-8').decode(bytes));
             }
         };
-        reader.readAsText(file, 'UTF-8');
+        reader.readAsArrayBuffer(file);
     },
 
     // 파일 다운로드 헬퍼
