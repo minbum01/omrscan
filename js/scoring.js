@@ -957,7 +957,7 @@ const Scoring = {
 
             // 행 1: 정답수
             html += `<tr>
-                <td rowspan="3" style="${td} font-weight:700; font-size:11px; vertical-align:middle; border-right:2px solid #d1d5db;">${item.q}</td>
+                <td rowspan="3" style="${td} font-weight:700; font-size:11px; vertical-align:middle; border-right:2px solid #d1d5db; background:#e5e7eb;">${item.q}</td>
                 <td rowspan="3" style="${td} font-weight:600; vertical-align:middle;">${ca || ''}</td>
                 <td style="${td} font-size:9px; font-weight:600;">정답</td>
                 <td style="${td}">${item.upper.correct}</td>
