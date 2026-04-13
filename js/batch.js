@@ -340,19 +340,17 @@ const BatchProcess = {
 
             ImageManager.applyPhonePrefix(imgObj);
 
-            // 채점: 이 교시의 answerKey/subjects 임시 적용
-            const hasAnswers = (period.subjects && period.subjects.length > 0) ||
+            // 채점: 이 교시의 answerKey 임시 적용 (subjects 는 세션 전역 그대로 사용)
+            const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
                 imgObj.rois.some(r => r.settings && r.settings.answerKey);
             if (hasAnswers || period.answerKey) {
                 App.state.answerKey = period.answerKey || null;
-                App.state.subjects  = period.subjects  || [];
                 imgObj.rois.forEach(roi => {
                     if (roi.settings && roi.settings.type === 'subject_answer' && roi.settings.name) {
                         UI._loadAnswersFromSubject(roi);
                     }
                 });
                 imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
-                // 복원은 processNext 루프 끝에서 처리됨
             }
 
             processed++;

@@ -125,12 +125,11 @@ const App = {
             name:      (sp0 && sp0.name) || '1교시',
             images:    firstImages,
             answerKey: (sp0 && sp0.answerKey !== undefined) ? sp0.answerKey : (this.state.answerKey || null),
-            subjects:  (sp0 && sp0.subjects  !== undefined) ? sp0.subjects  : (this.state.subjects  || []),
+            // subjects 는 세션 전역(App.state.subjects) 을 사용 — 교시 구분 없음
         };
 
-        // App.state 를 p1 값으로 동기화
+        // answerKey 만 p1 값으로 동기화 (subjects 는 세션 전역)
         this.state.answerKey = p1.answerKey;
-        this.state.subjects  = p1.subjects;
 
         // 저장된 추가 교시가 있으면 복원 (이미지는 Step 6에서 periodId 기반으로 분배됨)
         const extraPeriods = (savedPeriods || []).slice(1).map(sp => ({
@@ -138,7 +137,6 @@ const App = {
             name:      sp.name,
             images:    [],
             answerKey: sp.answerKey || null,
-            subjects:  sp.subjects  || [],
         }));
 
         this.state.periods = [p1, ...extraPeriods];
@@ -156,19 +154,17 @@ const App = {
         const p = this.state.periods.find(p => p.id === periodId);
         if (!p) return;
 
-        // 현재 교시 상태 보존
+        // 현재 교시 상태 보존 (answerKey만; subjects는 세션 전역)
         const cur = this.getCurrentPeriod();
         if (cur) {
             cur.images    = this.state.images;
             cur.answerKey = this.state.answerKey;
-            cur.subjects  = this.state.subjects || [];
         }
 
-        // 새 교시로 전환
+        // 새 교시로 전환 (answerKey만 교시별 전환; subjects는 그대로)
         this.state.currentPeriodId = periodId;
         this.state.images    = p.images;
         this.state.answerKey = p.answerKey || null;
-        this.state.subjects  = p.subjects  || [];
         this.state.currentIndex = -1;
     },
 
@@ -178,11 +174,8 @@ const App = {
         if (p) p.answerKey = this.state.answerKey;
     },
 
-    // App.state.subjects 변경 시 현재 period 에 즉시 반영
-    syncSubjects() {
-        const p = this.getCurrentPeriod();
-        if (p) p.subjects = this.state.subjects || [];
-    },
+    // subjects 는 세션 전역 — syncSubjects 는 no-op (하위호환 유지)
+    syncSubjects() { /* subjects는 세션 전역으로 관리 (교시 구분 없음) */ },
 
     updateStatusBar() {
         const s = this.state;

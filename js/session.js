@@ -412,12 +412,11 @@ const SessionManager = {
         // 삭제 이미지는 별도 (periodId 그대로 유지)
         const deletedImages = App.state.deletedImages || [];
 
-        // 교시 메타데이터 (id, name, answerKey, subjects 저장)
+        // 교시 메타데이터 (id, name, answerKey 저장 — subjects 는 세션 전역)
         const periodsMetadata = (App.state.periods || []).map(p => ({
             id:        p.id,
             name:      p.name,
             answerKey: p.answerKey || null,
-            subjects:  p.subjects  || [],
         }));
 
         const data = {

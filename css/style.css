@@ -1976,22 +1976,23 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     border-radius: 6px;
-    border: 1px dashed var(--border);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 15px;
-    font-weight: 400;
+    border: 2px solid var(--text-secondary);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 16px;
+    font-weight: 700;
     cursor: pointer;
     flex-shrink: 0;
     transition: all 0.15s;
     line-height: 1;
+    margin-left: 4px;
 }
 
 .period-tab-add:hover {
     border-color: var(--blue);
-    color: var(--blue);
-    background: var(--blue-light);
+    color: #fff;
+    background: var(--blue);
 }
