@@ -136,6 +136,9 @@ const App = {
 
         // App.state.images 도 p1.images 와 동일한 참조로 유지
         this.state.images = p1.images;
+
+        // 교시 탭 렌더링
+        if (typeof PeriodManager !== 'undefined') PeriodManager.render();
     },
 
     // 교시 전환 (Step 2에서 본격 사용 — 지금은 내부 준비만)
