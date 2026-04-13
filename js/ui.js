@@ -14,9 +14,10 @@ const UI = {
     },
 
     // 모드별 기본 임계값 (단일 진실 소스)
+    // answerMinFill: 답으로 인정하는 최저 채움률 (이 값보다 낮으면 빈칸 처리)
     THRESHOLDS_DEFAULT: {
-        circular: { minHW: 0.7, maxHW: 1.4, minFill: 0.3, maxFill: 1.0 },
-        elongated: { minHW: 1.4, maxHW: 5.0, minFill: 0.15, maxFill: 1.0 },
+        circular: { minHW: 0.7, maxHW: 1.4, minFill: 0.3, maxFill: 1.0, answerMinFill: 0.85 },
+        elongated: { minHW: 1.4, maxHW: 5.0, minFill: 0.15, maxFill: 1.0, answerMinFill: 0.85 },
     },
 
     // 현재 모드에 맞는 임계값 반환 (저장된 값 > 기본값)
@@ -28,6 +29,7 @@ const UI = {
             maxHW: s.elongatedMaxHW != null ? s.elongatedMaxHW : d.maxHW,
             minFill: s.elongatedMinFill != null ? s.elongatedMinFill : d.minFill,
             maxFill: 1.0,
+            answerMinFill: s.elongatedAnswerMinFill != null ? s.elongatedAnswerMinFill : d.answerMinFill,
         };
     },
 
@@ -39,6 +41,7 @@ const UI = {
         s.elongatedMaxHW = d.maxHW;
         s.elongatedMinFill = d.minFill;
         s.elongatedMaxFill = d.maxFill;
+        s.elongatedAnswerMinFill = d.answerMinFill;
     },
 
     defaultSettings() {
@@ -389,6 +392,12 @@ const UI = {
                             <input type="range" min="0.05" max="0.9" step="0.01" value="${t.minFill}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMinFill" oninput="UI.onThresholdChange(this)">
                             <span style="width:30px; text-align:right; font-family:monospace;">${t.minFill.toFixed(2)}</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; font-size:10px; margin-top:3px;" title="답 인식 하한: 최고 채움률이 이 값보다 낮으면 빈칸으로 처리">
+                            <span style="width:60px;">답인식↑</span>
+                            <input type="range" min="0.5" max="1.0" step="0.01" value="${t.answerMinFill}"
+                                style="flex:1;" data-roi="${idx}" data-field="elongatedAnswerMinFill" oninput="UI.onThresholdChange(this)">
+                            <span style="width:30px; text-align:right; font-family:monospace;">${t.answerMinFill.toFixed(2)}</span>
                         </div>
                         <button class="btn btn-sm" style="width:100%; margin-top:4px; font-size:10px; padding:2px;"
                             onclick="UI.runAnalysisNow()">재분석</button>
@@ -819,6 +828,8 @@ const UI = {
             if (valueSpan) {
                 valueSpan.textContent = field.includes('HW') ? val.toFixed(field === 'elongatedMinHW' ? 2 : 1) : val.toFixed(2);
             }
+            // 답인식 하한은 즉시 적용 (재분석 없이도 마킹 변화)되도록 사후처리만 다시 돌리는 게 이상적이지만,
+            // 단순화를 위해 사용자가 '재분석' 버튼을 누르도록 안내
         }
     },
 
