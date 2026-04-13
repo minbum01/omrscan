@@ -6,6 +6,7 @@ const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
     _showColumnSettings: false,
+    _sortMode: 'student', // 'student' = 인원명단순, 'score_asc' = 성적 오름차순
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
@@ -232,6 +233,17 @@ const Scoring = {
         omrRows.forEach((r, i) => {
             if (!usedOmr.has(i)) rows.push(r);
         });
+
+        // 정렬 적용
+        if (this._sortMode === 'score_asc') {
+            rows.sort((a, b) => {
+                if (a._noOmr && !b._noOmr) return 1;
+                if (!a._noOmr && b._noOmr) return -1;
+                if (a._noOmr && b._noOmr) return 0;
+                return (a.score || 0) - (b.score || 0);
+            });
+        }
+        // 'student' = 기본 (인원명단 순서, 이미 정렬됨)
 
         return rows;
     },
@@ -472,9 +484,11 @@ const Scoring = {
         // 뱃지 영역 (공용 함수)
         html += this._renderBadgeBar(this._getOMRColumns, 'toggleColumn', 'omr');
 
-        // 마킹/정오 토글 + 문항수
+        // 정렬 + 마킹/정오 토글 + 문항수
         const allCols = this._getOMRColumns();
-        html += `<div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:8px 12px; background:#f8fafc; border-radius:8px;">
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:14px; padding:8px 12px; background:#f8fafc; border-radius:8px; flex-wrap:wrap;">
+            ${this._renderSortButtons()}
+            <div style="width:1px; height:20px; background:var(--border);"></div>
             <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer;">
                 <input type="checkbox" ${allCols.some(c => c.type === 'answer' && !c.visible) ? '' : 'checked'}
                     onchange="Scoring._toggleAnswerCols(this.checked)">
@@ -544,6 +558,17 @@ const Scoring = {
 
         html += `</tbody></table></div>`;
         return html;
+    },
+
+    // 정렬 버튼
+    _renderSortButtons() {
+        const isStudent = this._sortMode === 'student';
+        const isScore = this._sortMode === 'score_asc';
+        return `
+            <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isStudent ? 'background:var(--blue); color:#fff;' : ''}"
+                onclick="Scoring._sortMode='student'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">인원명단순</button>
+            <button class="btn btn-sm" style="font-size:10px; padding:3px 10px; ${isScore ? 'background:var(--blue); color:#fff;' : ''}"
+                onclick="Scoring._sortMode='score_asc'; Scoring.renderScoringPanel(document.getElementById('scoring-content'));">성적 오름차순</button>`;
     },
 
     // 셀 별색 토글 (수동)
@@ -921,7 +946,8 @@ const Scoring = {
     _renderReport(rows) {
         const cols = this._getReportColumns().filter(c => c.visible);
 
-        let html = `<div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+        let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="display:flex; gap:4px;">${this._renderSortButtons()}</div>
             <button class="btn btn-sm" onclick="Scoring.downloadReport(Scoring.collectData())" style="font-size:11px;">CSV 다운로드</button>
         </div>`;
 
