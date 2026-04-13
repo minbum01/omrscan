@@ -786,20 +786,16 @@ const SubjectManager = {
         this._readFileWithEncoding(file, (text) => {
             try {
                 const allLines = text.split('\n').map(l => l.trim());
-                // 21행 이전 스킵
-                let lines = allLines.slice(20).filter(l => l && l.indexOf(',') >= 0);
-                if (lines.length === 0) {
-                    // 하위호환: 전체에서 쉼표 있는 행만
-                    lines = allLines.filter(l => l && l.indexOf(',') >= 0);
-                    // 설명 행 제거 (양식/순서/참고 등의 키워드 포함 행)
-                    lines = lines.filter(l => !/열 순서|참고|양식|예시|입력하세요/.test(l));
+                // 21행(index 20)부터 읽기, 빈 행 제외
+                let dataLines = allLines.slice(20).filter(l => l);
+                if (dataLines.length === 0) {
+                    // 하위호환: 20행 이하 파일 → 전체에서 데이터 행 찾기
+                    dataLines = allLines.filter(l => l && !/열 순서|참고|양식|예시|입력하세요|CSV|설명/.test(l));
                 }
-                if (lines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
+                if (dataLines.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
 
-                // 헤더 판별: "이름" "생년월일" 등 고정 헤더 키워드 포함 시 스킵
-                const firstLine = lines[0];
-                const hasHeader = /이름|생년월일|수험번호|핸드폰/.test(firstLine);
-                const dataLines = hasHeader ? lines.slice(1) : lines;
+                // 헤더 판별: 고정 키워드 포함 시 스킵
+                if (/이름|생년월일|수험번호|핸드폰/.test(dataLines[0])) dataLines.shift();
 
                 const students = this.getStudents();
                 let imported = 0;
