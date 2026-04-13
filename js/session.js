@@ -202,7 +202,7 @@ const SessionManager = {
                             imgElement: img,
                             thumb,
                             rois: savedResult ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null })) : [],
-                            results: null,
+                            results: savedResult && savedResult.results ? savedResult.results : null,
                             gradeResult: savedResult ? savedResult.gradeResult : null,
                         });
                         loaded++;
@@ -253,9 +253,25 @@ const SessionManager = {
             answerKey: App.state.answerKey || null,
             imageCount: (App.state.images || []).length,
             imageResults: (App.state.images || []).map(img => ({
-                filename: img.name || '',
+                filename: img._originalName || img.name || '',
                 rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
                 gradeResult: img.gradeResult || null,
+                // 분석 결과 저장 (블롭 좌표 제외, 답안+교정 데이터만)
+                results: (img.results || []).map(res => ({
+                    roiIndex: res.roiIndex,
+                    numQuestions: res.numQuestions,
+                    numChoices: res.numChoices,
+                    rows: (res.rows || []).map(row => ({
+                        questionNumber: row.questionNumber,
+                        markedAnswer: row.markedAnswer,
+                        markedIndices: row.markedIndices,
+                        multiMarked: row.multiMarked,
+                        numChoices: row.numChoices,
+                        corrected: row.corrected || false,
+                        _userCorrected: row._userCorrected || false,
+                        undetected: row.undetected || false,
+                    })),
+                })),
             })),
         };
 
