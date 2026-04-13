@@ -1461,8 +1461,10 @@ const UI = {
         const cropH = maxY - minY;
         if (cropW < 5 || cropH < 5) return;
 
-        // 확대 배율
-        const scale = 3;
+        // 확대 배율: 가로형(수험번호 등 0~9 세로 배열)은 세로로 너무 길어지므로 절반
+        const roi = imgObj.rois[roiIdx];
+        const isHorizontal = roi && roi.settings && roi.settings.orientation === 'horizontal';
+        const scale = isHorizontal ? 1.5 : 3;
         const popupW = Math.round(cropW * scale);
         const popupH = Math.round(cropH * scale);
 
