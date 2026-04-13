@@ -362,9 +362,16 @@ const Scoring = {
     // ==========================================
     // 문항분석
     // ==========================================
-    calcItemAnalysis(rows) {
+    calcItemAnalysis(rows, subjectName) {
         rows = rows.filter(r => !r._noOmr);
         if (rows.length === 0) return [];
+        // 과목별 분석이면 해당 과목으로 투영 (score/answers가 과목 기준으로 바뀜)
+        if (subjectName) {
+            rows = rows
+                .map(r => r.subjects && r.subjects[subjectName] ? this._projectRow(r, subjectName) : null)
+                .filter(Boolean);
+            if (rows.length === 0) return [];
+        }
         const N = rows.length;
         const uPct = this._upperPct / 100;
         const lPct = this._lowerPct / 100;
@@ -525,13 +532,41 @@ const Scoring = {
         this._dl(csv, '성적일람표');
     },
 
-    downloadItem(items) {
-        if (!items.length) return;
-        let csv = '문항,정답,상위27%O,상위27%X,중위46%O,중위46%X,하위27%O,하위27%X,정답률(%),변별도\n';
+    _buildItemCsv(items) {
+        const uPct = this._upperPct, lPct = this._lowerPct;
+        const mPct = 100 - uPct - lPct;
+        let csv = `문항,정답,상위${uPct}%O,상위${uPct}%X,중위${mPct}%O,중위${mPct}%X,하위${lPct}%O,하위${lPct}%X,정답률(%),변별도\n`;
         items.forEach(i => {
             csv += `${i.q},${i.correctAnswer||''},${i.upper.correct},${i.upper.wrong},${i.mid.correct},${i.mid.wrong},${i.lower.correct},${i.lower.wrong},${i.correctRate.toFixed(1)},${i.discrimination.toFixed(3)}\n`;
         });
-        this._dl(csv, '문항분석표');
+        return csv;
+    },
+
+    downloadItem(items) {
+        if (!items || !items.length) return;
+        this._dl(this._buildItemCsv(items), '문항분석표');
+    },
+
+    downloadItemCurrent() {
+        const rows = this.collectData();
+        const subj = this._resolveSubject(rows, this._itemSubject);
+        const items = this.calcItemAnalysis(rows, subj);
+        if (!items.length) return;
+        this._dl(this._buildItemCsv(items), subj ? `문항분석표_${subj}` : '문항분석표');
+    },
+
+    downloadItemAll() {
+        const rows = this.collectData();
+        const list = this.getSubjectList(rows);
+        if (list.length === 0) {
+            const items = this.calcItemAnalysis(rows, null);
+            if (items.length) this._dl(this._buildItemCsv(items), '문항분석표');
+            return;
+        }
+        list.forEach(subj => {
+            const items = this.calcItemAnalysis(rows, subj);
+            if (items.length) this._dl(this._buildItemCsv(items), `문항분석표_${subj}`);
+        });
     },
 
     // ==========================================
@@ -540,7 +575,8 @@ const Scoring = {
     renderScoringPanel(container) {
         const rows = this.collectData();
         const stats = this.calcStats(rows);
-        const items = this.calcItemAnalysis(rows);
+        const itemSubj = this._resolveSubject(rows, this._itemSubject);
+        const items = this.calcItemAnalysis(rows, itemSubj);
 
         let html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
@@ -1266,10 +1302,13 @@ const Scoring = {
         const uPct = this._upperPct;
         const lPct = this._lowerPct;
         const mPct = 100 - uPct - lPct;
+        const allRows = this.collectData();
 
-        // 설정 바
+        // 설정 바 (과목 드롭다운 + 그룹 비율)
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
-            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:#f8fafc; border-radius:8px; border:1px solid var(--border);">
+            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:#f8fafc; border-radius:8px; border:1px solid var(--border); flex-wrap:wrap;">
+                ${this._subjectDropdown(allRows, '_itemSubject', 'setItemSubject')}
+                <div style="width:1px; height:18px; background:var(--border);"></div>
                 <span style="font-size:11px; font-weight:600;">그룹 비율</span>
                 <label style="font-size:11px; display:flex; align-items:center; gap:3px;">상위
                     <input type="number" value="${uPct}" min="1" max="49" style="width:38px; padding:2px; font-size:11px; border:1px solid var(--border); border-radius:4px; text-align:center;"
@@ -1282,7 +1321,10 @@ const Scoring = {
                 </label>
                 <span style="font-size:11px; color:var(--text-muted);">총 ${totalN}명</span>
             </div>
-            <button class="btn btn-sm" onclick="Scoring.downloadItem(Scoring.calcItemAnalysis(Scoring.collectData()))" style="font-size:11px;">CSV 다운로드</button>
+            <div style="display:flex; gap:6px;">
+                <button class="btn btn-sm" onclick="Scoring.downloadItemCurrent()" style="font-size:11px;">현재 과목 CSV</button>
+                <button class="btn btn-sm" onclick="Scoring.downloadItemAll()" style="font-size:11px;">전체 과목 CSV</button>
+            </div>
         </div>`;
 
         // 별색 도구: 규칙 + 수동
