@@ -338,8 +338,8 @@ const CanvasManager = {
 
             // 실제로 이동/크기가 변경되었는지 확인
             const moved = orig && roi && (
-                Math.abs(roi.x - orig.x) > 2 || Math.abs(roi.y - orig.y) > 2 ||
-                Math.abs(roi.w - orig.w) > 2 || Math.abs(roi.h - orig.h) > 2
+                Math.abs(roi.x - orig.x) > 8 || Math.abs(roi.y - orig.y) > 8 ||
+                Math.abs(roi.w - orig.w) > 8 || Math.abs(roi.h - orig.h) > 8
             );
 
             if (moved && imgObj) {
@@ -786,14 +786,14 @@ const CanvasManager = {
 
 
     // 분석용 이미지 데이터 (진하기 적용)
-    // srcCanvas를 전달하면 재사용 (batch용 최적화)
+    // srcCanvas를 전달하면 우선 사용 (batch용: 이미 imgObj.intensity로 보정된 캔버스)
     getAdjustedImageData(imgObj, x, y, w, h, srcCanvas) {
+        if (srcCanvas) {
+            return srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
+        }
         const intensified = this._getIntensifiedImage(imgObj);
         if (intensified) {
             return intensified.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
-        }
-        if (srcCanvas) {
-            return srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
         }
         // 캐시된 원본 캔버스 사용
         const img = imgObj.imgElement;

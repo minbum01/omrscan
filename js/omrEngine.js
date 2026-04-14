@@ -54,23 +54,54 @@ const OmrEngine = {
                 if (px >= 0 && px < imgW && py >= 0 && py < imgH) { brightSum += gray[py * imgW + px]; total++; }
             }
         }
-        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0 };
+        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0, erodedFill: 0 };
         const localMean = brightSum / total;
         // 절대 최소 기준 30 — 완전히 까맣게 칠한 영역이 상대 기준으로는 감지 안 되는 버그 방지
         const localThreshold = Math.max(localMean * 0.75, 30);
         let darkCount = 0, centerDark = 0, centerTotal = 0;
         const cmx = Math.round(sw * 0.25), cmy = Math.round(sh * 0.25);
+        // 이진화 마스크 (1=어두움) — 침식 계산을 위해 박스 전체 보관
+        const mask = new Uint8Array(sw * sh);
         for (let yy = 0; yy < sh; yy++) {
             for (let xx = 0; xx < sw; xx++) {
                 const px = sx + xx, py = sy + yy;
                 if (px >= 0 && px < imgW && py >= 0 && py < imgH) {
                     const val = gray[py * imgW + px];
-                    if (val < localThreshold) darkCount++;
+                    if (val < localThreshold) { darkCount++; mask[yy * sw + xx] = 1; }
                     if (xx >= cmx && xx < sw - cmx && yy >= cmy && yy < sh - cmy) { centerTotal++; if (val < localThreshold) centerDark++; }
                 }
             }
         }
-        return { brightness: localMean, darkRatio: darkCount / total, centerFill: centerTotal > 0 ? centerDark / centerTotal : 0 };
+        // 침식(4-neighbor erosion): 어두운 픽셀이 4방향 모두 어두울 때만 살아남음
+        // → 얇은 선(테두리·숫자)은 사라지고, 두꺼운 마킹 덩어리만 남음
+        // 중앙 영역에서만 침식 결과 카운트 (기존 centerFill과 동일 영역)
+        // + 사분면(TL/TR/BL/BR)별 erodedFill 분리 계산 → 균일성 판정용
+        let erodedDark = 0;
+        const qDark = [0, 0, 0, 0];    // TL, TR, BL, BR
+        const qTotal = [0, 0, 0, 0];
+        const midX = sw / 2, midY = sh / 2;
+        for (let yy = cmy; yy < sh - cmy; yy++) {
+            for (let xx = cmx; xx < sw - cmx; xx++) {
+                // 사분면 인덱스 결정
+                const qi = (xx < midX ? 0 : 1) + (yy < midY ? 0 : 2);
+                qTotal[qi]++;
+                const i = yy * sw + xx;
+                if (!mask[i]) continue;
+                const up    = yy > 0       ? mask[(yy - 1) * sw + xx] : 0;
+                const down  = yy < sh - 1  ? mask[(yy + 1) * sw + xx] : 0;
+                const left  = xx > 0       ? mask[yy * sw + (xx - 1)] : 0;
+                const right = xx < sw - 1  ? mask[yy * sw + (xx + 1)] : 0;
+                if (up && down && left && right) { erodedDark++; qDark[qi]++; }
+            }
+        }
+        const erodedQuadrants = [0, 1, 2, 3].map(q => qTotal[q] > 0 ? qDark[q] / qTotal[q] : 0);
+        return {
+            brightness: localMean,
+            darkRatio: darkCount / total,
+            centerFill: centerTotal > 0 ? centerDark / centerTotal : 0,
+            erodedFill: centerTotal > 0 ? erodedDark / centerTotal : 0,
+            erodedQuadrants,  // [TL, TR, BL, BR]
+        };
     },
 
     // ==========================================
@@ -473,7 +504,7 @@ const OmrEngine = {
             blob.inkRatio = sample.darkRatio;
             blob.centerFillRatio = sample.centerFill;
             blob.isMarked = false;
-            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill });
+            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
         });
 
         // 마킹 재판별
@@ -502,6 +533,13 @@ const OmrEngine = {
             const maxFill = Math.max(...cellScores.map(c => c.centerFill));
             const minFill = Math.min(...cellScores.map(c => c.centerFill));
             if (maxFill < 0.5 && (maxFill - minFill) < 0.15) primaryMarked = -1; // 백지
+
+            // 침식 + 사분면 균일성 필터
+            if (primaryMarked !== -1) {
+                const c = cellScores[primaryMarked];
+                const qMin = Math.min(...c.erodedQuadrants);
+                if (c.erodedFill < 0.30 || qMin < 0.40) primaryMarked = -1;
+            }
         }
 
         // 갱신
@@ -599,12 +637,27 @@ const OmrEngine = {
 
         // Stage 3에서 열평균을 못 구한 경우 → fallback
         if (!colAvgPositions) {
-            if (rowGroups.length > 0) {
-                const bestRow = [...rowGroups].sort((a, b) => b.length - a.length)[0];
-                const sorted = [...bestRow].sort((a, b) => a[sortProp] - b[sortProp]);
-                colAvgPositions = sorted.slice(0, numC).map(b => b[sortProp]);
-            } else {
-                return { rows: [], maxCols: 0 };
+            // [신규 분기] Stage 1의 colGroups(x축 클러스터)를 활용한 fallback
+            // Stage 3가 실패하는 케이스(중복 블롭으로 '정상 행' 없음)에서도
+            // _groupByAxis가 이미 올바르게 만든 컬럼 클러스터를 재활용
+            const colSrc = isVert ? grid.colGroups : grid.rowGroups;
+            if (colSrc && colSrc.length === numC) {
+                const means = colSrc
+                    .map(g => g.reduce((s, b) => s + b[sortProp], 0) / g.length)
+                    .sort((a, b) => a - b);
+                colAvgPositions = means;
+                this._log(`[Stage1.5-fallback] colGroups 평균 사용 = [${means.map(Math.round).join(',')}]`);
+            }
+
+            // 위 신규 분기가 실패했을 때만 기존 fallback 실행 (기존 로직 그대로)
+            if (!colAvgPositions) {
+                if (rowGroups.length > 0) {
+                    const bestRow = [...rowGroups].sort((a, b) => b.length - a.length)[0];
+                    const sorted = [...bestRow].sort((a, b) => a[sortProp] - b[sortProp]);
+                    colAvgPositions = sorted.slice(0, numC).map(b => b[sortProp]);
+                } else {
+                    return { rows: [], maxCols: 0 };
+                }
             }
         }
 
@@ -641,7 +694,7 @@ const OmrEngine = {
                 const sample = this.sampleCell(grayData, width, height, cx, cy, sw, sh);
                 const score = (sample.darkRatio * 300) + (255 - sample.brightness) + (sample.centerFill * 800);
 
-                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill });
+                cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
                 blobs.push({
                     x: Math.round(cx - sw / 2) + offsetX, y: Math.round(cy - sh / 2) + offsetY,
                     w: Math.round(sw), h: Math.round(sh),
@@ -702,7 +755,26 @@ const OmrEngine = {
                 }
             } else if (numC === 1) primaryMarked = 0;
 
-            this._log(`  Q${q + 1}: ${cellScores.map(c => `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)}`).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
+            // ─────────────────────────────────────────────────
+            // 침식 + 사분면 균일성 필터:
+            // 1) 침식 후 중앙 fill이 충분히 살아남아야 (얇은 선 제거)
+            // 2) 4사분면(TL/TR/BL/BR) 중 최소값이 임계 이상이어야 (숫자는 불균일)
+            //    진짜 마킹은 4사분면이 모두 진함, 숫자는 어느 한 사분면이 비어 있음
+            // ─────────────────────────────────────────────────
+            const ERODED_THRESHOLD = 0.30;
+            const QUAD_MIN_THRESHOLD = 0.40;
+            if (primaryMarked !== -1) {
+                const c = cellScores[primaryMarked];
+                const qMin = Math.min(...c.erodedQuadrants);
+                if (c.erodedFill < ERODED_THRESHOLD || qMin < QUAD_MIN_THRESHOLD) {
+                    primaryMarked = -1;
+                }
+            }
+
+            this._log(`  Q${q + 1}: ${cellScores.map(c => {
+                const qMin = Math.min(...c.erodedQuadrants);
+                return `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)} qMin=${qMin.toFixed(3)}`;
+            }).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
             // 중복 감지
             const markedIndices = [];

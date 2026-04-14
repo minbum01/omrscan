@@ -1860,3 +1860,139 @@ body {
     background: var(--red-light);
     color: var(--red);
 }
+
+/* ============================================
+   교시(Period) 탭 바
+   ============================================ */
+
+#period-tab-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    background: var(--bg-card);
+    border-bottom: 2px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+
+#period-tab-bar::-webkit-scrollbar { height: 3px; }
+#period-tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.period-tab-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    margin-right: 4px;
+    user-select: none;
+}
+
+.period-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-input);
+    border: 1px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    transition: all 0.15s;
+    position: relative;
+}
+
+.period-tab:hover {
+    background: var(--blue-light);
+    color: var(--blue);
+}
+
+.period-tab.active {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+}
+
+.period-tab.dragging {
+    opacity: 0.4;
+}
+
+.period-tab.drag-over {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 2px var(--blue-light);
+}
+
+.period-tab-name {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.period-tab-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    opacity: 0.5;
+    padding: 0;
+    line-height: 1;
+    transition: all 0.12s;
+}
+
+.period-tab-close:hover {
+    opacity: 1;
+    background: rgba(0,0,0,0.12);
+}
+
+.period-tab.active .period-tab-close:hover {
+    background: rgba(255,255,255,0.25);
+}
+
+.period-tab-rename-input {
+    width: 90px;
+    padding: 0 4px;
+    border: none;
+    border-bottom: 2px solid #fff;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    outline: none;
+}
+
+.period-tab-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 2px solid var(--text-secondary);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    line-height: 1;
+    margin-left: 4px;
+}
+
+.period-tab-add:hover {
+    border-color: var(--blue);
+    color: #fff;
+    background: var(--blue);
+}

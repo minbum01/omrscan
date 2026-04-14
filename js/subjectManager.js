@@ -26,6 +26,8 @@ const SubjectManager = {
         try {
             localStorage.setItem(this.STORAGE_KEY, JSON.stringify(App.state.subjects || []));
         } catch (e) { console.warn('과목 저장 실패:', e); }
+        // 현재 교시에 subjects 반영
+        App.syncSubjects();
         // 세션에 변경 알림
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
     },
@@ -561,30 +563,131 @@ const SubjectManager = {
         const footer = document.getElementById('sm-footer');
         if (!footer) return;
 
+        const csvNotice = `<div style="font-size:11px; color:var(--text-muted); padding:6px 2px 4px; width:100%;">ℹ Excel로 편집 시 반드시 '데이터 &gt; 가져오기 &gt; 텍스트/CSV' 메뉴 사용</div>`;
+
         if (tab === 'subjects') {
             footer.innerHTML = `
-                <button class="btn" id="sm-add">+ 과목 추가</button>
-                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
-                <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
-                <div style="flex:1;"></div>
-                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
-                <button class="btn btn-primary" id="sm-save">저장</button>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%;">
+                    <button class="btn" id="sm-add">+ 과목 추가</button>
+                    <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-csv" accept=".csv" style="display:none;"></label>
+                    <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
+                    <button class="btn btn-sm" onclick="SubjectManager.exportSubjectsCSV()">현재 내용 CSV 다운로드</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn btn-primary" id="sm-save">저장</button>
+                </div>
+                ${csvNotice}
             `;
             document.getElementById('sm-add').addEventListener('click', () => this.addRow());
             document.getElementById('sm-save').addEventListener('click', () => this.save(overlay));
             document.getElementById('sm-csv').addEventListener('change', (e) => this.importCSV(e.target.files[0]));
         } else {
             footer.innerHTML = `
-                <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
-                <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
-                <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
-                <div style="flex:1;"></div>
-                <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
-                <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%;">
+                    <button class="btn" onclick="SubjectManager.addStudent()">+ 인원 추가</button>
+                    <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
+                    <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
+                    <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
+                    <div style="flex:1;"></div>
+                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
+                </div>
+                ${csvNotice}
             `;
             const csvInput = document.getElementById('sm-student-csv');
             if (csvInput) csvInput.addEventListener('change', (e) => this.importStudentCSV(e.target.files[0]));
         }
+        // 모달 푸터 내부에서 버튼 행 + 안내 행이 세로로 쌓이도록
+        footer.style.flexDirection = 'column';
+        footer.style.alignItems = 'stretch';
+    },
+
+    // ==========================================
+    // 현재 적용 중인 내용 CSV 다운로드
+    // ==========================================
+    exportSubjectsCSV() {
+        this._saveCurrentToData();
+        const subjects = this.getSubjects();
+        if (!subjects || subjects.length === 0) { Toast.error('저장된 과목이 없습니다'); return; }
+
+        // 양식 헤더 (1~20행)와 동일 포맷 유지 → 다시 불러올 때 그대로 사용 가능
+        const lines = [
+            '과목/정답 CSV (현재 내용)',
+            '',
+            '[열 순서]',
+            '과목코드,과목명,선택지수,배점,총점,1번답,2번답,...',
+            '과목코드가 없으면 - 를 입력',
+            '',
+            '',
+            '[배점] 숫자 = 일괄배점 / 차등 = 정답 뒤에 문항별 배점',
+            '[참고] 과목별 문항수 달라도 됨 / 헤더 불필요',
+            '이 설명(1~20행)은 자동 무시됩니다',
+            '',
+            '', '', '', '', '', '', '',
+            '21행부터 입력하세요',
+            '',
+        ];
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
+
+        subjects.forEach(s => {
+            const code = s.code && s.code.trim() ? s.code : '-';
+            const name = s.name || '';
+            const nc = s.numChoices || 5;
+            const useCustom = !!s.useCustomScore && Array.isArray(s.scoreMap) && s.scoreMap.length > 0;
+            const score = useCustom ? '차등' : (s.scorePerQuestion || 5);
+            const total = s.totalScore || '';
+            const answers = (s.answers || '').split(',').map(a => (a || '').trim());
+            const fields = [code, name, nc, score, total, ...answers];
+            if (useCustom) {
+                // 차등 배점이면 답 뒤에 배점 배열을 이어 붙임
+                s.scoreMap.forEach(v => fields.push(v !== undefined && v !== null ? v : ''));
+            }
+            lines.push(fields.join(','));
+        });
+
+        const date = new Date().toISOString().slice(0, 10);
+        this._downloadFile(lines.join('\n'), `과목_현재내용_${date}.csv`);
+        Toast.success(`${subjects.length}개 과목 다운로드 완료`);
+    },
+
+    exportStudentsCSV() {
+        const students = this.getStudents();
+        if (!students || students.length === 0) { Toast.error('저장된 인원이 없습니다'); return; }
+
+        const lines = [
+            '시험 인원 CSV (현재 내용)',
+            '',
+            '[열 순서]',
+            '이름,생년월일,수험번호,핸드폰번호(01012345678)',
+            '',
+            '[참고사항]',
+            '모든 열을 채우지 않아도 됨 (필요한 것만 입력)',
+            '생년월일과 핸드폰번호 앞자리 0은 자동 보존됨',
+            '헤더 행은 불필요',
+            '이 설명 영역(1~20행)은 자동으로 무시됩니다',
+            '', '', '', '', '', '', '',
+            '21행부터 입력하세요',
+            '',
+        ];
+        while (lines.length < 20) lines.push('');
+        lines.length = 20;
+
+        students.forEach(st => {
+            // 앞자리 0 보존: 생년월일/전화번호에 작은따옴표 대신 = "..." 기법은 엑셀 전용.
+            // 현재 import가 순수 텍스트로 읽으므로 그냥 텍스트로 저장
+            const fields = [
+                st.name || '',
+                st.birth || '',
+                st.examNo || '',
+                st.phone || '',
+            ];
+            lines.push(fields.join(','));
+        });
+
+        const date = new Date().toISOString().slice(0, 10);
+        this._downloadFile(lines.join('\n'), `시험인원_현재내용_${date}.csv`);
+        Toast.success(`${students.length}명 다운로드 완료`);
     },
 
     // ==========================================
@@ -846,17 +949,46 @@ const SubjectManager = {
     _readFileWithEncoding(file, callback) {
         const reader = new FileReader();
         reader.onload = (e) => {
-            const text = e.target.result;
-            // UTF-8로 읽었는데 깨진 문자(�)가 있으면 EUC-KR로 재시도
-            if (text.indexOf('�') >= 0 || text.indexOf('\ufffd') >= 0) {
-                const reader2 = new FileReader();
-                reader2.onload = (e2) => callback(e2.target.result);
-                reader2.readAsText(file, 'EUC-KR');
-            } else {
+            const bytes = new Uint8Array(e.target.result);
+
+            // 1) BOM 우선 검사 (가장 확실)
+            if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+                // UTF-8 BOM → UTF-8로 디코딩 후 BOM 제거
+                const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
                 callback(text);
+                return;
+            }
+            if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+                // UTF-16 LE
+                callback(new TextDecoder('utf-16le').decode(bytes).replace(/^\uFEFF/, ''));
+                return;
+            }
+            if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+                // UTF-16 BE
+                callback(new TextDecoder('utf-16be').decode(bytes).replace(/^\uFEFF/, ''));
+                return;
+            }
+
+            // 2) BOM 없음 → 엄격 UTF-8로 시도 (fatal: true → 유효하지 않으면 throw)
+            try {
+                const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+                callback(text.replace(/^\uFEFF/, ''));
+                return;
+            } catch (_) {
+                // UTF-8 아님 → EUC-KR/CP949 시도
+            }
+
+            // 3) EUC-KR (Chrome/Electron TextDecoder는 CP949 상위 호환으로 처리)
+            try {
+                const text = new TextDecoder('euc-kr').decode(bytes);
+                callback(text);
+                return;
+            } catch (_) {
+                // 최후 수단: 교체문자 허용 UTF-8
+                callback(new TextDecoder('utf-8').decode(bytes));
             }
         };
-        reader.readAsText(file, 'UTF-8');
+        reader.readAsArrayBuffer(file);
     },
 
     // 파일 다운로드 헬퍼

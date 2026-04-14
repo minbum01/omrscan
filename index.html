@@ -67,6 +67,13 @@
     <input type="file" id="template-file-input" style="display:none;" accept=".json">
     <input type="file" id="session-file-input" style="display:none;" accept=".json">
 
+    <!-- 시험 정보 바 (시험이름 · 시험일자, 가운데 표시) -->
+    <div id="exam-info-bar" style="display:none; padding:6px 16px; background:var(--bg-card); border-bottom:1px solid var(--border); text-align:center; cursor:pointer;" onclick="SessionManager.editExamInfo && SessionManager.editExamInfo()">
+        <span id="exam-info-name" style="font-size:14px; font-weight:700; color:var(--text);"></span>
+        <span id="exam-info-sep" style="font-size:12px; color:var(--text-muted); margin:0 8px;"></span>
+        <span id="exam-info-date" style="font-size:12px; color:var(--text-muted);"></span>
+    </div>
+
     <!-- 메인 탭 전환 -->
     <div id="main-tab-bar" style="display:flex; gap:0; border-bottom:2px solid var(--border); background:var(--bg-card);">
         <button class="main-tab active" id="tab-analysis" onclick="switchMainTab('analysis')"
@@ -74,6 +81,9 @@
         <button class="main-tab" id="tab-scoring" onclick="switchMainTab('scoring')"
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점</button>
     </div>
+
+    <!-- 교시(Period) 탭 바 — 분석/채점 탭 아래, 이미지 목록 위 -->
+    <div id="period-tab-bar"></div>
 
     <!-- 분석 탭: 기존 3패널 -->
     <div class="main-layout" id="analysis-view">
@@ -107,10 +117,10 @@
                     <span class="kbd" style="background:rgba(255,255,255,0.2);">Enter</span>
                 </button>
                 <div class="dropdown" style="margin-left:4px;">
-                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">일괄 채점 ▾</button>
+                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">채점 ▾</button>
                     <div class="dropdown-menu">
-                        <button class="dropdown-item" onclick="BatchProcess.run(false)">일괄 채점 (개별수정 유지)</button>
-                        <button class="dropdown-item" onclick="BatchProcess.run(true)">전체 영역 재설정 후 채점</button>
+                        <button id="batch-item-1" class="dropdown-item" onclick="BatchProcess.run(false)">현재 교시 개별수정 후 전체채점</button>
+                        <button id="batch-item-2" class="dropdown-item" onclick="BatchProcess.run(true)">현재 교시 현재 설정으로 전체채점</button>
                     </div>
                 </div>
             </div>
@@ -270,6 +280,7 @@
     <script src="js/testGenerator.js"></script>
     <script src="js/template.js"></script>
     <script src="js/session.js"></script>
+    <script src="js/periodManager.js"></script>
     <script src="js/subjectManager.js"></script>
     <script src="js/scoring.js"></script>
 </body>

@@ -386,7 +386,7 @@ const UI = {
                         </div>
                         <div style="display:flex; align-items:center; gap:4px; font-size:10px;">
                             <span style="width:60px;">채움 하한</span>
-                            <input type="range" min="0.05" max="0.5" step="0.01" value="${t.minFill}"
+                            <input type="range" min="0.05" max="0.9" step="0.01" value="${t.minFill}"
                                 style="flex:1;" data-roi="${idx}" data-field="elongatedMinFill" oninput="UI.onThresholdChange(this)">
                             <span style="width:30px; text-align:right; font-family:monospace;">${t.minFill.toFixed(2)}</span>
                         </div>
@@ -1461,8 +1461,10 @@ const UI = {
         const cropH = maxY - minY;
         if (cropW < 5 || cropH < 5) return;
 
-        // 확대 배율
-        const scale = 3;
+        // 확대 배율: 가로형(수험번호 등 0~9 세로 배열)은 세로로 너무 길어지므로 절반
+        const roi = imgObj.rois[roiIdx];
+        const isHorizontal = roi && roi.settings && roi.settings.orientation === 'horizontal';
+        const scale = isHorizontal ? 1.5 : 3;
         const popupW = Math.round(cropW * scale);
         const popupH = Math.round(cropH * scale);
 

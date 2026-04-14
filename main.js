@@ -76,11 +76,26 @@ ipcMain.handle('session:save', async (event, sessionName, data, images) => {
             const imgDir = path.join(sessionDir, 'images');
             if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
 
+            // 새 저장에 포함될 파일명 집합
+            const keepSet = new Set(
+                images
+                    .filter(i => i && i.filename)
+                    .map(i => i.filename.replace(/[\\/:*?"<>|]/g, '_'))
+            );
+
+            // 이전에 있던 파일 중 이번 저장에 없는 것은 삭제 (렌이밍/삭제 반영)
+            try {
+                fs.readdirSync(imgDir).forEach(f => {
+                    if (!keepSet.has(f)) {
+                        try { fs.unlinkSync(path.join(imgDir, f)); } catch (_) {}
+                    }
+                });
+            } catch (_) {}
+
             images.forEach(img => {
                 if (img.dataUrl && img.filename) {
                     // base64 → 파일
                     const base64 = img.dataUrl.replace(/^data:image\/\w+;base64,/, '');
-                    const ext = img.dataUrl.match(/^data:image\/(\w+);/);
                     const filename = img.filename.replace(/[\\/:*?"<>|]/g, '_');
                     fs.writeFileSync(path.join(imgDir, filename), Buffer.from(base64, 'base64'));
                 }
