@@ -170,14 +170,18 @@ const UI = {
             </div>`;
         }
 
-        // 상단 버튼 (영역 추가 / 영역 목록 / 양식 불러오기)
+        // 상단 버튼 (영역 추가 / 영역 목록 / 양식 불러오기 / 교정 확정)
         const listOpen = this._roiListTabOpen;
+        const _anyConfirmed = (App.state.images || []).some(img => img._correctionConfirmed);
         html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
             <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
             <button class="btn btn-sm ${listOpen ? 'btn-primary' : ''}" onclick="UI.toggleRoiListTab()" style="flex:1;">
                 영역 목록 ${imgObj.rois.length > 0 ? `(${imgObj.rois.length})` : ''}
             </button>
             <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
+            <button class="btn btn-sm" onclick="UI.toggleConfirmCorrection()" style="flex:1; font-size:10px; ${_anyConfirmed ? 'background:#166534;color:#4ade80;border-color:#166534;' : ''}">
+                ${_anyConfirmed ? '✓ 확정됨' : '교정 확정'}
+            </button>
         </div>`;
 
         // 영역 목록 탭 펼침 시 내용 표시
@@ -589,7 +593,7 @@ const UI = {
 
             // 채점 상세 맵
             const gradeMap = {};
-            if (hasGrade && imgObj.gradeResult.details) {
+            if (hasGrade && imgObj.gradeResult && imgObj.gradeResult.details) {
                 imgObj.gradeResult.details.forEach(d => { gradeMap[d.questionNumber] = d; });
             }
 
@@ -613,11 +617,15 @@ const UI = {
                     ansText = '·'; cellClass = 'grid-cell-empty';
                 }
 
-                if (row.corrected) cellClass += ' grid-cell-corrected';
+                if (row.corrected && !row._xvAutoCorrected) cellClass += ' grid-cell-corrected';
+                // 1.5배 교차 검증 결과
+                if (row._xvMatch === 'conflict') cellClass += ' grid-cell-xv-conflict';
+                else if (row._xvMatch === 'bubble_only') cellClass += ' grid-cell-xv-warn';
+                else if (row._xvAutoCorrected) cellClass += ' grid-cell-xv-auto';
 
                 html += `
                     <div class="grid-cell ${cellClass}" data-roi="${resIdx}" data-q="${row.questionNumber}" data-choices="${numC}"
-                         onclick="UI.selectCell(this)">
+                         onclick="UI.selectCell(this)" title="${row._xvMatch === 'conflict' ? '⚠ 1.5배 검증 불일치' : row._xvMatch === 'bubble_only' ? '△ 확장 검증 미감지' : ''}">
                         <span class="grid-cell-num">${row.questionNumber}</span>
                         <span class="grid-cell-ans">${ansText}</span>
                         <input class="grid-cell-input" type="text" maxlength="2"
@@ -874,6 +882,11 @@ const UI = {
             }
         } catch (e) { console.warn('자동 감지 실패:', e); }
 
+        // subject_answer 타입이고 이름이 비어있으면 [과목N] 자동 부여
+        if (settings.type === 'subject_answer' && !settings.name) {
+            settings.name = this._nextAutoSubjectName(imgObj);
+        }
+
         imgObj.rois.push({ x, y, w, h, settings });
         imgObj.results = null; imgObj.gradeResult = null;
         CanvasManager.render(); ImageManager.updateList(); this.updateRightPanel();
@@ -929,6 +942,11 @@ const UI = {
             s.choiceLabels = ['1','2','3','4','5']; s.numChoices = 5;
         }
 
+        // subject_answer로 변경 시 이름이 없으면 [과목N] 자동 부여
+        if (s.type === 'subject_answer' && !s.name) {
+            s.name = this._nextAutoSubjectName(imgObj);
+        }
+
         imgObj.results = null; imgObj.gradeResult = null;
         CanvasManager.render(); ImageManager.updateList(); this.updateRightPanel();
     },
@@ -965,11 +983,29 @@ const UI = {
         this.updateRightPanel();
     },
 
-    // 직접 정답 입력
+    // [과목N] 자동 이름 생성 — 기존 ROI에서 사용 중인 번호 다음 번호 반환
+    _nextAutoSubjectName(imgObj) {
+        const used = new Set();
+        if (imgObj) {
+            imgObj.rois.forEach(r => {
+                if (r.settings && r.settings.type === 'subject_answer' && r.settings.name) {
+                    used.add(r.settings.name);
+                }
+            });
+        }
+        for (let n = 1; n <= 100; n++) {
+            const candidate = `[과목${n}]`;
+            if (!used.has(candidate)) return candidate;
+        }
+        return '[과목1]';
+    },
+
     // 과목 버튼 행 렌더 (카드 + 팝업 공용)
     _renderSubjectButtons(roiIdx, currentName, imgObj) {
         const subjSet = new Set();
+        // 시험관리에 등록된 과목명
         (App.state.subjects || []).forEach(sub => { if (sub.name) subjSet.add(sub.name); });
+        // 현재 이미지의 ROI에 이미 부여된 과목명 ([과목N] 포함)
         if (imgObj) imgObj.rois.forEach(r => { if (r.settings && r.settings.type === 'subject_answer' && r.settings.name) subjSet.add(r.settings.name); });
 
         let html = `<div style="padding:4px 8px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; border-bottom:1px solid var(--border-light);">`;
@@ -1468,13 +1504,65 @@ const UI = {
         const popupW = Math.round(cropW * scale);
         const popupH = Math.round(cropH * scale);
 
-        // 임시 캔버스에서 해당 영역 잘라내기
+        // 임시 캔버스에서 해당 영역 잘라내기 + 1.5배 검증 시각화
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = popupW;
         tempCanvas.height = popupH;
         const tctx = tempCanvas.getContext('2d');
         tctx.imageSmoothingEnabled = false;
         tctx.drawImage(imgObj.imgElement, minX, minY, cropW, cropH, 0, 0, popupW, popupH);
+
+        // 1.5배 확장 영역 오버레이 그리기
+        const _xvRes = imgObj.results && imgObj.results[roiIdx];
+        const qRow = _xvRes && _xvRes.rows.find(r => r.questionNumber === qNum);
+        if (qRow && qRow._xvScores) {
+            qRow._xvScores.forEach((xv, ci) => {
+                const orig = xv.origRect;
+                const exp = xv.expandRect;
+                if (!orig || !exp) return;
+
+                // 좌표를 팝업 기준으로 변환
+                const toX = (px) => (px - minX) * scale;
+                const toY = (py) => (py - minY) * scale;
+
+                // 1배 영역 (파란 실선)
+                tctx.strokeStyle = 'rgba(59,130,246,0.7)';
+                tctx.lineWidth = 1;
+                tctx.strokeRect(toX(orig.x), toY(orig.y), orig.w * scale, orig.h * scale);
+
+                // 1.5배 영역 (주황 점선)
+                tctx.strokeStyle = 'rgba(245,158,11,0.8)';
+                tctx.lineWidth = 1.5;
+                tctx.setLineDash([4, 3]);
+                tctx.strokeRect(toX(exp.x), toY(exp.y), exp.w * scale, exp.h * scale);
+                tctx.setLineDash([]);
+
+                // 확장 comp 값 표시
+                const compText = (xv.ringMax !== undefined ? xv.ringMax : xv.comp).toFixed(2);
+                const tx = toX(exp.x + exp.w / 2);
+                const ty = toY(exp.y) - 3;
+                tctx.font = `bold ${Math.max(9, Math.round(scale * 4))}px sans-serif`;
+                tctx.fillStyle = xv.col + 1 === qRow._xvAnswer ? '#22c55e' : '#94a3b8';
+                tctx.textAlign = 'center';
+                tctx.fillText(compText, tx, ty);
+            });
+
+            // 검증 결과 배지
+            const matchLabel = {
+                'match': '✓ 일치', 'conflict': '⚠ 불일치',
+                'bubble_only': '△ 확장미감지', 'xv_only': '▽ BFS미감지', 'both_null': '○ 미기입'
+            }[qRow._xvMatch] || '';
+            const matchColor = {
+                'match': '#22c55e', 'conflict': '#f59e0b',
+                'bubble_only': '#fb923c', 'xv_only': '#3b82f6', 'both_null': '#64748b'
+            }[qRow._xvMatch] || '#94a3b8';
+            if (matchLabel) {
+                tctx.font = `bold ${Math.max(10, Math.round(scale * 4))}px sans-serif`;
+                tctx.fillStyle = matchColor;
+                tctx.textAlign = 'right';
+                tctx.fillText(matchLabel, popupW - 4, popupH - 4);
+            }
+        }
 
         // 팝업 생성
         const popup = document.createElement('div');
@@ -1487,10 +1575,11 @@ const UI = {
         img.style.height = popupH + 'px';
         popup.appendChild(img);
 
-        // Q번호 라벨
+        // Q번호 라벨 + 검증 상태
+        const xvInfo = qRow && qRow._xvMatch ? ` [${qRow._xvMatch === 'match' ? '✓' : qRow._xvMatch === 'conflict' ? '⚠' : '△'}]` : '';
         const label = document.createElement('div');
         label.className = 'zoom-popup-label';
-        label.textContent = `Q${qNum}`;
+        label.textContent = `Q${qNum}${xvInfo}`;
         popup.appendChild(label);
 
         // 셀 위치 기준으로 팝업 배치
@@ -1706,6 +1795,43 @@ const UI = {
 
         // 로컬 자동 저장
         this.autoSaveLocal();
+    },
+
+    // ==========================================
+    // 교정 확정 (전체 이미지 대상)
+    // ==========================================
+    toggleConfirmCorrection() {
+        const images = App.state.images || [];
+        if (images.length === 0) return;
+
+        // 현재 상태 확인: 하나라도 확정이면 → 전체 해제, 아니면 → 전체 확정
+        const anyConfirmed = images.some(img => img._correctionConfirmed);
+
+        if (anyConfirmed) {
+            // 전체 해제
+            images.forEach(img => { img._correctionConfirmed = false; });
+            ImageManager.updateList();
+            this.updateRightPanel();
+            Toast.info('전체 교정 확정 해제');
+        } else {
+            // 전체 확정: 모든 이미지에 대해 수험번호 재매칭 + 재채점
+            let updated = 0;
+            images.forEach(img => {
+                img._correctionConfirmed = true;
+
+                // 수험번호/이름 재매칭 (교정된 값으로 갱신)
+                if (img.results) {
+                    ImageManager.applyPhonePrefix(img);
+                    img.gradeResult = Grading.grade(img.results, img);
+                    updated++;
+                }
+            });
+
+            CanvasManager.render();
+            ImageManager.updateList();
+            this.updateRightPanel();
+            Toast.success(`전체 교정 확정 — ${updated}장 수험번호/채점 갱신됨`);
+        }
     },
 
     // 로컬스토리지 자동 저장 (수기 교정 데이터)

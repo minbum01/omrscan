@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>복합스코어 시뮬레이션 — 공식 교차 검증</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}
+.hdr{background:linear-gradient(135deg,#1e293b,#334155);padding:32px 40px;border-bottom:1px solid #475569}
+.hdr h1{font-size:26px;font-weight:700;color:#f8fafc;margin-bottom:6px}
+.hdr p{color:#94a3b8;font-size:13px}
+.ctn{max-width:1700px;margin:0 auto;padding:24px}
+.sec{margin-bottom:32px}
+.sec-t{font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:16px;padding-left:12px;border-left:4px solid #3b82f6}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}
+.card h3{font-size:13px;font-weight:600;color:#94a3b8;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.cw{position:relative;height:350px}
+.cw-lg{position:relative;height:420px}
+.ins{background:linear-gradient(135deg,#1e3a5f,#1e293b);border:1px solid #3b82f6;border-radius:12px;padding:20px;margin-bottom:20px}
+.ins h3{color:#60a5fa;margin-bottom:8px;font-size:16px}
+.ins ul{padding-left:20px;color:#cbd5e1}
+.ins li{margin-bottom:4px}
+table.dt{width:100%;border-collapse:collapse;font-size:12px}
+table.dt th{background:#334155;color:#94a3b8;padding:8px 10px;text-align:center;font-weight:600;position:sticky;top:0;white-space:nowrap}
+table.dt td{padding:6px 10px;border-bottom:1px solid #1e293b;text-align:center}
+table.dt th:first-child,table.dt td:first-child{text-align:left}
+.ok{color:#4ade80;font-weight:700}.ng{color:#f87171;font-weight:700}.wr{color:#fbbf24;font-weight:700}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700}
+.b-ok{background:rgba(34,197,94,.2);color:#4ade80}
+.b-ng{background:rgba(239,68,68,.2);color:#f87171}
+.b-wr{background:rgba(245,158,11,.2);color:#fbbf24}
+.b-bl{background:rgba(59,130,246,.2);color:#60a5fa}
+.perf-card{background:#0f172a;border-radius:8px;padding:16px;text-align:center}
+.perf-card .num{font-size:36px;font-weight:800}
+.perf-card .lbl{font-size:11px;color:#64748b;margin-top:4px}
+.formula-box{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-family:'Cascadia Code','Fira Code',monospace;font-size:13px}
+.formula-box .name{color:#60a5fa;font-weight:700;margin-bottom:4px}
+.formula-box code{color:#e2e8f0}
+.highlight-row{background:rgba(34,197,94,.08)!important}
+.wrong-row{background:rgba(239,68,68,.08)!important}
+@media(max-width:1024px){.g2,.g3{grid-template-columns:1fr}.g4{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="hdr">
+    <h1>복합스코어 시뮬레이션 — 공식 교차 검증 보고서</h1>
+    <p>데이터셋 #1 × #2 에 각각 다른 공식(A~F)을 적용하여 판정 정확도 비교</p>
+</div>
+<div class="ctn">
+
+<div class="sec">
+    <div class="sec-t">공식 정의</div>
+    <div class="g3" id="formula-defs"></div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">1. 성능 요약 — 공식 × 데이터셋 매트릭스</div>
+    <div class="card"><div id="perf-matrix"></div></div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">2. 공식별 성능 비교 차트</div>
+    <div class="g2">
+        <div class="card"><h3>데이터셋 #1 — 공식별 판정률</h3><div class="cw"><canvas id="chart-ds1-bar"></canvas></div></div>
+        <div class="card"><h3>데이터셋 #2 — 공식별 판정률</h3><div class="cw"><canvas id="chart-ds2-bar"></canvas></div></div>
+    </div>
+    <div class="g2">
+        <div class="card"><h3>두 데이터셋 합산 — 정답률 vs 오답률</h3><div class="cw"><canvas id="chart-combined"></canvas></div></div>
+        <div class="card"><h3>F1 Score 비교 (통합)</h3><div class="cw"><canvas id="chart-f1"></canvas></div></div>
+    </div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">3. 데이터셋 #1 — 문항별 상세 (공식 A vs B vs C vs D vs E vs F)</div>
+    <div class="card" style="overflow-x:auto;max-height:700px;overflow-y:auto"><table class="dt" id="tbl-ds1"></table></div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">4. 데이터셋 #2 — 문항별 상세</div>
+    <div class="card" style="overflow-x:auto;max-height:700px;overflow-y:auto"><table class="dt" id="tbl-ds2"></table></div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">5. 오판 분석 — 각 공식이 틀린 문항</div>
+    <div class="g2">
+        <div class="card"><h3>데이터셋 #1 오판</h3><div id="err-ds1"></div></div>
+        <div class="card"><h3>데이터셋 #2 오판</h3><div id="err-ds2"></div></div>
+    </div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">6. 파라미터 감도 분석 — gap/f 임계값 스윕</div>
+    <div class="g2">
+        <div class="card"><h3>gap 임계값 변화 (f threshold=0.88 고정)</h3><div class="cw-lg"><canvas id="chart-sweep-gap"></canvas></div></div>
+        <div class="card"><h3>f 임계값 변화 (gap=0.08 고정)</h3><div class="cw-lg"><canvas id="chart-sweep-f"></canvas></div></div>
+    </div>
+</div>
+
+<div class="sec">
+    <div class="sec-t">7. 최종 제안</div>
+    <div class="ins" id="final-rec"></div>
+</div>
+
+</div>
+
+<script>
+// ==========================================
+// 데이터셋
+// ==========================================
+const DS1 = [
+{q:1,c:[{f:.500,e:.196,qMin:.000},{f:.589,e:.250,qMin:.083},{f:.661,e:.250,qMin:.125},{f:.946,e:.786,qMin:.500}],ans:4},
+{q:2,c:[{f:.482,e:.179,qMin:.000},{f:.643,e:.286,qMin:.083},{f:.607,e:.179,qMin:.083},{f:.946,e:.786,qMin:.500}],ans:4},
+{q:3,c:[{f:.875,e:.679,qMin:.500},{f:.625,e:.268,qMin:.083},{f:.679,e:.268,qMin:.063},{f:.696,e:.304,qMin:.188}],ans:1},
+{q:4,c:[{f:.500,e:.214,qMin:.000},{f:.929,e:.857,qMin:.333},{f:.661,e:.179,qMin:.083},{f:.768,e:.375,qMin:.188}],ans:2},
+{q:5,c:[{f:.893,e:.732,qMin:.500},{f:.661,e:.232,qMin:.083},{f:.607,e:.179,qMin:.063},{f:.661,e:.250,qMin:.125}],ans:1},
+{q:6,c:[{f:.589,e:.250,qMin:.000},{f:.696,e:.268,qMin:.083},{f:.893,e:.679,qMin:.500},{f:.821,e:.429,qMin:.188}],ans:3},
+{q:7,c:[{f:.518,e:.196,qMin:.000},{f:.696,e:.232,qMin:.083},{f:.714,e:.250,qMin:.063},{f:.982,e:.679,qMin:.625}],ans:4},
+{q:8,c:[{f:.500,e:.196,qMin:.000},{f:.714,e:.250,qMin:.167},{f:.714,e:.268,qMin:.125},{f:.786,e:.643,qMin:.125}],ans:4},
+{q:9,c:[{f:.518,e:.214,qMin:.000},{f:.821,e:.571,qMin:.125},{f:.625,e:.179,qMin:.063},{f:.714,e:.286,qMin:.063}],ans:2},
+{q:10,c:[{f:.536,e:.196,qMin:.000},{f:.857,e:.661,qMin:.083},{f:.589,e:.196,qMin:.063},{f:.714,e:.304,qMin:.063}],ans:2},
+{q:11,c:[{f:.518,e:.196,qMin:.000},{f:.661,e:.321,qMin:.250},{f:.625,e:.268,qMin:.063},{f:.964,e:.696,qMin:.500}],ans:4},
+{q:12,c:[{f:.500,e:.214,qMin:.000},{f:.607,e:.232,qMin:.083},{f:.571,e:.179,qMin:.063},{f:.732,e:.589,qMin:.125}],ans:4},
+{q:13,c:[{f:.464,e:.143,qMin:.000},{f:.589,e:.268,qMin:.125},{f:.571,e:.232,qMin:.063},{f:.750,e:.607,qMin:.125}],ans:4},
+{q:14,c:[{f:.482,e:.179,qMin:.000},{f:.625,e:.250,qMin:.188},{f:.554,e:.214,qMin:.063},{f:.929,e:.839,qMin:.500}],ans:4},
+{q:15,c:[{f:.482,e:.161,qMin:.000},{f:.625,e:.250,qMin:.063},{f:.821,e:.661,qMin:.313},{f:.589,e:.268,qMin:.000}],ans:3},
+{q:16,c:[{f:.518,e:.214,qMin:.000},{f:.929,e:.804,qMin:.167},{f:.607,e:.268,qMin:.063},{f:.589,e:.268,qMin:.063}],ans:2},
+{q:17,c:[{f:.518,e:.179,qMin:.000},{f:.554,e:.143,qMin:.063},{f:.518,e:.196,qMin:.063},{f:.911,e:.732,qMin:.500}],ans:4},
+{q:18,c:[{f:.518,e:.196,qMin:.000},{f:.554,e:.107,qMin:.063},{f:.911,e:.786,qMin:.438},{f:.554,e:.250,qMin:.000}],ans:3},
+{q:19,c:[{f:.500,e:.196,qMin:.000},{f:.625,e:.196,qMin:.063},{f:.857,e:.714,qMin:.375},{f:.607,e:.321,qMin:.000}],ans:3},
+{q:20,c:[{f:.482,e:.179,qMin:.000},{f:.571,e:.232,qMin:.125},{f:.500,e:.232,qMin:.063},{f:.607,e:.464,qMin:.000}],ans:4},
+];
+
+const DS2 = [
+{q:1,c:[{f:.510,e:.184,qMin:.000},{f:.592,e:.122,qMin:.083},{f:.490,e:.102,qMin:.000},{f:.776,e:.531,qMin:.000}],ans:4},
+{q:2,c:[{f:.469,e:.163,qMin:.000},{f:.551,e:.122,qMin:.063},{f:.878,e:.592,qMin:.000},{f:.551,e:.163,qMin:.000}],ans:3},
+{q:3,c:[{f:.510,e:.204,qMin:.000},{f:.551,e:.163,qMin:.000},{f:.857,e:.714,qMin:.438},{f:.592,e:.224,qMin:.000}],ans:3},
+{q:4,c:[{f:.490,e:.163,qMin:.000},{f:.531,e:.122,qMin:.083},{f:.551,e:.143,qMin:.063},{f:.898,e:.755,qMin:.438}],ans:4},
+{q:5,c:[{f:.429,e:.102,qMin:.000},{f:.531,e:.102,qMin:.000},{f:.939,e:.857,qMin:.563},{f:.612,e:.265,qMin:.083}],ans:3},
+{q:6,c:[{f:.510,e:.184,qMin:.000},{f:.571,e:.184,qMin:.125},{f:.490,e:.102,qMin:.000},{f:.918,e:.776,qMin:.500}],ans:4},
+{q:7,c:[{f:.898,e:.694,qMin:.375},{f:.551,e:.102,qMin:.000},{f:.551,e:.122,qMin:.000},{f:.612,e:.224,qMin:.083}],ans:1},
+{q:8,c:[{f:.388,e:.082,qMin:.000},{f:.531,e:.122,qMin:.000},{f:.469,e:.102,qMin:.000},{f:.959,e:.796,qMin:.444}],ans:4},
+{q:9,c:[{f:.531,e:.224,qMin:.000},{f:.490,e:.061,qMin:.000},{f:.939,e:.816,qMin:.563},{f:.612,e:.163,qMin:.000}],ans:3},
+{q:10,c:[{f:.531,e:.204,qMin:.000},{f:.510,e:.143,qMin:.083},{f:.735,e:.551,qMin:.188},{f:.612,e:.184,qMin:.063}],ans:3},
+{q:11,c:[{f:.510,e:.163,qMin:.000},{f:.408,e:.061,qMin:.000},{f:.347,e:.082,qMin:.000},{f:.959,e:.816,qMin:.500}],ans:4},
+{q:12,c:[{f:.000,e:.000,qMin:.000},{f:.918,e:.816,qMin:.625},{f:.347,e:.102,qMin:.000},{f:.633,e:.224,qMin:.111}],ans:2},
+{q:13,c:[{f:.469,e:.102,qMin:.000},{f:.449,e:.102,qMin:.083},{f:.327,e:.082,qMin:.000},{f:.551,e:.102,qMin:.063}],ans:4},
+{q:14,c:[{f:.388,e:.061,qMin:.000},{f:.347,e:.041,qMin:.000},{f:.735,e:.551,qMin:.063},{f:.571,e:.163,qMin:.063}],ans:3},
+{q:15,c:[{f:.388,e:.082,qMin:.000},{f:.837,e:.653,qMin:.375},{f:.327,e:.082,qMin:.000},{f:.633,e:.184,qMin:.063}],ans:2},
+{q:16,c:[{f:.367,e:.041,qMin:.000},{f:.367,e:.041,qMin:.000},{f:.796,e:.673,qMin:.188},{f:.571,e:.163,qMin:.000}],ans:3},
+{q:17,c:[{f:.367,e:.061,qMin:.000},{f:.408,e:.082,qMin:.000},{f:.347,e:.041,qMin:.000},{f:.816,e:.673,qMin:.250}],ans:4},
+{q:18,c:[{f:.429,e:.122,qMin:.000},{f:.367,e:.082,qMin:.000},{f:.286,e:.020,qMin:.000},{f:.939,e:.837,qMin:.563}],ans:4},
+{q:19,c:[{f:.469,e:.184,qMin:.000},{f:.367,e:.061,qMin:.000},{f:.388,e:.061,qMin:.000},{f:.571,e:.408,qMin:.000}],ans:4},
+{q:20,c:[{f:.408,e:.102,qMin:.000},{f:.347,e:.143,qMin:.000},{f:.184,e:.000,qMin:.000},{f:.531,e:.184,qMin:.063}],ans:4},
+];
+
+// ==========================================
+// 공식 정의
+// ==========================================
+const FORMULAS = [
+    {
+        id:'A', name:'분석#1 원본',
+        desc:'f×0.4 + e×0.35 + qMin×0.25',
+        wf:.4, we:.35, wq:.25,
+        gapTh:.08, fTh:.90,
+        color:'#3b82f6',
+    },
+    {
+        id:'B', name:'분석#2 원본',
+        desc:'f×0.4 + e×0.35 + qMin×0.25',
+        wf:.4, we:.35, wq:.25,
+        gapTh:.08, fTh:.85,
+        color:'#22c55e',
+    },
+    {
+        id:'C', name:'f 가중 강화',
+        desc:'f×0.5 + e×0.30 + qMin×0.20',
+        wf:.5, we:.30, wq:.20,
+        gapTh:.08, fTh:.85,
+        color:'#f59e0b',
+    },
+    {
+        id:'D', name:'e 가중 강화',
+        desc:'f×0.35 + e×0.45 + qMin×0.20',
+        wf:.35, we:.45, wq:.20,
+        gapTh:.08, fTh:.85,
+        color:'#ef4444',
+    },
+    {
+        id:'E', name:'완화 임계값',
+        desc:'f×0.4 + e×0.35 + qMin×0.25',
+        wf:.4, we:.35, wq:.25,
+        gapTh:.06, fTh:.82,
+        color:'#a855f7',
+    },
+    {
+        id:'F', name:'엄격 임계값',
+        desc:'f×0.4 + e×0.35 + qMin×0.25',
+        wf:.4, we:.35, wq:.25,
+        gapTh:.10, fTh:.92,
+        color:'#06b6d4',
+    },
+];
+
+// ==========================================
+// 시뮬레이션 엔진
+// ==========================================
+function simulate(dataset, formula) {
+    const results = [];
+    let correct = 0, wrong = 0, nullCount = 0;
+
+    dataset.forEach(q => {
+        const scores = q.c.map((c, i) => ({
+            idx: i + 1,
+            score: c.f * formula.wf + c.e * formula.we + c.qMin * formula.wq,
+            f: c.f, e: c.e, qMin: c.qMin,
+        })).sort((a, b) => b.score - a.score);
+
+        const gap = scores[0].score - scores[1].score;
+        const decided = gap >= formula.gapTh || scores[0].f >= formula.fTh;
+        const predicted = decided ? scores[0].idx : null;
+
+        let status;
+        if (predicted === null) { status = 'null'; nullCount++; }
+        else if (predicted === q.ans) { status = 'correct'; correct++; }
+        else { status = 'wrong'; wrong++; }
+
+        results.push({
+            q: q.q, ans: q.ans, predicted,
+            scores, gap, status,
+            top1: scores[0], top2: scores[1],
+        });
+    });
+
+    return {
+        results, correct, wrong, nullCount,
+        total: dataset.length,
+        accuracy: correct / dataset.length,
+        decisionRate: (correct + wrong) / dataset.length,
+        precision: correct + wrong > 0 ? correct / (correct + wrong) : 0,
+        f1: (() => {
+            const p = correct + wrong > 0 ? correct / (correct + wrong) : 0;
+            const r = correct / dataset.length;
+            return p + r > 0 ? 2 * p * r / (p + r) : 0;
+        })(),
+    };
+}
+
+// 모든 조합 실행
+const allResults = {};
+FORMULAS.forEach(f => {
+    allResults[f.id] = {
+        ds1: simulate(DS1, f),
+        ds2: simulate(DS2, f),
+    };
+});
+
+// ==========================================
+// 렌더링
+// ==========================================
+
+// 공식 정의 카드
+{
+    const el = document.getElementById('formula-defs');
+    el.innerHTML = FORMULAS.map(f => `
+        <div class="formula-box">
+            <div class="name" style="color:${f.color}">공식 ${f.id}: ${f.name}</div>
+            <code>comp = ${f.desc}</code><br>
+            <code>판정: gap ≥ ${f.gapTh} OR f ≥ ${f.fTh}</code>
+        </div>
+    `).join('');
+}
+
+// 1. 성능 매트릭스
+{
+    let h = '<table class="dt"><thead><tr><th>공식</th><th>가중치</th><th>판정 조건</th>';
+    h += '<th colspan="4" style="border-left:2px solid #475569">데이터셋 #1 (20문항)</th>';
+    h += '<th colspan="4" style="border-left:2px solid #475569">데이터셋 #2 (20문항)</th>';
+    h += '<th colspan="3" style="border-left:2px solid #475569">통합 (40문항)</th>';
+    h += '</tr><tr><th></th><th></th><th></th>';
+    h += '<th style="border-left:2px solid #475569">정답</th><th>오답</th><th>null</th><th>정답률</th>';
+    h += '<th style="border-left:2px solid #475569">정답</th><th>오답</th><th>null</th><th>정답률</th>';
+    h += '<th style="border-left:2px solid #475569">정답</th><th>Precision</th><th>F1</th>';
+    h += '</tr></thead><tbody>';
+
+    let bestF1 = 0, bestId = '';
+    FORMULAS.forEach(f => {
+        const r1 = allResults[f.id].ds1, r2 = allResults[f.id].ds2;
+        const totalCorr = r1.correct + r2.correct;
+        const totalWrong = r1.wrong + r2.wrong;
+        const totalNull = r1.nullCount + r2.nullCount;
+        const combinedPrec = totalCorr + totalWrong > 0 ? totalCorr / (totalCorr + totalWrong) : 0;
+        const combinedRec = totalCorr / 40;
+        const combinedF1 = combinedPrec + combinedRec > 0 ? 2 * combinedPrec * combinedRec / (combinedPrec + combinedRec) : 0;
+        if (combinedF1 > bestF1) { bestF1 = combinedF1; bestId = f.id; }
+
+        h += `<tr>
+            <td style="text-align:left;font-weight:700;color:${f.color}">${f.id}: ${f.name}</td>
+            <td style="font-size:11px">${f.desc}</td>
+            <td style="font-size:11px">gap≥${f.gapTh} | f≥${f.fTh}</td>
+            <td class="ok" style="border-left:2px solid #475569">${r1.correct}</td>
+            <td class="${r1.wrong>0?'ng':''}">${r1.wrong}</td>
+            <td class="${r1.nullCount>3?'wr':''}">${r1.nullCount}</td>
+            <td style="font-weight:700">${(r1.accuracy*100).toFixed(0)}%</td>
+            <td class="ok" style="border-left:2px solid #475569">${r2.correct}</td>
+            <td class="${r2.wrong>0?'ng':''}">${r2.wrong}</td>
+            <td class="${r2.nullCount>3?'wr':''}">${r2.nullCount}</td>
+            <td style="font-weight:700">${(r2.accuracy*100).toFixed(0)}%</td>
+            <td class="ok" style="border-left:2px solid #475569">${totalCorr}/40</td>
+            <td>${(combinedPrec*100).toFixed(1)}%</td>
+            <td style="font-weight:700;color:${combinedF1>=bestF1-0.01?'#4ade80':'#e2e8f0'}">${(combinedF1*100).toFixed(1)}%</td>
+        </tr>`;
+    });
+    h += '</tbody></table>';
+    h += `<div style="margin-top:12px;font-size:13px;color:#94a3b8">최고 F1: <span class="badge b-ok">${bestId}</span> (${(bestF1*100).toFixed(1)}%)</div>`;
+    document.getElementById('perf-matrix').innerHTML = h;
+}
+
+// 2. 차트
+{
+    const labels = FORMULAS.map(f => f.id + ': ' + f.name);
+    const colors = FORMULAS.map(f => f.color);
+
+    // DS1 bar
+    new Chart(document.getElementById('chart-ds1-bar'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '정답', data: FORMULAS.map(f => allResults[f.id].ds1.correct), backgroundColor: '#22c55e' },
+                { label: '오답', data: FORMULAS.map(f => allResults[f.id].ds1.wrong), backgroundColor: '#ef4444' },
+                { label: 'null', data: FORMULAS.map(f => allResults[f.id].ds1.nullCount), backgroundColor: '#64748b' },
+            ]
+        },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{labels:{color:'#94a3b8'}} },
+            scales:{ x:{stacked:true,ticks:{color:'#94a3b8',font:{size:10}}}, y:{stacked:true,ticks:{color:'#64748b'},max:20} } }
+    });
+
+    // DS2 bar
+    new Chart(document.getElementById('chart-ds2-bar'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '정답', data: FORMULAS.map(f => allResults[f.id].ds2.correct), backgroundColor: '#22c55e' },
+                { label: '오답', data: FORMULAS.map(f => allResults[f.id].ds2.wrong), backgroundColor: '#ef4444' },
+                { label: 'null', data: FORMULAS.map(f => allResults[f.id].ds2.nullCount), backgroundColor: '#64748b' },
+            ]
+        },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{labels:{color:'#94a3b8'}} },
+            scales:{ x:{stacked:true,ticks:{color:'#94a3b8',font:{size:10}}}, y:{stacked:true,ticks:{color:'#64748b'},max:20} } }
+    });
+
+    // Combined scatter: accuracy vs precision
+    new Chart(document.getElementById('chart-combined'), {
+        type: 'scatter',
+        data: { datasets: FORMULAS.map(f => {
+            const r1=allResults[f.id].ds1, r2=allResults[f.id].ds2;
+            const tc=r1.correct+r2.correct, tw=r1.wrong+r2.wrong;
+            return {
+                label: f.id,
+                data: [{ x: tc/40*100, y: tw/40*100 }],
+                backgroundColor: f.color,
+                pointRadius: 12,
+                pointHoverRadius: 16,
+            };
+        })},
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#94a3b8'}}},
+            scales:{
+                x:{title:{display:true,text:'정답률 (%)',color:'#94a3b8'},ticks:{color:'#64748b'},min:30,max:100},
+                y:{title:{display:true,text:'오답률 (%)',color:'#94a3b8'},ticks:{color:'#64748b'},min:0,max:30}
+            }
+        }
+    });
+
+    // F1 bar
+    new Chart(document.getElementById('chart-f1'), {
+        type: 'bar',
+        data: {
+            labels: FORMULAS.map(f => f.id),
+            datasets: [
+                { label: 'DS#1 F1', data: FORMULAS.map(f => allResults[f.id].ds1.f1*100), backgroundColor: colors.map(c=>c+'88') },
+                { label: 'DS#2 F1', data: FORMULAS.map(f => allResults[f.id].ds2.f1*100), backgroundColor: colors },
+            ]
+        },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#94a3b8'}}},
+            scales:{x:{ticks:{color:'#e2e8f0',font:{weight:'700'}}},y:{title:{display:true,text:'F1 (%)',color:'#94a3b8'},ticks:{color:'#64748b'},max:100}} }
+    });
+}
+
+// 3 & 4. 문항별 상세 테이블
+function renderDetailTable(tableId, dataset, dsLabel) {
+    let h = '<thead><tr><th>Q</th><th>정답</th>';
+    FORMULAS.forEach(f => {
+        h += `<th colspan="3" style="border-left:2px solid #475569;color:${f.color}">${f.id}: ${f.name}</th>`;
+    });
+    h += '</tr><tr><th></th><th></th>';
+    FORMULAS.forEach(() => h += '<th style="border-left:2px solid #475569">판정</th><th>Gap</th><th>1위f</th>');
+    h += '</tr></thead><tbody>';
+
+    dataset.forEach((q, qi) => {
+        h += '<tr>';
+        h += `<td style="text-align:left;font-weight:700">Q${q.q}</td>`;
+        h += `<td style="font-weight:700">[${q.ans}]</td>`;
+
+        FORMULAS.forEach(f => {
+            const r = allResults[f.id][dsLabel].results[qi];
+            let cls = '', txt = '';
+            if (r.status === 'correct') { cls = 'ok'; txt = `[${r.predicted}] ✓`; }
+            else if (r.status === 'wrong') { cls = 'ng'; txt = `[${r.predicted}] ✗`; }
+            else { cls = 'wr'; txt = 'null'; }
+
+            h += `<td class="${cls}" style="border-left:2px solid #475569;font-weight:700">${txt}</td>`;
+            h += `<td style="font-size:11px">${r.gap.toFixed(3)}</td>`;
+            h += `<td style="font-size:11px">${r.top1.f.toFixed(3)}</td>`;
+        });
+        h += '</tr>';
+    });
+    h += '</tbody>';
+    document.getElementById(tableId).innerHTML = h;
+}
+renderDetailTable('tbl-ds1', DS1, 'ds1');
+renderDetailTable('tbl-ds2', DS2, 'ds2');
+
+// 5. 오판 분석
+function renderErrors(elId, dsLabel, dataset) {
+    let h = '<table class="dt"><thead><tr><th>공식</th><th>문항</th><th>정답</th><th>판정</th><th>1위 Comp</th><th>2위 Comp</th><th>Gap</th><th>1위 f</th><th>원인</th></tr></thead><tbody>';
+    FORMULAS.forEach(f => {
+        const sim = allResults[f.id][dsLabel];
+        const wrongs = sim.results.filter(r => r.status === 'wrong');
+        if (wrongs.length === 0) {
+            h += `<tr><td style="text-align:left;color:${f.color};font-weight:700">${f.id}</td><td colspan="8" class="ok">오답 없음</td></tr>`;
+        } else {
+            wrongs.forEach((r, i) => {
+                const cause = r.top1.f >= f.fTh ? 'f 단독 통과' : (r.gap >= f.gapTh ? 'gap 통과' : '???');
+                h += `<tr class="wrong-row">
+                    <td style="text-align:left;color:${f.color};font-weight:700">${i===0?f.id:''}</td>
+                    <td>Q${r.q}</td><td>[${r.ans}]</td><td class="ng">[${r.predicted}]</td>
+                    <td>${r.top1.score.toFixed(3)}</td><td>${r.top2.score.toFixed(3)}</td>
+                    <td>${r.gap.toFixed(3)}</td><td>${r.top1.f.toFixed(3)}</td>
+                    <td style="font-size:11px">${cause}</td>
+                </tr>`;
+            });
+        }
+    });
+    h += '</tbody></table>';
+    document.getElementById(elId).innerHTML = h;
+}
+renderErrors('err-ds1', 'ds1', DS1);
+renderErrors('err-ds2', 'ds2', DS2);
+
+// 6. 파라미터 스윕
+{
+    // gap sweep (f_th fixed at 0.88)
+    const gapValues = [];
+    for (let g = 0.02; g <= 0.20; g += 0.01) gapValues.push(parseFloat(g.toFixed(2)));
+
+    const gapData = {};
+    ['ds1','ds2','combined'].forEach(k => gapData[k] = { correct:[], wrong:[], f1:[] });
+
+    gapValues.forEach(gTh => {
+        const f = { wf:.4, we:.35, wq:.25, gapTh:gTh, fTh:.88 };
+        const r1 = simulate(DS1, f), r2 = simulate(DS2, f);
+        gapData.ds1.correct.push(r1.correct);
+        gapData.ds1.wrong.push(r1.wrong);
+        gapData.ds2.correct.push(r2.correct);
+        gapData.ds2.wrong.push(r2.wrong);
+        const tc=r1.correct+r2.correct, tw=r1.wrong+r2.wrong;
+        const p=tc+tw>0?tc/(tc+tw):0, rec=tc/40;
+        gapData.combined.f1.push(p+rec>0?200*p*rec/(p+rec):0);
+    });
+
+    new Chart(document.getElementById('chart-sweep-gap'), {
+        type: 'line',
+        data: { labels: gapValues, datasets: [
+            { label: '#1 정답', data: gapData.ds1.correct, borderColor: '#3b82f6', tension:.3, pointRadius:2 },
+            { label: '#1 오답', data: gapData.ds1.wrong, borderColor: '#3b82f688', borderDash:[5,5], tension:.3, pointRadius:2 },
+            { label: '#2 정답', data: gapData.ds2.correct, borderColor: '#22c55e', tension:.3, pointRadius:2 },
+            { label: '#2 오답', data: gapData.ds2.wrong, borderColor: '#22c55e88', borderDash:[5,5], tension:.3, pointRadius:2 },
+            { label: '통합 F1', data: gapData.combined.f1, borderColor: '#f59e0b', borderWidth:3, tension:.3, pointRadius:3, yAxisID:'y1' },
+        ]},
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#94a3b8'}}},
+            scales:{
+                x:{title:{display:true,text:'gap 임계값',color:'#94a3b8'},ticks:{color:'#64748b'}},
+                y:{title:{display:true,text:'개수',color:'#94a3b8'},ticks:{color:'#64748b'},min:0,max:22},
+                y1:{position:'right',title:{display:true,text:'F1 (%)',color:'#f59e0b'},ticks:{color:'#f59e0b'},min:0,max:100,grid:{display:false}}
+            }
+        }
+    });
+
+    // f_th sweep (gap fixed at 0.08)
+    const fValues = [];
+    for (let v = 0.75; v <= 0.98; v += 0.01) fValues.push(parseFloat(v.toFixed(2)));
+
+    const fData = {};
+    ['ds1','ds2','combined'].forEach(k => fData[k] = { correct:[], wrong:[], f1:[] });
+
+    fValues.forEach(fTh => {
+        const f = { wf:.4, we:.35, wq:.25, gapTh:.08, fTh };
+        const r1 = simulate(DS1, f), r2 = simulate(DS2, f);
+        fData.ds1.correct.push(r1.correct);
+        fData.ds1.wrong.push(r1.wrong);
+        fData.ds2.correct.push(r2.correct);
+        fData.ds2.wrong.push(r2.wrong);
+        const tc=r1.correct+r2.correct, tw=r1.wrong+r2.wrong;
+        const p=tc+tw>0?tc/(tc+tw):0, rec=tc/40;
+        fData.combined.f1.push(p+rec>0?200*p*rec/(p+rec):0);
+    });
+
+    new Chart(document.getElementById('chart-sweep-f'), {
+        type: 'line',
+        data: { labels: fValues, datasets: [
+            { label: '#1 정답', data: fData.ds1.correct, borderColor: '#3b82f6', tension:.3, pointRadius:2 },
+            { label: '#1 오답', data: fData.ds1.wrong, borderColor: '#3b82f688', borderDash:[5,5], tension:.3, pointRadius:2 },
+            { label: '#2 정답', data: fData.ds2.correct, borderColor: '#22c55e', tension:.3, pointRadius:2 },
+            { label: '#2 오답', data: fData.ds2.wrong, borderColor: '#22c55e88', borderDash:[5,5], tension:.3, pointRadius:2 },
+            { label: '통합 F1', data: fData.combined.f1, borderColor: '#f59e0b', borderWidth:3, tension:.3, pointRadius:3, yAxisID:'y1' },
+        ]},
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{labels:{color:'#94a3b8'}}},
+            scales:{
+                x:{title:{display:true,text:'f 임계값',color:'#94a3b8'},ticks:{color:'#64748b'}},
+                y:{title:{display:true,text:'개수',color:'#94a3b8'},ticks:{color:'#64748b'},min:0,max:22},
+                y1:{position:'right',title:{display:true,text:'F1 (%)',color:'#f59e0b'},ticks:{color:'#f59e0b'},min:0,max:100,grid:{display:false}}
+            }
+        }
+    });
+}
+
+// 7. 최종 제안
+{
+    // Find best overall
+    let best = null, bestF1 = 0;
+    FORMULAS.forEach(f => {
+        const r1 = allResults[f.id].ds1, r2 = allResults[f.id].ds2;
+        const tc=r1.correct+r2.correct, tw=r1.wrong+r2.wrong;
+        const p=tc+tw>0?tc/(tc+tw):0, rec=tc/40;
+        const f1=p+rec>0?2*p*rec/(p+rec):0;
+        if (f1 > bestF1) { bestF1=f1; best=f; }
+    });
+
+    const r1b = allResults[best.id].ds1, r2b = allResults[best.id].ds2;
+
+    document.getElementById('final-rec').innerHTML = `
+        <h3>최종 권장 공식: <span style="color:${best.color}">${best.id} (${best.name})</span></h3>
+        <ul>
+            <li><strong>가중치</strong>: f×${best.wf} + e×${best.we} + qMin×${best.wq}</li>
+            <li><strong>판정 조건</strong>: compositeGap ≥ ${best.gapTh} <strong>OR</strong> 1위 f ≥ ${best.fTh}</li>
+            <li><strong>DS#1 결과</strong>: 정답 ${r1b.correct}, 오답 ${r1b.wrong}, null ${r1b.nullCount} (정답률 ${(r1b.accuracy*100).toFixed(0)}%)</li>
+            <li><strong>DS#2 결과</strong>: 정답 ${r2b.correct}, 오답 ${r2b.wrong}, null ${r2b.nullCount} (정답률 ${(r2b.accuracy*100).toFixed(0)}%)</li>
+            <li><strong>통합 F1</strong>: <span class="badge b-ok">${(bestF1*100).toFixed(1)}%</span></li>
+        </ul>
+        <div style="margin-top:16px;padding:12px;background:#0f172a;border-radius:8px;font-size:13px;">
+            <strong style="color:#60a5fa">구현 코드:</strong><br>
+            <pre style="color:#e2e8f0;margin-top:8px;font-family:'Cascadia Code',monospace;font-size:12px;">
+const comp = f * ${best.wf} + e * ${best.we} + qMin * ${best.wq};
+// 각 선택지 comp 계산 후 정렬
+const sorted = choices.sort((a, b) => b.comp - a.comp);
+const gap = sorted[0].comp - sorted[1].comp;
+const isMarked = gap >= ${best.gapTh} || sorted[0].f >= ${best.fTh};
+            </pre>
+        </div>
+        <div style="margin-top:16px;color:#94a3b8;font-size:12px;">
+            <strong>주의사항:</strong>
+            <ul style="margin-top:4px">
+                <li>이 공식은 sampleCell 이후 단계에서 적용 — BFS/블롭 감지는 별도</li>
+                <li>오답(wrong) 발생 시 → 해당 문항은 multiMarked or 수동교정 필요 표시 권장</li>
+                <li>더 많은 데이터셋으로 검증 필요 — 2개 데이터셋은 과적합 위험</li>
+            </ul>
+        </div>
+    `;
+}
+</script>
+</body>
+</html>

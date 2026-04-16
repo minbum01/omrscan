@@ -21,9 +21,11 @@ const Shortcuts = {
         const tag = e.target.tagName;
         const isInputFocus = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 
-        // 채점 탭에서는 분석 탭 단축키 무시
+        // 채점/교정 탭에서는 분석 탭 단축키 무시
         const scoringView = document.getElementById('scoring-view');
         if (scoringView && scoringView.style.display !== 'none') return;
+        const correctionView = document.getElementById('correction-view');
+        if (correctionView && correctionView.style.display !== 'none') return;
 
         // Delete: 영역 선택되어 있으면 input 포커스와 무관하게 삭제 가능 (단, 텍스트 입력 중이 아닐 때)
         if (e.key === 'Delete' && !isInputFocus && CanvasManager.selectedRoiIdx >= 0) {

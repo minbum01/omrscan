@@ -157,7 +157,8 @@ const SessionManager = {
         App.state.answerKey = null;
 
         // 교시 초기화 — 반드시 App.state.images = [] 직후에 호출
-        App._initPeriods();
+        if (typeof App._initPeriods === 'function') App._initPeriods();
+        else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
 
         if (!this.isElectron) {
             localStorage.setItem(this.CURRENT_KEY, name);
@@ -219,7 +220,8 @@ const SessionManager = {
 
             // 교시 복원 — 반드시 App.state.images = [] 직후에 호출
             // 저장된 periods 배열이 있으면 교시 이름 복원, 없으면 자동 1교시 생성
-            App._initPeriods(data.periods || null);
+            if (typeof App._initPeriods === 'function') App._initPeriods(data.periods || null);
+            else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
 
             this.currentSessionName = name;
             // 시험 이름/일자 복원 (없으면 세션 키에서 파싱 시도)
@@ -265,6 +267,7 @@ const SessionManager = {
                                 : [],
                             results:     savedResult && savedResult.results ? savedResult.results : null,
                             gradeResult: savedResult ? savedResult.gradeResult : null,
+                            _correctionConfirmed: savedResult ? (savedResult._correctionConfirmed || false) : false,
                         };
 
                         if (isDeleted) {
@@ -389,6 +392,7 @@ const SessionManager = {
             filename:        overrideFilename || getPristine(img),
             pristineFilename: getPristine(img),
             periodId:        periodId || img.periodId || 'p1',  // 교시 분배용
+            _correctionConfirmed: img._correctionConfirmed || false,
             rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
             gradeResult: img.gradeResult || null,
             results: (img.results || []).map(res => ({

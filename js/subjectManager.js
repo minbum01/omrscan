@@ -423,9 +423,11 @@ const SubjectManager = {
                 // 21행(index 20)부터 읽기
                 let dataRows = allLines.slice(20).filter(l => l);
                 if (dataRows.length === 0) {
-                    // 하위호환: 20행 이하 파일
+                    // 하위호환: 20행 이하 파일 → 구분자 있고 설명이 아닌 행만
                     dataRows = allLines.filter(l => {
                         if (!l) return false;
+                        if (l.indexOf(delimiter) < 0) return false;
+                        if (/열 순서|참고|양식|예시|입력하세요|CSV|설명|무시|보존|불필요/.test(l)) return false;
                         const first = l.split(delimiter)[0].trim();
                         return first === '' || first === '-' || /^\d/.test(first) || /^[가-힣]/.test(first);
                     });

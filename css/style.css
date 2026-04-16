@@ -717,6 +717,30 @@ body {
     color: #7c3aed !important;
 }
 
+/* 1.5배 교차 검증 별색 */
+.grid-cell-xv-conflict {
+    border: 2px solid #f59e0b !important;
+    background: #fef3c7 !important;
+}
+.grid-cell-xv-conflict .grid-cell-ans {
+    color: #d97706 !important;
+}
+.grid-cell-xv-warn {
+    border: 2px dashed #fb923c !important;
+}
+/* 1.5배 자동 감지 (정배 null → 1.5배 감지) */
+.grid-cell-xv-auto {
+    background: #dcfce7 !important;
+    border: 2px solid #22c55e !important;
+}
+.grid-cell-xv-auto .grid-cell-ans {
+    color: #16a34a !important;
+    font-weight: 800 !important;
+}
+.grid-cell-xv-auto .grid-cell-num {
+    color: #16a34a !important;
+}
+
 /* ---- 로딩 오버레이 ---- */
 .loading-overlay {
     position: fixed;

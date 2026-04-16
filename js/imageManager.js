@@ -218,7 +218,10 @@ const ImageManager = {
 
             // 상태 태그 (파일명 앞에 붙임)
             let tag = '';
-            if (hasCorrected) {
+            if (hasCorrected && imgObj._correctionConfirmed) {
+                tag = `<span class="image-tag" style="background:#166534;color:#4ade80;">확정</span>`;
+                if (imgObj.gradeResult) tag += `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
+            } else if (hasCorrected) {
                 tag = `<span class="image-tag tag-corrected">교정됨</span>`;
                 if (imgObj.gradeResult) tag += `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
             } else if (hasIssue) {
@@ -295,7 +298,7 @@ const ImageManager = {
 
             this.updateList();
             // 이미지별 진하기 복원
-            const imgIntensity = imgObj.intensity || 250;
+            const imgIntensity = imgObj.intensity || 115;
             CanvasManager.intensity = imgIntensity;
             const intInput = document.getElementById('adj-intensity');
             const intVal = document.getElementById('adj-intensity-val');

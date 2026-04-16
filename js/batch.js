@@ -14,6 +14,10 @@ const BatchProcess = {
             return;
         }
 
+        // 일괄채점 = 강제 리셋 — 모든 교정/확정 초기화
+        images.forEach(img => {
+            img._correctionConfirmed = false;
+        });
 
         // 현재 선택된 이미지를 템플릿으로 (ROI가 있는 경우)
         const currentImg = App.getCurrentImage();
@@ -23,7 +27,6 @@ const BatchProcess = {
             return;
         }
 
-        this._forceReset = forceResetAll;
         this._template = template;
 
         const overlay = this.createModal(images.length);
@@ -39,52 +42,48 @@ const BatchProcess = {
 
             const imgObj = images[processed];
 
+            try {
+
             const template = this._template;
-            // ROI가 없는 경우에만 템플릿 적용 (forceReset 이더라도 기존 ROI 유지)
-            if (imgObj.rois.length === 0) {
+            // 템플릿 이미지가 아니면 항상 템플릿 ROI로 덮어쓰기
+            // (타입 변경, 설정 변경, 박스 추가/삭제 모두 반영)
+            if (imgObj !== template) {
                 imgObj.rois = template.rois.map(r => ({
                     x: r.x, y: r.y, w: r.w, h: r.h,
                     settings: r.settings
                         ? { ...r.settings, choiceLabels: r.settings.choiceLabels ? [...r.settings.choiceLabels] : undefined, codeList: r.settings.codeList ? [...r.settings.codeList] : [] }
-                        : UI.defaultSettings()
+                        : UI.defaultSettings(),
+                    blobPattern: r.blobPattern || null,
                 }));
             }
 
-            // 수기 교정된 row 백업 (항상 수행)
-            // run(false): 모든 교정 복원
-            // run(true): OMR이 여전히 미인식(undetected/빈칸)일 때만 복원
-            const correctedBackup = {};
-            if (imgObj.results) {
-                imgObj.results.forEach((res, resIdx) => {
-                    if (res && res.rows) {
-                        res.rows.forEach(row => {
-                            if (row.corrected) {
-                                const key = `${resIdx}_${row.questionNumber}`;
-                                correctedBackup[key] = { markedAnswer: row.markedAnswer, markedIndices: row.markedIndices };
-                            }
-                        });
-                    }
-                });
-            }
-
+            // 일괄채점 = 강제 리셋 — 이전 결과/교정 모두 초기화
             imgObj.results = [];
             imgObj.validationErrors = [];
 
             // 이미지별 진하기 적용 + 캔버스 생성
             const imgIntensity = imgObj.intensity || CanvasManager.intensity || 100;
             let batchCanvas = null;
-            if (imgIntensity === 100) {
-                batchCanvas = document.createElement('canvas');
-                batchCanvas.width = imgObj.imgElement.naturalWidth || imgObj.imgElement.width;
-                batchCanvas.height = imgObj.imgElement.naturalHeight || imgObj.imgElement.height;
-                const bctx = batchCanvas.getContext('2d', { willReadFrequently: true });
-                bctx.drawImage(imgObj.imgElement, 0, 0);
-            } else {
-                // 이미지별 진하기 적용
+            const imgEl = imgObj.imgElement;
+            const bw = imgEl.naturalWidth || imgEl.width;
+            const bh = imgEl.naturalHeight || imgEl.height;
+            if (!bw || !bh) {
+                console.warn(`[Batch] 이미지 ${processed + 1}: 크기 0 — 건너뜀`);
+                throw new Error('이미지 크기 0 (미로드)');
+            }
+            if (imgIntensity !== 100) {
                 const prevIntensity = CanvasManager.intensity;
                 CanvasManager.intensity = imgIntensity;
                 batchCanvas = CanvasManager._getIntensifiedImage(imgObj);
                 CanvasManager.intensity = prevIntensity;
+            }
+            // intensified가 없으면 원본으로 fallback
+            if (!batchCanvas) {
+                batchCanvas = document.createElement('canvas');
+                batchCanvas.width = bw;
+                batchCanvas.height = bh;
+                const bctx = batchCanvas.getContext('2d', { willReadFrequently: true });
+                bctx.drawImage(imgEl, 0, 0);
             }
 
             imgObj.rois.forEach((roi, idx) => {
@@ -96,7 +95,7 @@ const BatchProcess = {
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
                 const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
-                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
 
                 const startNum = s.startNum || 1;
                 const expectedQ = s.numQuestions || 20;
@@ -135,39 +134,6 @@ const BatchProcess = {
                 });
             });
 
-            // 수기 교정 복원
-            // run(false): 항상 복원
-            // run(true): OMR이 미인식(undetected) 또는 빈 답(markedAnswer===null)일 때만 복원
-            if (Object.keys(correctedBackup).length > 0) {
-                imgObj.results.forEach((res, resIdx) => {
-                    if (res && res.rows) {
-                        res.rows.forEach(row => {
-                            const key = `${resIdx}_${row.questionNumber}`;
-                            if (correctedBackup[key]) {
-                                const shouldRestore = !this._forceReset
-                                    || row.undetected
-                                    || row.markedAnswer === null;
-                                if (shouldRestore) {
-                                    row.markedAnswer = correctedBackup[key].markedAnswer;
-                                    row.markedIndices = correctedBackup[key].markedIndices;
-                                    row.corrected = true;
-                                    row._userCorrected = true;
-                                    row.undetected = false;
-                                    // blob isMarked 동기화 (오버레이 색상 반영)
-                                    if (row.blobs) {
-                                        row.blobs.forEach((b, bi) => {
-                                            b.isMarked = Array.isArray(row.markedIndices)
-                                                ? row.markedIndices.includes(bi + 1)
-                                                : (row.markedAnswer === bi + 1);
-                                        });
-                                    }
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-
             ImageManager.applyPhonePrefix(imgObj);
 
             // 과목별 채점 (과목관리 또는 ROI 직접 정답 기반)
@@ -176,11 +142,17 @@ const BatchProcess = {
             if (hasAnswers || App.state.answerKey) {
                 // ROI별 과목 정답 로드
                 imgObj.rois.forEach(roi => {
-                    if (roi.settings && roi.settings.type === 'subject_answer' && roi.settings.name) {
+                    if (roi.settings && roi.settings.type === 'subject_answer') {
                         UI._loadAnswersFromSubject(roi);
                     }
                 });
                 imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
+            }
+
+            } catch (err) {
+                console.error(`[Batch] 이미지 ${processed + 1} 처리 오류:`, err);
+                imgObj.validationErrors = imgObj.validationErrors || [];
+                imgObj.validationErrors.push({ type: 'process_error', message: err.message });
             }
 
             processed++;
@@ -258,15 +230,16 @@ const BatchProcess = {
                 return;
             }
 
-            // ROI 적용 (ROI 없는 이미지에만 템플릿 적용, forceReset이어도 기존 ROI 유지)
-            if (imgObj.rois.length === 0) {
+            // ROI 동기화: 템플릿 이미지가 아니면 항상 덮어쓰기
+            if (imgObj !== template) {
                 imgObj.rois = template.rois.map(r => ({
                     x: r.x, y: r.y, w: r.w, h: r.h,
                     settings: r.settings
                         ? { ...r.settings,
                             choiceLabels: r.settings.choiceLabels ? [...r.settings.choiceLabels] : undefined,
                             codeList: r.settings.codeList ? [...r.settings.codeList] : [] }
-                        : UI.defaultSettings()
+                        : UI.defaultSettings(),
+                    blobPattern: r.blobPattern || null,
                 }));
             }
 
@@ -310,7 +283,7 @@ const BatchProcess = {
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
                 const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
-                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
 
                 const startNum  = s.startNum   || 1;
                 const expectedQ = s.numQuestions || 20;
@@ -368,7 +341,7 @@ const BatchProcess = {
             if (hasAnswers || period.answerKey) {
                 App.state.answerKey = period.answerKey || null;
                 imgObj.rois.forEach(roi => {
-                    if (roi.settings && roi.settings.type === 'subject_answer' && roi.settings.name) {
+                    if (roi.settings && roi.settings.type === 'subject_answer') {
                         UI._loadAnswersFromSubject(roi);
                     }
                 });

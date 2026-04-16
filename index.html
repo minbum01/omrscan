@@ -78,6 +78,8 @@
     <div id="main-tab-bar" style="display:flex; gap:0; border-bottom:2px solid var(--border); background:var(--bg-card);">
         <button class="main-tab active" id="tab-analysis" onclick="switchMainTab('analysis')"
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--blue); color:#fff; cursor:pointer; border-radius:6px 6px 0 0;">분석</button>
+        <button class="main-tab" id="tab-correction" onclick="switchMainTab('correction')"
+            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">교정 <span id="tab-correction-badge" style="display:none; margin-left:4px; padding:1px 6px; background:#f59e0b; color:#fff; border-radius:8px; font-size:10px;">0</span></button>
         <button class="main-tab" id="tab-scoring" onclick="switchMainTab('scoring')"
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점</button>
     </div>
@@ -129,8 +131,8 @@
                 <!-- 진하기 영역 -->
                 <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
                     <span style="font-size:11px; font-weight:600;">진하기</span>
-                    <input type="range" id="adj-intensity" min="0" max="350" value="250" step="5" style="width:80px;">
-                    <span id="adj-intensity-val" style="font-size:11px; min-width:30px;">250</span>%
+                    <input type="range" id="adj-intensity" min="0" max="350" value="115" step="5" style="width:80px;">
+                    <span id="adj-intensity-val" style="font-size:11px; min-width:30px;">115</span>%
                     <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-intensity-all" checked> 전체</label>
                 </div>
                 <!-- 회전 영역 -->
@@ -193,6 +195,11 @@
 
     </div>
 
+    <!-- 교정 탭: 전체 페이지 -->
+    <div id="correction-view" style="display:none; flex:1; overflow-y:auto; padding:20px; background:var(--bg);">
+        <div id="correction-content" style="max-width:1400px; margin:0 auto;"></div>
+    </div>
+
     <!-- 채점 탭: 전체 페이지 -->
     <div id="scoring-view" style="display:none; flex:1; overflow-y:auto; padding:20px; background:var(--bg);">
         <div id="scoring-content" style="max-width:1200px; margin:0 auto;"></div>
@@ -200,29 +207,30 @@
 
     <script>
     function switchMainTab(tab) {
-        const analysisView = document.getElementById('analysis-view');
-        const scoringView = document.getElementById('scoring-view');
-        const tabAnalysis = document.getElementById('tab-analysis');
-        const tabScoring = document.getElementById('tab-scoring');
-
-        if (tab === 'analysis') {
-            analysisView.style.display = '';
-            scoringView.style.display = 'none';
-            tabAnalysis.style.background = 'var(--blue)';
-            tabAnalysis.style.color = '#fff';
-            tabScoring.style.background = 'var(--bg-input)';
-            tabScoring.style.color = 'var(--text-secondary)';
-        } else {
-            analysisView.style.display = 'none';
-            scoringView.style.display = '';
-            tabScoring.style.background = 'var(--blue)';
-            tabScoring.style.color = '#fff';
-            tabAnalysis.style.background = 'var(--bg-input)';
-            tabAnalysis.style.color = 'var(--text-secondary)';
-            // 채점 탭 내용 렌더링
-            if (typeof Scoring !== 'undefined') {
-                Scoring.renderScoringPanel(document.getElementById('scoring-content'));
+        const views = {
+            analysis:   document.getElementById('analysis-view'),
+            correction: document.getElementById('correction-view'),
+            scoring:    document.getElementById('scoring-view'),
+        };
+        const tabs = {
+            analysis:   document.getElementById('tab-analysis'),
+            correction: document.getElementById('tab-correction'),
+            scoring:    document.getElementById('tab-scoring'),
+        };
+        Object.keys(views).forEach(k => {
+            views[k].style.display = (k === tab) ? '' : 'none';
+            if (k === tab) {
+                tabs[k].style.background = 'var(--blue)';
+                tabs[k].style.color = '#fff';
+            } else {
+                tabs[k].style.background = 'var(--bg-input)';
+                tabs[k].style.color = 'var(--text-secondary)';
             }
+        });
+        if (tab === 'scoring' && typeof Scoring !== 'undefined') {
+            Scoring.renderScoringPanel(document.getElementById('scoring-content'));
+        } else if (tab === 'correction' && typeof Correction !== 'undefined') {
+            Correction.render(document.getElementById('correction-content'));
         }
     }
     </script>
@@ -283,5 +291,6 @@
     <script src="js/periodManager.js"></script>
     <script src="js/subjectManager.js"></script>
     <script src="js/scoring.js"></script>
+    <script src="js/correction.js"></script>
 </body>
 </html>

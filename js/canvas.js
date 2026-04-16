@@ -244,6 +244,7 @@ const CanvasManager = {
             const dy = pos.y - this.roiDragStartY;
             const roi = imgObj.rois[this.selectedRoiIdx];
             const orig = this.roiOriginal;
+            if (!roi || !orig) return;
 
             switch (this.roiDragMode) {
                 case 'move':
@@ -336,13 +337,18 @@ const CanvasManager = {
             const orig = this.roiOriginal;
             const roi = imgObj ? imgObj.rois[this.selectedRoiIdx] : null;
 
+            if (!imgObj || !roi || !orig) {
+                this.roiDragMode = null;
+                return;
+            }
+
             // 실제로 이동/크기가 변경되었는지 확인
-            const moved = orig && roi && (
+            const moved = (
                 Math.abs(roi.x - orig.x) > 8 || Math.abs(roi.y - orig.y) > 8 ||
                 Math.abs(roi.w - orig.w) > 8 || Math.abs(roi.h - orig.h) > 8
             );
 
-            if (moved && imgObj) {
+            if (moved) {
                 imgObj.results = null;
                 imgObj.gradeResult = null;
                 this.render();
@@ -433,7 +439,7 @@ const CanvasManager = {
                 const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
 
                 const imageData = this.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
-                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds);
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
 
                 // 버블 크기만 저장 (좌표는 이미지마다 새로 찾음)
                 if (bSize > 0) s.bubbleSize = bSize;
@@ -556,7 +562,7 @@ const CanvasManager = {
     },
 
     // 진하기(감마) 설정
-    intensity: 250,
+    intensity: 115,
     _intensityCache: new Map(),
     bubbleSize: 0, // 0 = 자동
 
@@ -565,50 +571,33 @@ const CanvasManager = {
         const intensityInput = document.getElementById('adj-intensity');
         const intensityVal = document.getElementById('adj-intensity-val');
 
+        const allCb = document.getElementById('adj-intensity-all');
+
         intensityInput.addEventListener('input', () => {
             this.intensity = parseInt(intensityInput.value);
             intensityVal.textContent = intensityInput.value;
             this._intensityCache.clear();
-            this.render(); // 현재 이미지만 적용
+
+            if (allCb.checked) {
+                // 전체 모드: 모든 이미지에 intensity 저장
+                (App.state.images || []).forEach(imgObj => { imgObj.intensity = this.intensity; });
+            } else {
+                // 개별 모드: 현재 이미지만
+                const curImg = App.getCurrentImage();
+                if (curImg) curImg.intensity = this.intensity;
+            }
+            this.render();
         });
 
-        // "전체 적용" 체크박스: 체크 시 현재 intensity를 모든 이미지에 반영
-        document.getElementById('adj-intensity-all').addEventListener('change', (e) => {
-            if (!e.target.checked) return;
-            if (this.intensity === 100) { e.target.checked = false; return; }
+        // "전체" 체크박스: 토글 유지. 체크 시 현재 값을 전체에 즉시 반영
+        allCb.addEventListener('change', (e) => {
+            if (!e.target.checked) return; // 해제 시 아무것도 안 함
             const images = App.state.images;
             if (!images || images.length === 0) { e.target.checked = false; return; }
-            const gamma = this.intensity / 100;
-            const lut = new Uint8Array(256);
-            for (let i = 0; i < 256; i++) lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
-            let done = 0;
-            Toast.info(`전체 이미지 진하기 적용 중... (0/${images.length})`);
-            const processNext = () => {
-                if (done >= images.length) {
-                    Toast.success(`완료 (${images.length}장)`);
-                    e.target.checked = false;
-                    return;
-                }
-                const imgObj = images[done];
-                const img = imgObj.imgElement;
-                const key = (imgObj.src || img.src) + '_' + this.intensity;
-                if (!this._intensityCache.has(key)) {
-                    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-                    const off = document.createElement('canvas');
-                    off.width = w; off.height = h;
-                    const ctx = off.getContext('2d', { willReadFrequently: true });
-                    ctx.drawImage(img, 0, 0);
-                    const imgData = ctx.getImageData(0, 0, w, h);
-                    const d = imgData.data;
-                    for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i+1] = lut[d[i+1]]; d[i+2] = lut[d[i+2]]; }
-                    ctx.putImageData(imgData, 0, 0);
-                    this._intensityCache.set(key, off);
-                }
-                done++;
-                if (done % 10 === 0) Toast.info(`전체 이미지 진하기 적용 중... (${done}/${images.length})`);
-                setTimeout(processNext, 0);
-            };
-            processNext();
+            // 현재 intensity를 모든 이미지에 반영
+            images.forEach(imgObj => { imgObj.intensity = this.intensity; });
+            this._intensityCache.clear();
+            Toast.success(`전체 이미지 진하기 ${this.intensity} 적용`);
         });
 
         document.getElementById('adj-reset').addEventListener('click', () => {
@@ -616,6 +605,12 @@ const CanvasManager = {
             intensityInput.value = 100;
             intensityVal.textContent = '100';
             this._intensityCache.clear();
+            if (allCb.checked) {
+                (App.state.images || []).forEach(imgObj => { imgObj.intensity = 100; });
+            } else {
+                const curImg = App.getCurrentImage();
+                if (curImg) curImg.intensity = 100;
+            }
             this.render();
         });
 
@@ -645,7 +640,9 @@ const CanvasManager = {
         const img = imgObj.imgElement;
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
-        const key = (imgObj.src || img.src) + '_' + this.intensity;
+        if (!w || !h) return null; // 이미지 미로드 시 원본 사용
+
+        const key = (imgObj.src || img.src || 'img_' + (imgObj._originalName || '')) + '_' + this.intensity;
 
         if (this._intensityCache.has(key)) return this._intensityCache.get(key);
 
@@ -788,13 +785,28 @@ const CanvasManager = {
     // 분석용 이미지 데이터 (진하기 적용)
     // srcCanvas를 전달하면 우선 사용 (batch용: 이미 imgObj.intensity로 보정된 캔버스)
     getAdjustedImageData(imgObj, x, y, w, h, srcCanvas) {
-        if (srcCanvas) {
-            return srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
-        }
+        // 좌표 클램핑 — 기울기/회전 후 이미지 크기가 달라질 수 있음
+        const _clampAndGet = (canvas) => {
+            const cw = canvas.width, ch = canvas.height;
+            const cx = Math.max(0, Math.round(x));
+            const cy = Math.max(0, Math.round(y));
+            const cW = Math.min(Math.round(w), cw - cx);
+            const cH = Math.min(Math.round(h), ch - cy);
+            if (cW <= 0 || cH <= 0) {
+                // 영역이 이미지 밖 → 빈 ImageData 반환
+                const off = document.createElement('canvas');
+                off.width = Math.max(1, Math.round(w));
+                off.height = Math.max(1, Math.round(h));
+                return off.getContext('2d').getImageData(0, 0, off.width, off.height);
+            }
+            return canvas.getContext('2d', { willReadFrequently: true }).getImageData(cx, cy, cW, cH);
+        };
+
+        if (srcCanvas) return _clampAndGet(srcCanvas);
+
         const intensified = this._getIntensifiedImage(imgObj);
-        if (intensified) {
-            return intensified.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
-        }
+        if (intensified) return _clampAndGet(intensified);
+
         // 캐시된 원본 캔버스 사용
         const img = imgObj.imgElement;
         const key = imgObj.src || img.src;
@@ -807,7 +819,7 @@ const CanvasManager = {
             this._srcCanvasCache = off;
             this._srcCanvasCacheKey = key;
         }
-        return this._srcCanvasCache.getContext('2d', { willReadFrequently: true }).getImageData(x, y, w, h);
+        return _clampAndGet(this._srcCanvasCache);
     },
 
     // --- 렌더링 ---

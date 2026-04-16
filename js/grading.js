@@ -146,7 +146,7 @@ const Grading = {
         // 이미 분석된 이미지 재채점
         App.state.images.forEach(img => {
             if (img.results) {
-                img.gradeResult = this.grade(img.results);
+                img.gradeResult = this.grade(img.results, img);
             }
         });
 
@@ -253,6 +253,12 @@ const Grading = {
             const answers = this.getAnswersForRoi(resIdx, imgObj);
             if (!answers || answers.length === 0) return;
 
+            // 과목관리에서 배점 정보 가져오기
+            const roiName = (roi.settings.name || '').trim();
+            const subj = (typeof SubjectManager !== 'undefined' && roiName) ? SubjectManager.findByName(roiName) : null;
+            const roiScorePerQ = (subj && subj.scorePerQuestion) || scorePerQ;
+            const hasCustomScore = subj && subj.useCustomScore && Array.isArray(subj.scoreMap) && subj.scoreMap.length > 0;
+
             res.rows.forEach((row, rowIdx) => {
                 const ansIdx = row.questionNumber - (roi.settings.startNum || 1);
                 const correct = ansIdx >= 0 && ansIdx < answers.length ? answers[ansIdx] : null;
@@ -269,9 +275,14 @@ const Grading = {
                     return;
                 }
 
-                totalPossible += scorePerQ;
+                // 차등배점: scoreMap[ansIdx] 또는 기본 배점
+                const thisScore = hasCustomScore
+                    ? (parseFloat(subj.scoreMap[ansIdx]) || roiScorePerQ)
+                    : roiScorePerQ;
+
+                totalPossible += thisScore;
                 const isCorrect = row.markedAnswer === correct;
-                const qScore = isCorrect ? scorePerQ : 0;
+                const qScore = isCorrect ? thisScore : 0;
                 if (isCorrect) totalCorrect++;
                 else totalWrong++;
                 totalScore += qScore;

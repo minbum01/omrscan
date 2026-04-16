@@ -1999,7 +1999,9 @@ const Scoring = {
         const cards = subjects.map(name => {
             const s = r.subjects[name] || {};
             const score = typeof s.score === 'number' ? s.score : 0;
-            const max = typeof s.totalPossible === 'number' ? s.totalPossible : 0;
+            // 과목관리의 totalScore 우선 사용
+            const subj = (typeof SubjectManager !== 'undefined') ? SubjectManager.findByName(name) : null;
+            const max = (subj && subj.totalScore) || (typeof s.totalPossible === 'number' ? s.totalPossible : 0);
             const pct = max > 0 ? (score / max) * 100 : 0;
             const rk = s.rank || '-';
             const pc = typeof s.percentile === 'number' ? s.percentile.toFixed(1) : '-';
@@ -2102,9 +2104,9 @@ const Scoring = {
         subjects.forEach((name, i) => {
             const s = r.subjects[name] || {};
             const st = subjStats[name] || {};
-            const max = s.totalPossible || 1;
-            const myPct = ((s.score || 0) / max) * 100;
-            const avgPct = ((st.mean || 0) / max) * 100;
+            const max = s.totalPossible || 0;
+            const myPct = max > 0 ? ((s.score || 0) / max) * 100 : 0;
+            const avgPct = max > 0 ? ((st.mean || 0) / max) * 100 : 0;
             const gx = pad.l + groupW * i + groupW * 0.5;
             const myH = (myPct / 100) * ih;
             svg += `<rect x="${gx - barW - 2}" y="${pad.t + ih - myH}" width="${barW}" height="${myH}" fill="url(#barMe)" rx="1"/>`;
@@ -2227,8 +2229,8 @@ const Scoring = {
         const gap = 60;
         subjects.forEach((name, i) => {
             const s = r.subjects[name] || {};
-            const max = s.totalPossible || 1;
-            const pct = ((s.score || 0) / max);
+            const max = s.totalPossible || 0;
+            const pct = max > 0 ? ((s.score || 0) / max) : 0;
             const thisCx = subjects.length === 1 ? cx : (cx - gap/2 + i * gap);
 
             svg += `<circle cx="${thisCx}" cy="${cy}" r="${outer}" fill="#f4f4f5"/>`;

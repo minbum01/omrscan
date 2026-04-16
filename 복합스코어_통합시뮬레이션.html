@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMR Composite Score - 6-Dataset Cross Simulation</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card2: #334155;
+  --accent: #38bdf8;
+  --accent2: #818cf8;
+  --green: #4ade80;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --orange: #fb923c;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --border: #475569;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:'Segoe UI',Tahoma,sans-serif; padding:20px; line-height:1.6; }
+h1 { text-align:center; color:var(--accent); font-size:1.8rem; margin-bottom:8px; }
+h2 { color:var(--accent2); font-size:1.3rem; margin:30px 0 15px; border-bottom:2px solid var(--accent2); padding-bottom:6px; }
+h3 { color:var(--accent); font-size:1.1rem; margin:20px 0 10px; }
+.subtitle { text-align:center; color:var(--muted); margin-bottom:30px; font-size:0.95rem; }
+.card { background:var(--card); border-radius:12px; padding:20px; margin-bottom:20px; border:1px solid var(--border); }
+table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+th, td { padding:6px 10px; border:1px solid var(--border); text-align:center; }
+th { background:var(--card2); color:var(--accent); font-weight:600; position:sticky; top:0; }
+td.correct { background:rgba(74,222,128,0.15); color:var(--green); }
+td.wrong { background:rgba(248,113,113,0.15); color:var(--red); }
+td.null-result { background:rgba(251,191,36,0.15); color:var(--yellow); }
+td.best { background:rgba(56,189,248,0.2); color:var(--accent); font-weight:700; }
+.chart-container { position:relative; height:350px; margin:15px 0; }
+.chart-container-wide { position:relative; height:400px; margin:15px 0; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; }
+.formula-tag { display:inline-block; padding:2px 8px; border-radius:4px; font-weight:600; font-size:0.8rem; margin-right:6px; }
+.ft-a { background:#38bdf833; color:#38bdf8; }
+.ft-b { background:#818cf833; color:#818cf8; }
+.ft-c { background:#4ade8033; color:#4ade80; }
+.ft-d { background:#fbbf2433; color:#fbbf24; }
+.ft-e { background:#fb923c33; color:#fb923c; }
+.ft-f { background:#f4727133; color:#f87171; }
+details { margin:10px 0; }
+details summary { cursor:pointer; color:var(--accent); font-weight:600; padding:8px 0; }
+details summary:hover { color:var(--accent2); }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700; }
+.badge-ok { background:var(--green); color:#000; }
+.badge-fail { background:var(--red); color:#fff; }
+.badge-null { background:var(--yellow); color:#000; }
+.rec-box { background:linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border:2px solid var(--accent); border-radius:12px; padding:25px; margin:20px 0; }
+.rec-box h3 { color:var(--green); font-size:1.3rem; }
+pre { background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:15px; overflow-x:auto; font-size:0.82rem; color:#93c5fd; line-height:1.5; }
+.tab-bar { display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap; }
+.tab-btn { padding:6px 14px; border:1px solid var(--border); background:var(--card2); color:var(--muted); border-radius:6px 6px 0 0; cursor:pointer; font-size:0.82rem; }
+.tab-btn.active { background:var(--card); color:var(--accent); border-bottom-color:var(--card); }
+.tab-panel { display:none; }
+.tab-panel.active { display:block; }
+.scroll-table { max-height:500px; overflow-y:auto; }
+</style>
+</head>
+<body>
+
+<h1>OMR Composite Score - 6-Dataset Cross Simulation</h1>
+<p class="subtitle">6 formulas x 6 datasets (120 questions) | Comprehensive accuracy & parameter sweep analysis</p>
+
+<div class="card">
+  <h3>Formula Definitions</h3>
+  <table>
+    <tr><th>ID</th><th>Score Formula</th><th>Decision Rule</th></tr>
+    <tr><td><span class="formula-tag ft-a">A</span></td><td>f*0.40 + e*0.35 + qMin*0.25</td><td>gap &ge; 0.08 OR f &ge; 0.90</td></tr>
+    <tr><td><span class="formula-tag ft-b">B</span></td><td>f*0.40 + e*0.35 + qMin*0.25</td><td>gap &ge; 0.08 OR f &ge; 0.85</td></tr>
+    <tr><td><span class="formula-tag ft-c">C</span></td><td>f*0.50 + e*0.30 + qMin*0.20</td><td>gap &ge; 0.08 OR f &ge; 0.85</td></tr>
+    <tr><td><span class="formula-tag ft-d">D</span></td><td>f*0.35 + e*0.45 + qMin*0.20</td><td>gap &ge; 0.08 OR f &ge; 0.85</td></tr>
+    <tr><td><span class="formula-tag ft-e">E</span></td><td>f*0.40 + e*0.35 + qMin*0.25</td><td>gap &ge; 0.06 OR f &ge; 0.82</td></tr>
+    <tr><td><span class="formula-tag ft-f">F</span></td><td>f*0.40 + e*0.35 + qMin*0.25</td><td>gap &ge; 0.10 OR f &ge; 0.92</td></tr>
+  </table>
+</div>
+
+<div id="matrix-section"></div>
+<div id="charts-section"></div>
+<div id="combined-section"></div>
+<div id="detail-section"></div>
+<div id="error-section"></div>
+<div id="sweep-section"></div>
+<div id="recommendation-section"></div>
+
+<script>
+// ============================================================
+// DATA DEFINITIONS
+// ============================================================
+var DS1 = [
+  {q:1, choices:[{f:0.500,e:0.196,qMin:0.000},{f:0.589,e:0.250,qMin:0.083},{f:0.661,e:0.250,qMin:0.125},{f:0.946,e:0.786,qMin:0.500}], ans:4},
+  {q:2, choices:[{f:0.482,e:0.179,qMin:0.000},{f:0.643,e:0.286,qMin:0.083},{f:0.607,e:0.179,qMin:0.083},{f:0.946,e:0.786,qMin:0.500}], ans:4},
+  {q:3, choices:[{f:0.875,e:0.679,qMin:0.500},{f:0.625,e:0.268,qMin:0.083},{f:0.679,e:0.268,qMin:0.063},{f:0.696,e:0.304,qMin:0.188}], ans:1},
+  {q:4, choices:[{f:0.500,e:0.214,qMin:0.000},{f:0.929,e:0.857,qMin:0.333},{f:0.661,e:0.179,qMin:0.083},{f:0.768,e:0.375,qMin:0.188}], ans:2},
+  {q:5, choices:[{f:0.893,e:0.732,qMin:0.500},{f:0.661,e:0.232,qMin:0.083},{f:0.607,e:0.179,qMin:0.063},{f:0.661,e:0.250,qMin:0.125}], ans:1},
+  {q:6, choices:[{f:0.589,e:0.250,qMin:0.000},{f:0.696,e:0.268,qMin:0.083},{f:0.893,e:0.679,qMin:0.500},{f:0.821,e:0.429,qMin:0.188}], ans:3},
+  {q:7, choices:[{f:0.518,e:0.196,qMin:0.000},{f:0.696,e:0.232,qMin:0.083},{f:0.714,e:0.250,qMin:0.063},{f:0.982,e:0.679,qMin:0.625}], ans:4},
+  {q:8, choices:[{f:0.500,e:0.196,qMin:0.000},{f:0.714,e:0.250,qMin:0.167},{f:0.714,e:0.268,qMin:0.125},{f:0.786,e:0.643,qMin:0.125}], ans:4},
+  {q:9, choices:[{f:0.518,e:0.214,qMin:0.000},{f:0.821,e:0.571,qMin:0.125},{f:0.625,e:0.179,qMin:0.063},{f:0.714,e:0.286,qMin:0.063}], ans:2},
+  {q:10, choices:[{f:0.536,e:0.196,qMin:0.000},{f:0.857,e:0.661,qMin:0.083},{f:0.589,e:0.196,qMin:0.063},{f:0.714,e:0.304,qMin:0.063}], ans:2},
+  {q:11, choices:[{f:0.518,e:0.196,qMin:0.000},{f:0.661,e:0.321,qMin:0.250},{f:0.625,e:0.268,qMin:0.063},{f:0.964,e:0.696,qMin:0.500}], ans:4},
+  {q:12, choices:[{f:0.500,e:0.214,qMin:0.000},{f:0.607,e:0.232,qMin:0.083},{f:0.571,e:0.179,qMin:0.063},{f:0.732,e:0.589,qMin:0.125}], ans:4},
+  {q:13, choices:[{f:0.464,e:0.143,qMin:0.000},{f:0.589,e:0.268,qMin:0.125},{f:0.571,e:0.232,qMin:0.063},{f:0.750,e:0.607,qMin:0.125}], ans:4},
+  {q:14, choices:[{f:0.482,e:0.179,qMin:0.000},{f:0.625,e:0.250,qMin:0.188},{f:0.554,e:0.214,qMin:0.063},{f:0.929,e:0.839,qMin:0.500}], ans:4},
+  {q:15, choices:[{f:0.482,e:0.161,qMin:0.000},{f:0.625,e:0.250,qMin:0.063},{f:0.821,e:0.661,qMin:0.313},{f:0.589,e:0.268,qMin:0.000}], ans:3},
+  {q:16, choices:[{f:0.518,e:0.214,qMin:0.000},{f:0.929,e:0.804,qMin:0.167},{f:0.607,e:0.268,qMin:0.063},{f:0.589,e:0.268,qMin:0.063}], ans:2},
+  {q:17, choices:[{f:0.518,e:0.179,qMin:0.000},{f:0.554,e:0.143,qMin:0.063},{f:0.518,e:0.196,qMin:0.063},{f:0.911,e:0.732,qMin:0.500}], ans:4},
+  {q:18, choices:[{f:0.518,e:0.196,qMin:0.000},{f:0.554,e:0.107,qMin:0.063},{f:0.911,e:0.786,qMin:0.438},{f:0.554,e:0.250,qMin:0.000}], ans:3},
+  {q:19, choices:[{f:0.500,e:0.196,qMin:0.000},{f:0.625,e:0.196,qMin:0.063},{f:0.857,e:0.714,qMin:0.375},{f:0.607,e:0.321,qMin:0.000}], ans:3},
+  {q:20, choices:[{f:0.482,e:0.179,qMin:0.000},{f:0.571,e:0.232,qMin:0.125},{f:0.500,e:0.232,qMin:0.063},{f:0.607,e:0.464,qMin:0.000}], ans:4}
+];
+
+var DS2 = [
+  {q:1, choices:[{f:0.510,e:0.184,qMin:0.000},{f:0.592,e:0.122,qMin:0.083},{f:0.490,e:0.102,qMin:0.000},{f:0.776,e:0.531,qMin:0.000}], ans:4},
+  {q:2, choices:[{f:0.469,e:0.163,qMin:0.000},{f:0.551,e:0.122,qMin:0.063},{f:0.878,e:0.592,qMin:0.000},{f:0.551,e:0.163,qMin:0.000}], ans:3},
+  {q:3, choices:[{f:0.510,e:0.204,qMin:0.000},{f:0.551,e:0.163,qMin:0.000},{f:0.857,e:0.714,qMin:0.438},{f:0.592,e:0.224,qMin:0.000}], ans:3},
+  {q:4, choices:[{f:0.490,e:0.163,qMin:0.000},{f:0.531,e:0.122,qMin:0.083},{f:0.551,e:0.143,qMin:0.063},{f:0.898,e:0.755,qMin:0.438}], ans:4},
+  {q:5, choices:[{f:0.429,e:0.102,qMin:0.000},{f:0.531,e:0.102,qMin:0.000},{f:0.939,e:0.857,qMin:0.563},{f:0.612,e:0.265,qMin:0.083}], ans:3},
+  {q:6, choices:[{f:0.510,e:0.184,qMin:0.000},{f:0.571,e:0.184,qMin:0.125},{f:0.490,e:0.102,qMin:0.000},{f:0.918,e:0.776,qMin:0.500}], ans:4},
+  {q:7, choices:[{f:0.898,e:0.694,qMin:0.375},{f:0.551,e:0.102,qMin:0.000},{f:0.551,e:0.122,qMin:0.000},{f:0.612,e:0.224,qMin:0.083}], ans:1},
+  {q:8, choices:[{f:0.388,e:0.082,qMin:0.000},{f:0.531,e:0.122,qMin:0.000},{f:0.469,e:0.102,qMin:0.000},{f:0.959,e:0.796,qMin:0.444}], ans:4},
+  {q:9, choices:[{f:0.531,e:0.224,qMin:0.000},{f:0.490,e:0.061,qMin:0.000},{f:0.939,e:0.816,qMin:0.563},{f:0.612,e:0.163,qMin:0.000}], ans:3},
+  {q:10, choices:[{f:0.531,e:0.204,qMin:0.000},{f:0.510,e:0.143,qMin:0.083},{f:0.735,e:0.551,qMin:0.188},{f:0.612,e:0.184,qMin:0.063}], ans:3},
+  {q:11, choices:[{f:0.510,e:0.163,qMin:0.000},{f:0.408,e:0.061,qMin:0.000},{f:0.347,e:0.082,qMin:0.000},{f:0.959,e:0.816,qMin:0.500}], ans:4},
+  {q:12, choices:[{f:0.000,e:0.000,qMin:0.000},{f:0.918,e:0.816,qMin:0.625},{f:0.347,e:0.102,qMin:0.000},{f:0.633,e:0.224,qMin:0.111}], ans:2},
+  {q:13, choices:[{f:0.469,e:0.102,qMin:0.000},{f:0.449,e:0.102,qMin:0.083},{f:0.327,e:0.082,qMin:0.000},{f:0.551,e:0.102,qMin:0.063}], ans:4},
+  {q:14, choices:[{f:0.388,e:0.061,qMin:0.000},{f:0.347,e:0.041,qMin:0.000},{f:0.735,e:0.551,qMin:0.063},{f:0.571,e:0.163,qMin:0.063}], ans:3},
+  {q:15, choices:[{f:0.388,e:0.082,qMin:0.000},{f:0.837,e:0.653,qMin:0.375},{f:0.327,e:0.082,qMin:0.000},{f:0.633,e:0.184,qMin:0.063}], ans:2},
+  {q:16, choices:[{f:0.367,e:0.041,qMin:0.000},{f:0.367,e:0.041,qMin:0.000},{f:0.796,e:0.673,qMin:0.188},{f:0.571,e:0.163,qMin:0.000}], ans:3},
+  {q:17, choices:[{f:0.367,e:0.061,qMin:0.000},{f:0.408,e:0.082,qMin:0.000},{f:0.347,e:0.041,qMin:0.000},{f:0.816,e:0.673,qMin:0.250}], ans:4},
+  {q:18, choices:[{f:0.429,e:0.122,qMin:0.000},{f:0.367,e:0.082,qMin:0.000},{f:0.286,e:0.020,qMin:0.000},{f:0.939,e:0.837,qMin:0.563}], ans:4},
+  {q:19, choices:[{f:0.469,e:0.184,qMin:0.000},{f:0.367,e:0.061,qMin:0.000},{f:0.388,e:0.061,qMin:0.000},{f:0.571,e:0.408,qMin:0.000}], ans:4},
+  {q:20, choices:[{f:0.408,e:0.102,qMin:0.000},{f:0.347,e:0.143,qMin:0.000},{f:0.184,e:0.000,qMin:0.000},{f:0.531,e:0.184,qMin:0.063}], ans:4}
+];
+
+var DS3 = [
+  {q:1, choices:[{f:0.875,e:0.703,qMin:0.188},{f:0.469,e:0.219,qMin:0.000},{f:0.594,e:0.188,qMin:0.063},{f:0.594,e:0.297,qMin:0.000}], ans:1},
+  {q:2, choices:[{f:0.344,e:0.125,qMin:0.000},{f:0.781,e:0.609,qMin:0.188},{f:0.531,e:0.172,qMin:0.000},{f:0.609,e:0.406,qMin:0.000}], ans:2},
+  {q:3, choices:[{f:0.453,e:0.219,qMin:0.000},{f:0.516,e:0.188,qMin:0.000},{f:0.609,e:0.250,qMin:0.125},{f:0.672,e:0.484,qMin:0.000}], ans:4},
+  {q:4, choices:[{f:0.875,e:0.750,qMin:0.438},{f:0.484,e:0.219,qMin:0.000},{f:0.563,e:0.219,qMin:0.125},{f:0.672,e:0.438,qMin:0.000}], ans:1},
+  {q:5, choices:[{f:0.375,e:0.109,qMin:0.000},{f:0.563,e:0.266,qMin:0.000},{f:0.578,e:0.234,qMin:0.125},{f:0.828,e:0.703,qMin:0.188}], ans:4},
+  {q:6, choices:[{f:0.438,e:0.172,qMin:0.000},{f:0.609,e:0.234,qMin:0.063},{f:0.922,e:0.781,qMin:0.563},{f:0.750,e:0.453,qMin:0.250}], ans:3},
+  {q:7, choices:[{f:0.438,e:0.156,qMin:0.000},{f:0.578,e:0.156,qMin:0.000},{f:0.656,e:0.266,qMin:0.125},{f:0.781,e:0.625,qMin:0.250}], ans:4},
+  {q:8, choices:[{f:0.359,e:0.078,qMin:0.000},{f:0.563,e:0.172,qMin:0.063},{f:0.984,e:0.828,qMin:0.750},{f:0.688,e:0.375,qMin:0.250}], ans:3},
+  {q:9, choices:[{f:0.891,e:0.703,qMin:0.375},{f:0.609,e:0.281,qMin:0.188},{f:0.703,e:0.250,qMin:0.125},{f:0.703,e:0.344,qMin:0.250}], ans:1},
+  {q:10, choices:[{f:0.375,e:0.078,qMin:0.000},{f:0.594,e:0.234,qMin:0.188},{f:0.641,e:0.219,qMin:0.063},{f:0.969,e:0.828,qMin:0.625}], ans:4},
+  {q:11, choices:[{f:0.969,e:0.844,qMin:0.625},{f:0.563,e:0.266,qMin:0.063},{f:0.578,e:0.203,qMin:0.125},{f:0.688,e:0.297,qMin:0.125}], ans:1},
+  {q:12, choices:[{f:0.469,e:0.219,qMin:0.000},{f:0.547,e:0.234,qMin:0.125},{f:0.531,e:0.234,qMin:0.000},{f:0.984,e:0.813,qMin:0.625}], ans:4},
+  {q:13, choices:[{f:0.375,e:0.078,qMin:0.000},{f:0.563,e:0.266,qMin:0.063},{f:0.938,e:0.828,qMin:0.500},{f:0.672,e:0.375,qMin:0.063}], ans:3},
+  {q:14, choices:[{f:0.438,e:0.141,qMin:0.000},{f:0.563,e:0.203,qMin:0.063},{f:0.500,e:0.188,qMin:0.000},{f:0.953,e:0.859,qMin:0.563}], ans:4},
+  {q:15, choices:[{f:0.422,e:0.125,qMin:0.000},{f:0.563,e:0.313,qMin:0.063},{f:0.906,e:0.734,qMin:0.375},{f:0.625,e:0.344,qMin:0.063}], ans:3},
+  {q:16, choices:[{f:0.453,e:0.219,qMin:0.000},{f:0.906,e:0.781,qMin:0.313},{f:0.438,e:0.094,qMin:0.000},{f:0.578,e:0.375,qMin:0.000}], ans:2},
+  {q:17, choices:[{f:0.422,e:0.172,qMin:0.000},{f:0.531,e:0.172,qMin:0.000},{f:0.672,e:0.469,qMin:0.000},{f:0.578,e:0.313,qMin:0.000}], ans:3},
+  {q:18, choices:[{f:0.469,e:0.188,qMin:0.000},{f:0.953,e:0.859,qMin:0.438},{f:0.453,e:0.109,qMin:0.000},{f:0.000,e:0.000,qMin:0.000}], ans:2},
+  {q:19, choices:[{f:0.453,e:0.156,qMin:0.000},{f:0.859,e:0.656,qMin:0.125},{f:0.484,e:0.141,qMin:0.063},{f:0.594,e:0.297,qMin:0.000}], ans:2},
+  {q:20, choices:[{f:0.422,e:0.156,qMin:0.000},{f:0.500,e:0.141,qMin:0.000},{f:0.844,e:0.625,qMin:0.188},{f:0.500,e:0.219,qMin:0.000}], ans:3}
+];
+
+var DS4 = [
+  {q:1, choices:[{f:0.367,e:0.143,qMin:0.000},{f:0.816,e:0.653,qMin:0.111},{f:0.408,e:0.122,qMin:0.000},{f:0.347,e:0.143,qMin:0.000}], ans:2},
+  {q:2, choices:[{f:0.367,e:0.102,qMin:0.000},{f:0.469,e:0.204,qMin:0.000},{f:0.776,e:0.612,qMin:0.000},{f:0.367,e:0.102,qMin:0.000}], ans:3},
+  {q:3, choices:[{f:0.429,e:0.204,qMin:0.000},{f:0.449,e:0.184,qMin:0.000},{f:0.796,e:0.653,qMin:0.111},{f:0.429,e:0.163,qMin:0.000}], ans:3},
+  {q:4, choices:[{f:0.367,e:0.102,qMin:0.000},{f:0.429,e:0.061,qMin:0.000},{f:0.429,e:0.102,qMin:0.000},{f:0.898,e:0.694,qMin:0.333}], ans:4},
+  {q:5, choices:[{f:0.388,e:0.122,qMin:0.000},{f:0.857,e:0.714,qMin:0.222},{f:0.449,e:0.122,qMin:0.000},{f:0.490,e:0.163,qMin:0.000}], ans:2},
+  {q:6, choices:[{f:0.510,e:0.204,qMin:0.000},{f:0.490,e:0.102,qMin:0.000},{f:0.531,e:0.143,qMin:0.083},{f:0.878,e:0.735,qMin:0.167}], ans:4},
+  {q:7, choices:[{f:1.000,e:0.898,qMin:0.750},{f:0.633,e:0.224,qMin:0.111},{f:0.571,e:0.143,qMin:0.083},{f:0.551,e:0.143,qMin:0.000}], ans:1},
+  {q:8, choices:[{f:0.429,e:0.102,qMin:0.000},{f:0.592,e:0.163,qMin:0.083},{f:0.592,e:0.102,qMin:0.000},{f:0.980,e:0.939,qMin:0.813}], ans:4},
+  {q:9, choices:[{f:0.429,e:0.102,qMin:0.000},{f:0.653,e:0.184,qMin:0.111},{f:0.918,e:0.714,qMin:0.444},{f:0.592,e:0.143,qMin:0.000}], ans:3},
+  {q:10, choices:[{f:1.000,e:0.980,qMin:0.889},{f:0.612,e:0.184,qMin:0.111},{f:0.612,e:0.122,qMin:0.063},{f:0.694,e:0.224,qMin:0.125}], ans:1},
+  {q:11, choices:[{f:0.449,e:0.122,qMin:0.000},{f:0.469,e:0.102,qMin:0.000},{f:0.429,e:0.061,qMin:0.000},{f:1.000,e:0.959,qMin:0.833}], ans:4},
+  {q:12, choices:[{f:0.469,e:0.163,qMin:0.000},{f:0.939,e:0.776,qMin:0.563},{f:0.429,e:0.122,qMin:0.063},{f:0.694,e:0.265,qMin:0.063}], ans:2},
+  {q:13, choices:[{f:0.449,e:0.163,qMin:0.000},{f:0.980,e:0.816,qMin:0.667},{f:0.367,e:0.082,qMin:0.000},{f:0.592,e:0.163,qMin:0.000}], ans:2},
+  {q:14, choices:[{f:0.388,e:0.163,qMin:0.000},{f:0.367,e:0.061,qMin:0.000},{f:0.939,e:0.857,qMin:0.563},{f:0.490,e:0.163,qMin:0.000}], ans:3},
+  {q:15, choices:[{f:0.327,e:0.122,qMin:0.000},{f:0.980,e:0.918,qMin:0.750},{f:0.286,e:0.020,qMin:0.000},{f:0.510,e:0.184,qMin:0.000}], ans:2},
+  {q:16, choices:[{f:0.327,e:0.102,qMin:0.000},{f:0.367,e:0.082,qMin:0.000},{f:0.816,e:0.673,qMin:0.417},{f:0.449,e:0.143,qMin:0.000}], ans:3},
+  {q:17, choices:[{f:0.367,e:0.102,qMin:0.000},{f:0.388,e:0.143,qMin:0.000},{f:0.327,e:0.061,qMin:0.000},{f:0.878,e:0.735,qMin:0.500}], ans:4},
+  {q:18, choices:[{f:0.327,e:0.082,qMin:0.000},{f:0.367,e:0.082,qMin:0.000},{f:0.347,e:0.061,qMin:0.000},{f:0.653,e:0.469,qMin:0.000}], ans:4},
+  {q:19, choices:[{f:0.347,e:0.041,qMin:0.000},{f:0.327,e:0.061,qMin:0.000},{f:0.388,e:0.041,qMin:0.000},{f:0.857,e:0.714,qMin:0.250}], ans:4},
+  {q:20, choices:[{f:0.265,e:0.061,qMin:0.000},{f:0.347,e:0.041,qMin:0.000},{f:0.959,e:0.816,qMin:0.563},{f:0.388,e:0.102,qMin:0.000}], ans:3}
+];
+
+var DS5 = [
+  {q:1, choices:[{f:0.313,e:0.063,qMin:0.000},{f:0.500,e:0.141,qMin:0.000},{f:0.625,e:0.375,qMin:0.000},{f:0.531,e:0.281,qMin:0.000}], ans:3},
+  {q:2, choices:[{f:0.406,e:0.172,qMin:0.000},{f:0.484,e:0.125,qMin:0.000},{f:0.547,e:0.203,qMin:0.000},{f:0.625,e:0.500,qMin:0.000}], ans:4},
+  {q:3, choices:[{f:0.375,e:0.141,qMin:0.000},{f:0.453,e:0.156,qMin:0.000},{f:0.484,e:0.141,qMin:0.000},{f:0.719,e:0.547,qMin:0.125}], ans:4},
+  {q:4, choices:[{f:0.328,e:0.078,qMin:0.000},{f:0.922,e:0.844,qMin:0.438},{f:0.484,e:0.141,qMin:0.000},{f:0.609,e:0.297,qMin:0.000}], ans:2},
+  {q:5, choices:[{f:0.391,e:0.172,qMin:0.000},{f:0.484,e:0.172,qMin:0.000},{f:0.625,e:0.203,qMin:0.000},{f:0.813,e:0.656,qMin:0.313}], ans:4},
+  {q:6, choices:[{f:0.766,e:0.594,qMin:0.250},{f:0.531,e:0.188,qMin:0.000},{f:0.594,e:0.250,qMin:0.188},{f:0.688,e:0.313,qMin:0.250}], ans:1},
+  {q:7, choices:[{f:0.438,e:0.125,qMin:0.000},{f:0.813,e:0.609,qMin:0.313},{f:0.656,e:0.281,qMin:0.188},{f:0.781,e:0.484,qMin:0.375}], ans:2},
+  {q:8, choices:[{f:0.391,e:0.109,qMin:0.000},{f:0.578,e:0.125,qMin:0.063},{f:0.859,e:0.734,qMin:0.438},{f:0.688,e:0.281,qMin:0.188}], ans:3},
+  {q:9, choices:[{f:0.406,e:0.141,qMin:0.000},{f:0.563,e:0.141,qMin:0.125},{f:0.641,e:0.203,qMin:0.188},{f:0.953,e:0.844,qMin:0.688}], ans:4},
+  {q:10, choices:[{f:0.391,e:0.094,qMin:0.000},{f:0.969,e:0.859,qMin:0.750},{f:0.656,e:0.219,qMin:0.188},{f:0.703,e:0.328,qMin:0.125}], ans:2},
+  {q:11, choices:[{f:0.453,e:0.156,qMin:0.000},{f:0.516,e:0.109,qMin:0.000},{f:0.625,e:0.219,qMin:0.063},{f:0.938,e:0.766,qMin:0.438}], ans:4},
+  {q:12, choices:[{f:0.344,e:0.063,qMin:0.000},{f:0.984,e:0.922,qMin:0.813},{f:0.609,e:0.219,qMin:0.125},{f:0.594,e:0.250,qMin:0.000}], ans:2},
+  {q:13, choices:[{f:0.406,e:0.094,qMin:0.000},{f:0.453,e:0.141,qMin:0.063},{f:0.859,e:0.734,qMin:0.438},{f:0.594,e:0.328,qMin:0.000}], ans:3},
+  {q:14, choices:[{f:0.672,e:0.469,qMin:0.063},{f:0.500,e:0.188,qMin:0.063},{f:0.484,e:0.141,qMin:0.063},{f:0.563,e:0.234,qMin:0.000}], ans:1},
+  {q:15, choices:[{f:0.391,e:0.109,qMin:0.000},{f:0.469,e:0.094,qMin:0.000},{f:0.453,e:0.125,qMin:0.063},{f:0.844,e:0.703,qMin:0.375}], ans:4},
+  {q:16, choices:[{f:0.375,e:0.109,qMin:0.000},{f:0.813,e:0.656,qMin:0.188},{f:0.453,e:0.125,qMin:0.000},{f:0.531,e:0.188,qMin:0.063}], ans:2},
+  {q:17, choices:[{f:0.359,e:0.078,qMin:0.000},{f:0.422,e:0.109,qMin:0.000},{f:0.656,e:0.484,qMin:0.000},{f:0.484,e:0.109,qMin:0.000}], ans:3},
+  {q:18, choices:[{f:0.313,e:0.078,qMin:0.000},{f:0.875,e:0.656,qMin:0.250},{f:0.422,e:0.109,qMin:0.000},{f:0.547,e:0.188,qMin:0.000}], ans:2},
+  {q:19, choices:[{f:0.391,e:0.063,qMin:0.000},{f:0.500,e:0.172,qMin:0.000},{f:0.828,e:0.594,qMin:0.188},{f:0.484,e:0.094,qMin:0.000}], ans:3},
+  {q:20, choices:[{f:0.703,e:0.391,qMin:0.000},{f:0.406,e:0.094,qMin:0.000},{f:0.406,e:0.063,qMin:0.000},{f:0.531,e:0.141,qMin:0.125}], ans:1}
+];
+
+var DS6 = [
+  {q:1, choices:[{f:0.422,e:0.141,qMin:0.000},{f:0.500,e:0.188,qMin:0.000},{f:0.453,e:0.109,qMin:0.000},{f:0.641,e:0.422,qMin:0.000}], ans:4},
+  {q:2, choices:[{f:0.531,e:0.250,qMin:0.000},{f:0.469,e:0.172,qMin:0.000},{f:0.484,e:0.125,qMin:0.000},{f:0.922,e:0.813,qMin:0.250}], ans:4},
+  {q:3, choices:[{f:0.469,e:0.219,qMin:0.000},{f:0.766,e:0.594,qMin:0.125},{f:0.500,e:0.156,qMin:0.125},{f:0.516,e:0.219,qMin:0.000}], ans:2},
+  {q:4, choices:[{f:0.438,e:0.172,qMin:0.000},{f:0.453,e:0.156,qMin:0.000},{f:0.875,e:0.750,qMin:0.438},{f:0.563,e:0.266,qMin:0.000}], ans:3},
+  {q:5, choices:[{f:0.422,e:0.172,qMin:0.000},{f:0.484,e:0.203,qMin:0.000},{f:0.609,e:0.234,qMin:0.188},{f:0.813,e:0.688,qMin:0.250}], ans:4},
+  {q:6, choices:[{f:0.422,e:0.156,qMin:0.000},{f:0.625,e:0.313,qMin:0.063},{f:0.625,e:0.203,qMin:0.125},{f:0.938,e:0.828,qMin:0.500}], ans:4},
+  {q:7, choices:[{f:0.391,e:0.125,qMin:0.000},{f:0.797,e:0.656,qMin:0.125},{f:0.641,e:0.203,qMin:0.063},{f:0.672,e:0.313,qMin:0.188}], ans:2},
+  {q:8, choices:[{f:0.469,e:0.188,qMin:0.000},{f:0.953,e:0.813,qMin:0.563},{f:0.656,e:0.203,qMin:0.125},{f:0.641,e:0.297,qMin:0.188}], ans:2},
+  {q:9, choices:[{f:0.438,e:0.172,qMin:0.000},{f:0.594,e:0.234,qMin:0.125},{f:0.672,e:0.250,qMin:0.125},{f:0.891,e:0.734,qMin:0.500}], ans:4},
+  {q:10, choices:[{f:0.375,e:0.109,qMin:0.000},{f:0.953,e:0.813,qMin:0.563},{f:0.609,e:0.203,qMin:0.125},{f:0.734,e:0.328,qMin:0.250}], ans:2},
+  {q:11, choices:[{f:0.938,e:0.797,qMin:0.563},{f:0.563,e:0.219,qMin:0.125},{f:0.516,e:0.188,qMin:0.063},{f:0.688,e:0.313,qMin:0.125}], ans:1},
+  {q:12, choices:[{f:0.422,e:0.156,qMin:0.000},{f:0.938,e:0.750,qMin:0.438},{f:0.500,e:0.156,qMin:0.063},{f:0.672,e:0.281,qMin:0.063}], ans:2},
+  {q:13, choices:[{f:0.469,e:0.172,qMin:0.000},{f:0.578,e:0.266,qMin:0.063},{f:0.422,e:0.156,qMin:0.063},{f:0.984,e:0.922,qMin:0.750}], ans:4},
+  {q:14, choices:[{f:0.391,e:0.078,qMin:0.000},{f:0.531,e:0.172,qMin:0.063},{f:0.406,e:0.078,qMin:0.000},{f:0.750,e:0.563,qMin:0.188}], ans:4},
+  {q:15, choices:[{f:0.438,e:0.141,qMin:0.000},{f:0.500,e:0.188,qMin:0.063},{f:0.844,e:0.672,qMin:0.063},{f:0.594,e:0.234,qMin:0.000}], ans:3},
+  {q:16, choices:[{f:0.469,e:0.156,qMin:0.000},{f:0.531,e:0.172,qMin:0.000},{f:0.781,e:0.531,qMin:0.125},{f:0.500,e:0.203,qMin:0.000}], ans:3},
+  {q:17, choices:[{f:0.484,e:0.156,qMin:0.000},{f:0.531,e:0.156,qMin:0.000},{f:0.000,e:0.000,qMin:0.000},{f:0.984,e:0.906,qMin:0.750}], ans:4},
+  {q:18, choices:[{f:0.891,e:0.766,qMin:0.375},{f:0.578,e:0.219,qMin:0.000},{f:0.484,e:0.094,qMin:0.000},{f:0.531,e:0.172,qMin:0.000}], ans:1},
+  {q:19, choices:[{f:0.516,e:0.250,qMin:0.000},{f:0.594,e:0.203,qMin:0.063},{f:0.422,e:0.047,qMin:0.000},{f:0.875,e:0.688,qMin:0.188}], ans:4},
+  {q:20, choices:[{f:0.469,e:0.203,qMin:0.000},{f:0.438,e:0.109,qMin:0.000},{f:0.984,e:0.828,qMin:0.500},{f:0.500,e:0.125,qMin:0.000}], ans:3}
+];
+
+var allDatasets = [
+  {name: "DS1", label: "DS1 (정규분포화.txt)", data: DS1},
+  {name: "DS2", label: "DS2 (정규분포화2.txt)", data: DS2},
+  {name: "DS3", label: "DS3 (검증용 #1)", data: DS3},
+  {name: "DS4", label: "DS4 (검증용 #2)", data: DS4},
+  {name: "DS5", label: "DS5 (검증용 #3)", data: DS5},
+  {name: "DS6", label: "DS6 (검증용 #4)", data: DS6}
+];
+
+// ============================================================
+// FORMULA DEFINITIONS
+// ============================================================
+var formulas = [
+  {id:"A", wF:0.40, wE:0.35, wQ:0.25, gapTh:0.08, fTh:0.90, color:"#38bdf8", label:"A: w(4/3.5/2.5) gap>=0.08|f>=0.90"},
+  {id:"B", wF:0.40, wE:0.35, wQ:0.25, gapTh:0.08, fTh:0.85, color:"#818cf8", label:"B: w(4/3.5/2.5) gap>=0.08|f>=0.85"},
+  {id:"C", wF:0.50, wE:0.30, wQ:0.20, gapTh:0.08, fTh:0.85, color:"#4ade80", label:"C: w(5/3/2) gap>=0.08|f>=0.85"},
+  {id:"D", wF:0.35, wE:0.45, wQ:0.20, gapTh:0.08, fTh:0.85, color:"#fbbf24", label:"D: w(3.5/4.5/2) gap>=0.08|f>=0.85"},
+  {id:"E", wF:0.40, wE:0.35, wQ:0.25, gapTh:0.06, fTh:0.82, color:"#fb923c", label:"E: w(4/3.5/2.5) gap>=0.06|f>=0.82"},
+  {id:"F", wF:0.40, wE:0.35, wQ:0.25, gapTh:0.10, fTh:0.92, color:"#f87171", label:"F: w(4/3.5/2.5) gap>=0.10|f>=0.92"}
+];
+
+// ============================================================
+// SCORING ENGINE
+// ============================================================
+function computeScore(choice, wF, wE, wQ) {
+  return choice.f * wF + choice.e * wE + choice.qMin * wQ;
+}
+
+function evaluateQuestion(qData, formula) {
+  var scores = [];
+  for (var i = 0; i < qData.choices.length; i++) {
+    scores.push(computeScore(qData.choices[i], formula.wF, formula.wE, formula.wQ));
+  }
+  // Find max and second max
+  var maxVal = -1, maxIdx = -1, secondMax = -1;
+  for (var i = 0; i < scores.length; i++) {
+    if (scores[i] > maxVal) {
+      secondMax = maxVal;
+      maxVal = scores[i];
+      maxIdx = i;
+    } else if (scores[i] > secondMax) {
+      secondMax = scores[i];
+    }
+  }
+  var gap = maxVal - secondMax;
+  var topF = qData.choices[maxIdx].f;
+  var detected = (gap >= formula.gapTh) || (topF >= formula.fTh);
+  var chosen = detected ? (maxIdx + 1) : null;
+  var result;
+  if (chosen === null) {
+    result = "null";
+  } else if (chosen === qData.ans) {
+    result = "correct";
+  } else {
+    result = "wrong";
+  }
+  return {
+    scores: scores,
+    maxIdx: maxIdx,
+    gap: gap,
+    topF: topF,
+    detected: detected,
+    chosen: chosen,
+    result: result
+  };
+}
+
+function evaluateDataset(dataset, formula) {
+  var results = [];
+  var correct = 0, wrong = 0, nullCount = 0;
+  for (var i = 0; i < dataset.length; i++) {
+    var r = evaluateQuestion(dataset[i], formula);
+    r.qNum = dataset[i].q;
+    r.trueAns = dataset[i].ans;
+    results.push(r);
+    if (r.result === "correct") correct++;
+    else if (r.result === "wrong") wrong++;
+    else nullCount++;
+  }
+  return {
+    results: results,
+    correct: correct,
+    wrong: wrong,
+    nullCount: nullCount,
+    total: dataset.length,
+    accuracy: correct / dataset.length
+  };
+}
+
+// ============================================================
+// BUILD ALL RESULTS
+// ============================================================
+var allResults = {}; // allResults[formulaId][dsName]
+var combinedResults = {}; // combinedResults[formulaId]
+
+for (var fi = 0; fi < formulas.length; fi++) {
+  var f = formulas[fi];
+  allResults[f.id] = {};
+  var totalCorrect = 0, totalWrong = 0, totalNull = 0, totalQ = 0;
+  for (var di = 0; di < allDatasets.length; di++) {
+    var ds = allDatasets[di];
+    var evalResult = evaluateDataset(ds.data, f);
+    allResults[f.id][ds.name] = evalResult;
+    totalCorrect += evalResult.correct;
+    totalWrong += evalResult.wrong;
+    totalNull += evalResult.nullCount;
+    totalQ += evalResult.total;
+  }
+  combinedResults[f.id] = {
+    correct: totalCorrect,
+    wrong: totalWrong,
+    nullCount: totalNull,
+    total: totalQ,
+    accuracy: totalCorrect / totalQ,
+    precision: totalCorrect / Math.max(totalCorrect + totalWrong, 1),
+    recall: totalCorrect / totalQ,
+    f1: (2 * (totalCorrect / Math.max(totalCorrect + totalWrong, 1)) * (totalCorrect / totalQ)) /
+        Math.max((totalCorrect / Math.max(totalCorrect + totalWrong, 1)) + (totalCorrect / totalQ), 0.001)
+  };
+}
+
+// ============================================================
+// RENDER: PERFORMANCE MATRIX
+// ============================================================
+(function renderMatrix() {
+  var html = '<h2>1. Performance Matrix (6 Formulas x 6 Datasets)</h2><div class="card"><div class="scroll-table"><table>';
+  html += '<tr><th rowspan="2">Formula</th>';
+  for (var di = 0; di < allDatasets.length; di++) {
+    html += '<th colspan="4">' + allDatasets[di].name + '</th>';
+  }
+  html += '<th colspan="5">COMBINED (120Q)</th></tr><tr>';
+  for (var di = 0; di < allDatasets.length; di++) {
+    html += '<th>OK</th><th>Err</th><th>Null</th><th>Acc%</th>';
+  }
+  html += '<th>OK</th><th>Err</th><th>Null</th><th>Acc%</th><th>F1</th></tr>';
+
+  // Find best combined accuracy
+  var bestAcc = 0;
+  for (var fi = 0; fi < formulas.length; fi++) {
+    if (combinedResults[formulas[fi].id].accuracy > bestAcc) {
+      bestAcc = combinedResults[formulas[fi].id].accuracy;
+    }
+  }
+
+  for (var fi = 0; fi < formulas.length; fi++) {
+    var f = formulas[fi];
+    var cr = combinedResults[f.id];
+    html += '<tr><td><span class="formula-tag ft-' + f.id.toLowerCase() + '">' + f.id + '</span></td>';
+    for (var di = 0; di < allDatasets.length; di++) {
+      var r = allResults[f.id][allDatasets[di].name];
+      html += '<td class="correct">' + r.correct + '</td>';
+      html += '<td class="' + (r.wrong > 0 ? 'wrong' : '') + '">' + r.wrong + '</td>';
+      html += '<td class="' + (r.nullCount > 0 ? 'null-result' : '') + '">' + r.nullCount + '</td>';
+      html += '<td>' + (r.accuracy * 100).toFixed(1) + '%</td>';
+    }
+    var isBest = (cr.accuracy === bestAcc);
+    html += '<td class="correct">' + cr.correct + '</td>';
+    html += '<td class="' + (cr.wrong > 0 ? 'wrong' : '') + '">' + cr.wrong + '</td>';
+    html += '<td class="' + (cr.nullCount > 0 ? 'null-result' : '') + '">' + cr.nullCount + '</td>';
+    html += '<td class="' + (isBest ? 'best' : '') + '">' + (cr.accuracy * 100).toFixed(1) + '%</td>';
+    html += '<td>' + cr.f1.toFixed(3) + '</td>';
+    html += '</tr>';
+  }
+  html += '</table></div></div>';
+  document.getElementById('matrix-section').innerHTML = html;
+})();
+
+// ============================================================
+// RENDER: STACKED BAR CHARTS (one per dataset)
+// ============================================================
+(function renderStackedCharts() {
+  var html = '<h2>2. Per-Dataset Results (Stacked Bar Charts)</h2><div class="grid2">';
+  for (var di = 0; di < allDatasets.length; di++) {
+    html += '<div class="card"><h3>' + allDatasets[di].label + '</h3><div class="chart-container"><canvas id="chart-ds-' + di + '"></canvas></div></div>';
+  }
+  html += '</div>';
+  document.getElementById('charts-section').innerHTML = html;
+
+  for (var di = 0; di < allDatasets.length; di++) {
+    var labels = [];
+    var correctData = [];
+    var wrongData = [];
+    var nullData = [];
+    for (var fi = 0; fi < formulas.length; fi++) {
+      labels.push(formulas[fi].id);
+      var r = allResults[formulas[fi].id][allDatasets[di].name];
+      correctData.push(r.correct);
+      wrongData.push(r.wrong);
+      nullData.push(r.nullCount);
+    }
+    new Chart(document.getElementById('chart-ds-' + di), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {label:'Correct', data:correctData, backgroundColor:'#4ade80'},
+          {label:'Wrong', data:wrongData, backgroundColor:'#f87171'},
+          {label:'Null', data:nullData, backgroundColor:'#fbbf24'}
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {stacked:true, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}},
+          y: {stacked:true, max:20, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}}
+        },
+        plugins: {
+          legend: {labels:{color:'#e2e8f0'}},
+          title: {display:true, text:allDatasets[di].name + ' (20Q)', color:'#e2e8f0'}
+        }
+      }
+    });
+  }
+})();
+
+// ============================================================
+// RENDER: COMBINED F1 / ACCURACY CHART
+// ============================================================
+(function renderCombinedChart() {
+  var html = '<h2>3. Combined Performance Across All 6 Datasets (120 Questions)</h2>';
+  html += '<div class="grid2">';
+  html += '<div class="card"><h3>Accuracy & F1 Score</h3><div class="chart-container"><canvas id="chart-combined-bar"></canvas></div></div>';
+  html += '<div class="card"><h3>Correct / Wrong / Null Distribution</h3><div class="chart-container"><canvas id="chart-combined-stack"></canvas></div></div>';
+  html += '</div>';
+  document.getElementById('combined-section').innerHTML = html;
+
+  var labels = [];
+  var accData = [];
+  var f1Data = [];
+  var precData = [];
+  var correctData = [];
+  var wrongData = [];
+  var nullData = [];
+  for (var fi = 0; fi < formulas.length; fi++) {
+    var fid = formulas[fi].id;
+    labels.push(fid);
+    accData.push((combinedResults[fid].accuracy * 100).toFixed(1));
+    f1Data.push((combinedResults[fid].f1 * 100).toFixed(1));
+    precData.push((combinedResults[fid].precision * 100).toFixed(1));
+    correctData.push(combinedResults[fid].correct);
+    wrongData.push(combinedResults[fid].wrong);
+    nullData.push(combinedResults[fid].nullCount);
+  }
+
+  new Chart(document.getElementById('chart-combined-bar'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {label:'Accuracy %', data:accData, backgroundColor:'#38bdf8'},
+        {label:'F1 %', data:f1Data, backgroundColor:'#818cf8'},
+        {label:'Precision %', data:precData, backgroundColor:'#4ade80'}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: {ticks:{color:'#94a3b8'}, grid:{color:'#334155'}},
+        y: {min:0, max:100, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}}
+      },
+      plugins: {legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+
+  new Chart(document.getElementById('chart-combined-stack'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {label:'Correct', data:correctData, backgroundColor:'#4ade80'},
+        {label:'Wrong', data:wrongData, backgroundColor:'#f87171'},
+        {label:'Null', data:nullData, backgroundColor:'#fbbf24'}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: {stacked:true, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}},
+        y: {stacked:true, max:120, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}}
+      },
+      plugins: {legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+})();
+
+// ============================================================
+// RENDER: PER-QUESTION DETAIL TABLES (tabbed)
+// ============================================================
+(function renderDetailTables() {
+  var html = '<h2>4. Per-Question Detail Tables</h2><div class="card">';
+  // Tab bar
+  html += '<div class="tab-bar">';
+  for (var di = 0; di < allDatasets.length; di++) {
+    html += '<div class="tab-btn' + (di === 0 ? ' active' : '') + '" onclick="switchDetailTab(' + di + ')" id="detail-tab-' + di + '">' + allDatasets[di].name + '</div>';
+  }
+  html += '</div>';
+
+  for (var di = 0; di < allDatasets.length; di++) {
+    html += '<div class="tab-panel' + (di === 0 ? ' active' : '') + '" id="detail-panel-' + di + '">';
+    html += '<div class="scroll-table"><table>';
+    html += '<tr><th>Q#</th><th>True Ans</th>';
+    for (var fi = 0; fi < formulas.length; fi++) {
+      html += '<th>' + formulas[fi].id + ' Score (Gap)</th><th>' + formulas[fi].id + ' Pick</th>';
+    }
+    html += '</tr>';
+    var ds = allDatasets[di];
+    for (var qi = 0; qi < ds.data.length; qi++) {
+      html += '<tr><td>Q' + ds.data[qi].q + '</td><td>' + ds.data[qi].ans + '</td>';
+      for (var fi = 0; fi < formulas.length; fi++) {
+        var r = allResults[formulas[fi].id][ds.name].results[qi];
+        var scoreStr = r.scores[r.maxIdx].toFixed(3) + ' (g=' + r.gap.toFixed(3) + ')';
+        html += '<td style="font-size:0.75rem">' + scoreStr + '</td>';
+        var cls = '';
+        if (r.result === 'correct') cls = 'correct';
+        else if (r.result === 'wrong') cls = 'wrong';
+        else cls = 'null-result';
+        html += '<td class="' + cls + '">' + (r.chosen || '-') + '</td>';
+      }
+      html += '</tr>';
+    }
+    html += '</table></div></div>';
+  }
+  html += '</div>';
+  document.getElementById('detail-section').innerHTML = html;
+})();
+
+function switchDetailTab(idx) {
+  for (var i = 0; i < allDatasets.length; i++) {
+    document.getElementById('detail-tab-' + i).classList.toggle('active', i === idx);
+    document.getElementById('detail-panel-' + i).classList.toggle('active', i === idx);
+  }
+}
+
+// ============================================================
+// RENDER: ERROR ANALYSIS
+// ============================================================
+(function renderErrorAnalysis() {
+  var html = '<h2>5. Error Analysis - Questions Each Formula Gets Wrong</h2>';
+
+  for (var fi = 0; fi < formulas.length; fi++) {
+    var f = formulas[fi];
+    html += '<details' + (fi === 0 ? ' open' : '') + '><summary><span class="formula-tag ft-' + f.id.toLowerCase() + '">' + f.id + '</span> ' + f.label + ' | Combined: ' + combinedResults[f.id].correct + '/120 correct, ' + combinedResults[f.id].wrong + ' wrong, ' + combinedResults[f.id].nullCount + ' null</summary>';
+    html += '<div class="card"><table><tr><th>Dataset</th><th>Q#</th><th>True</th><th>Picked</th><th>Result</th><th>Gap</th><th>Top f</th></tr>';
+
+    for (var di = 0; di < allDatasets.length; di++) {
+      var ds = allDatasets[di];
+      var evalR = allResults[f.id][ds.name];
+      for (var qi = 0; qi < evalR.results.length; qi++) {
+        var r = evalR.results[qi];
+        if (r.result !== 'correct') {
+          html += '<tr>';
+          html += '<td>' + ds.name + '</td>';
+          html += '<td>Q' + r.qNum + '</td>';
+          html += '<td>' + r.trueAns + '</td>';
+          html += '<td>' + (r.chosen || '-') + '</td>';
+          html += '<td class="' + (r.result === 'wrong' ? 'wrong' : 'null-result') + '">' + r.result + '</td>';
+          html += '<td>' + r.gap.toFixed(4) + '</td>';
+          html += '<td>' + r.topF.toFixed(3) + '</td>';
+          html += '</tr>';
+        }
+      }
+    }
+    html += '</table></div></details>';
+  }
+  document.getElementById('error-section').innerHTML = html;
+})();
+
+// ============================================================
+// RENDER: PARAMETER SWEEP
+// ============================================================
+(function renderSweep() {
+  var html = '<h2>6. Parameter Sweep (Gap & f Threshold)</h2>';
+  html += '<div class="grid2">';
+  html += '<div class="card"><h3>Gap Threshold Sweep (f_th=0.85, weights=0.4/0.35/0.25)</h3><div class="chart-container-wide"><canvas id="chart-gap-sweep"></canvas></div></div>';
+  html += '<div class="card"><h3>f Threshold Sweep (gap_th=0.08, weights=0.4/0.35/0.25)</h3><div class="chart-container-wide"><canvas id="chart-f-sweep"></canvas></div></div>';
+  html += '</div>';
+
+  // Sweep results tables
+  html += '<div class="grid2">';
+  html += '<div class="card"><h3>Gap Sweep Detail</h3><div class="scroll-table"><table id="gap-sweep-table"><tr><th>Gap Th</th><th>Correct</th><th>Wrong</th><th>Null</th><th>Accuracy</th><th>Precision</th><th>F1</th></tr></table></div></div>';
+  html += '<div class="card"><h3>f Sweep Detail</h3><div class="scroll-table"><table id="f-sweep-table"><tr><th>f Th</th><th>Correct</th><th>Wrong</th><th>Null</th><th>Accuracy</th><th>Precision</th><th>F1</th></tr></table></div></div>';
+  html += '</div>';
+  document.getElementById('sweep-section').innerHTML = html;
+
+  // --- Gap threshold sweep ---
+  var gapValues = [];
+  var gapAcc = [], gapF1 = [], gapPrec = [];
+  var gapTableHTML = '';
+  for (var g = 0.02; g <= 0.201; g += 0.01) {
+    g = Math.round(g * 100) / 100;
+    gapValues.push(g.toFixed(2));
+    var sweepFormula = {wF:0.40, wE:0.35, wQ:0.25, gapTh:g, fTh:0.85};
+    var tc = 0, tw = 0, tn = 0, tt = 0;
+    for (var di = 0; di < allDatasets.length; di++) {
+      var ev = evaluateDataset(allDatasets[di].data, sweepFormula);
+      tc += ev.correct; tw += ev.wrong; tn += ev.nullCount; tt += ev.total;
+    }
+    var acc = tc / tt;
+    var prec = tc / Math.max(tc + tw, 1);
+    var rec = tc / tt;
+    var f1v = (2 * prec * rec) / Math.max(prec + rec, 0.001);
+    gapAcc.push((acc * 100).toFixed(1));
+    gapF1.push((f1v * 100).toFixed(1));
+    gapPrec.push((prec * 100).toFixed(1));
+    gapTableHTML += '<tr><td>' + g.toFixed(2) + '</td><td>' + tc + '</td><td>' + tw + '</td><td>' + tn + '</td><td>' + (acc*100).toFixed(1) + '%</td><td>' + (prec*100).toFixed(1) + '%</td><td>' + f1v.toFixed(3) + '</td></tr>';
+  }
+  document.getElementById('gap-sweep-table').innerHTML += gapTableHTML;
+
+  new Chart(document.getElementById('chart-gap-sweep'), {
+    type: 'line',
+    data: {
+      labels: gapValues,
+      datasets: [
+        {label:'Accuracy %', data:gapAcc, borderColor:'#38bdf8', backgroundColor:'#38bdf833', fill:false, tension:0.3, pointRadius:3},
+        {label:'F1 %', data:gapF1, borderColor:'#818cf8', backgroundColor:'#818cf833', fill:false, tension:0.3, pointRadius:3},
+        {label:'Precision %', data:gapPrec, borderColor:'#4ade80', backgroundColor:'#4ade8033', fill:false, tension:0.3, pointRadius:3}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: {title:{display:true,text:'Gap Threshold',color:'#94a3b8'}, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}},
+        y: {min:0, max:100, title:{display:true,text:'%',color:'#94a3b8'}, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}}
+      },
+      plugins: {legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+
+  // --- f threshold sweep ---
+  var fValues = [];
+  var fAcc = [], fF1 = [], fPrec = [];
+  var fTableHTML = '';
+  for (var fv = 0.75; fv <= 0.981; fv += 0.01) {
+    fv = Math.round(fv * 100) / 100;
+    fValues.push(fv.toFixed(2));
+    var sweepFormula2 = {wF:0.40, wE:0.35, wQ:0.25, gapTh:0.08, fTh:fv};
+    var tc2 = 0, tw2 = 0, tn2 = 0, tt2 = 0;
+    for (var di = 0; di < allDatasets.length; di++) {
+      var ev2 = evaluateDataset(allDatasets[di].data, sweepFormula2);
+      tc2 += ev2.correct; tw2 += ev2.wrong; tn2 += ev2.nullCount; tt2 += ev2.total;
+    }
+    var acc2 = tc2 / tt2;
+    var prec2 = tc2 / Math.max(tc2 + tw2, 1);
+    var rec2 = tc2 / tt2;
+    var f1v2 = (2 * prec2 * rec2) / Math.max(prec2 + rec2, 0.001);
+    fAcc.push((acc2 * 100).toFixed(1));
+    fF1.push((f1v2 * 100).toFixed(1));
+    fPrec.push((prec2 * 100).toFixed(1));
+    fTableHTML += '<tr><td>' + fv.toFixed(2) + '</td><td>' + tc2 + '</td><td>' + tw2 + '</td><td>' + tn2 + '</td><td>' + (acc2*100).toFixed(1) + '%</td><td>' + (prec2*100).toFixed(1) + '%</td><td>' + f1v2.toFixed(3) + '</td></tr>';
+  }
+  document.getElementById('f-sweep-table').innerHTML += fTableHTML;
+
+  new Chart(document.getElementById('chart-f-sweep'), {
+    type: 'line',
+    data: {
+      labels: fValues,
+      datasets: [
+        {label:'Accuracy %', data:fAcc, borderColor:'#38bdf8', backgroundColor:'#38bdf833', fill:false, tension:0.3, pointRadius:3},
+        {label:'F1 %', data:fF1, borderColor:'#818cf8', backgroundColor:'#818cf833', fill:false, tension:0.3, pointRadius:3},
+        {label:'Precision %', data:fPrec, borderColor:'#4ade80', backgroundColor:'#4ade8033', fill:false, tension:0.3, pointRadius:3}
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales: {
+        x: {title:{display:true,text:'f Threshold',color:'#94a3b8'}, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}},
+        y: {min:0, max:100, title:{display:true,text:'%',color:'#94a3b8'}, ticks:{color:'#94a3b8'}, grid:{color:'#334155'}}
+      },
+      plugins: {legend:{labels:{color:'#e2e8f0'}}}
+    }
+  });
+})();
+
+// ============================================================
+// RENDER: FINAL RECOMMENDATION
+// ============================================================
+(function renderRecommendation() {
+  // Find best formula
+  var bestId = null, bestF1 = 0, bestAcc = 0;
+  for (var fi = 0; fi < formulas.length; fi++) {
+    var cr = combinedResults[formulas[fi].id];
+    if (cr.f1 > bestF1 || (cr.f1 === bestF1 && cr.accuracy > bestAcc)) {
+      bestF1 = cr.f1;
+      bestAcc = cr.accuracy;
+      bestId = formulas[fi].id;
+    }
+  }
+  var bestFormula = null;
+  for (var fi = 0; fi < formulas.length; fi++) {
+    if (formulas[fi].id === bestId) { bestFormula = formulas[fi]; break; }
+  }
+  var cr = combinedResults[bestId];
+
+  // Also find best accuracy (might differ)
+  var bestAccId = null, topAcc = 0;
+  for (var fi = 0; fi < formulas.length; fi++) {
+    if (combinedResults[formulas[fi].id].accuracy > topAcc) {
+      topAcc = combinedResults[formulas[fi].id].accuracy;
+      bestAccId = formulas[fi].id;
+    }
+  }
+
+  // Find lowest wrong count
+  var lowestWrong = 999, lowestWrongId = null;
+  for (var fi = 0; fi < formulas.length; fi++) {
+    if (combinedResults[formulas[fi].id].wrong < lowestWrong) {
+      lowestWrong = combinedResults[formulas[fi].id].wrong;
+      lowestWrongId = formulas[fi].id;
+    }
+  }
+
+  var html = '<h2>7. Final Recommendation</h2>';
+
+  // Summary cards
+  html += '<div class="grid3">';
+  html += '<div class="card" style="border-color:var(--green)"><h3 style="color:var(--green)">Best F1 Score</h3>';
+  html += '<p style="font-size:2rem;font-weight:700;color:var(--green)">' + bestId + '</p>';
+  html += '<p>F1: ' + (bestF1*100).toFixed(1) + '% | Acc: ' + (cr.accuracy*100).toFixed(1) + '%</p>';
+  html += '<p>' + cr.correct + ' correct / ' + cr.wrong + ' wrong / ' + cr.nullCount + ' null</p></div>';
+
+  html += '<div class="card" style="border-color:var(--accent)"><h3 style="color:var(--accent)">Best Accuracy</h3>';
+  html += '<p style="font-size:2rem;font-weight:700;color:var(--accent)">' + bestAccId + '</p>';
+  html += '<p>Accuracy: ' + (topAcc*100).toFixed(1) + '%</p>';
+  html += '<p>' + combinedResults[bestAccId].correct + '/120 correct</p></div>';
+
+  html += '<div class="card" style="border-color:var(--yellow)"><h3 style="color:var(--yellow)">Fewest Errors</h3>';
+  html += '<p style="font-size:2rem;font-weight:700;color:var(--yellow)">' + lowestWrongId + '</p>';
+  html += '<p>Only ' + lowestWrong + ' wrong answers</p>';
+  html += '<p>Precision: ' + (combinedResults[lowestWrongId].precision*100).toFixed(1) + '%</p></div>';
+  html += '</div>';
+
+  // Ranking table
+  html += '<div class="card"><h3>Formula Ranking</h3><table>';
+  html += '<tr><th>Rank</th><th>Formula</th><th>Accuracy</th><th>Precision</th><th>F1</th><th>Correct</th><th>Wrong</th><th>Null</th></tr>';
+  var ranked = formulas.slice().sort(function(a, b) {
+    return combinedResults[b.id].f1 - combinedResults[a.id].f1;
+  });
+  for (var i = 0; i < ranked.length; i++) {
+    var rid = ranked[i].id;
+    var rc = combinedResults[rid];
+    html += '<tr' + (i === 0 ? ' style="background:rgba(74,222,128,0.1)"' : '') + '>';
+    html += '<td>' + (i+1) + '</td>';
+    html += '<td><span class="formula-tag ft-' + rid.toLowerCase() + '">' + rid + '</span> ' + ranked[i].label + '</td>';
+    html += '<td>' + (rc.accuracy*100).toFixed(1) + '%</td>';
+    html += '<td>' + (rc.precision*100).toFixed(1) + '%</td>';
+    html += '<td>' + (rc.f1*100).toFixed(1) + '%</td>';
+    html += '<td class="correct">' + rc.correct + '</td>';
+    html += '<td class="' + (rc.wrong > 0 ? 'wrong' : '') + '">' + rc.wrong + '</td>';
+    html += '<td class="' + (rc.nullCount > 0 ? 'null-result' : '') + '">' + rc.nullCount + '</td>';
+    html += '</tr>';
+  }
+  html += '</table></div>';
+
+  // Implementation code
+  var bf = bestFormula;
+  html += '<div class="rec-box"><h3>Recommended Implementation Code (Formula ' + bestId + ')</h3>';
+  html += '<pre>' +
+'// OMR Composite Score Detection - Formula ' + bestId + '\n' +
+'// Weights: f=' + bf.wF + ', e=' + bf.wE + ', qMin=' + bf.wQ + '\n' +
+'// Decision: gap >= ' + bf.gapTh + ' OR topF >= ' + bf.fTh + '\n' +
+'// Validated on 6 datasets (120 questions)\n' +
+'// Accuracy: ' + (cr.accuracy*100).toFixed(1) + '% | F1: ' + (cr.f1*100).toFixed(1) + '% | Precision: ' + (cr.precision*100).toFixed(1) + '%\n\n' +
+'function detectMarkedBubble(choices) {\n' +
+'  var W_FILL = ' + bf.wF + ';\n' +
+'  var W_EXCESS = ' + bf.wE + ';\n' +
+'  var W_QMIN = ' + bf.wQ + ';\n' +
+'  var GAP_THRESHOLD = ' + bf.gapTh + ';\n' +
+'  var F_THRESHOLD = ' + bf.fTh + ';\n\n' +
+'  // Compute composite scores\n' +
+'  var scores = choices.map(function(c) {\n' +
+'    return c.fillRatio * W_FILL + c.excessRatio * W_EXCESS + c.qMin * W_QMIN;\n' +
+'  });\n\n' +
+'  // Find top two scores\n' +
+'  var sorted = scores.slice().sort(function(a, b) { return b - a; });\n' +
+'  var maxScore = sorted[0];\n' +
+'  var secondScore = sorted.length > 1 ? sorted[1] : 0;\n' +
+'  var gap = maxScore - secondScore;\n' +
+'  var bestIdx = scores.indexOf(maxScore);\n' +
+'  var topF = choices[bestIdx].fillRatio;\n\n' +
+'  // Decision\n' +
+'  if (gap >= GAP_THRESHOLD || topF >= F_THRESHOLD) {\n' +
+'    return bestIdx + 1; // 1-based answer\n' +
+'  }\n' +
+'  return null; // No confident detection\n' +
+'}\n' +
+'</pre></div>';
+
+  // Per-dataset breakdown for winner
+  html += '<div class="card"><h3>Winner (' + bestId + ') Per-Dataset Breakdown</h3><table>';
+  html += '<tr><th>Dataset</th><th>Correct</th><th>Wrong</th><th>Null</th><th>Accuracy</th></tr>';
+  for (var di = 0; di < allDatasets.length; di++) {
+    var r = allResults[bestId][allDatasets[di].name];
+    html += '<tr><td>' + allDatasets[di].label + '</td>';
+    html += '<td class="correct">' + r.correct + '</td>';
+    html += '<td class="' + (r.wrong > 0 ? 'wrong' : '') + '">' + r.wrong + '</td>';
+    html += '<td class="' + (r.nullCount > 0 ? 'null-result' : '') + '">' + r.nullCount + '</td>';
+    html += '<td>' + (r.accuracy*100).toFixed(1) + '%</td></tr>';
+  }
+  html += '</table></div>';
+
+  document.getElementById('recommendation-section').innerHTML = html;
+})();
+</script>
+
+</body>
+</html>

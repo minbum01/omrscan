@@ -54,7 +54,7 @@ const OmrEngine = {
                 if (px >= 0 && px < imgW && py >= 0 && py < imgH) { brightSum += gray[py * imgW + px]; total++; }
             }
         }
-        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0, erodedFill: 0 };
+        if (total === 0) return { brightness: 255, darkRatio: 0, centerFill: 0, erodedFill: 0, erodedQuadrants: [0, 0, 0, 0] };
         const localMean = brightSum / total;
         // 절대 최소 기준 30 — 완전히 까맣게 칠한 영역이 상대 기준으로는 감지 안 되는 버그 방지
         const localThreshold = Math.max(localMean * 0.75, 30);
@@ -402,20 +402,44 @@ const OmrEngine = {
     // ==========================================
     // Stage 4: 후처리 — 누락 열 복원 + 위치 교정
     // ==========================================
-    _stage4_postProcess(structuredRows, grayData, width, height, numC, sampleW, sampleH, isVert, offsetX, offsetY) {
+    _stage4_postProcess(structuredRows, grayData, width, height, numC, sampleW, sampleH, isVert, offsetX, offsetY, patternHint) {
         // 4-1. 정상 행(numC개 블롭)에서 열 평균 계산
         const normalRows = structuredRows.filter(r => r.blobs.length === numC);
-        if (normalRows.length < 2) return; // 기준 부족
-
         const prop = isVert ? 'cx' : 'cy';
-        const colAvgX = Array.from({ length: numC }, (_, c) => {
-            const vals = normalRows.map(r => r.blobs[c][prop]);
-            return vals.reduce((s, v) => s + v, 0) / vals.length;
-        });
-        const colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
-        const tolerance = colGap * 0.4;
 
-        this._log(`[Stage4] 열평균=[${colAvgX.map(Math.round).join(',')}] 정상행=${normalRows.length}/${structuredRows.length}`);
+        let colAvgX, colGap, tolerance;
+
+        if (normalRows.length >= 2) {
+            // 정상 행으로부터 열 평균 계산 (기존 방식)
+            colAvgX = Array.from({ length: numC }, (_, c) => {
+                const vals = normalRows.map(r => r.blobs[c][prop]);
+                return vals.reduce((s, v) => s + v, 0) / vals.length;
+            });
+            colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
+            tolerance = colGap * 0.4;
+            this._log(`[Stage4] 열평균=[${colAvgX.map(Math.round).join(',')}] 정상행=${normalRows.length}/${structuredRows.length}`);
+        } else if (patternHint) {
+            // 정상 행 부족 → 패턴 힌트로 열 평균 추정
+            // 감지된 블롭 중 하나를 기준으로 삼고, 기대 간격으로 나머지 열 위치 계산
+            const expectedGap = isVert ? patternHint.expectedColGap : patternHint.expectedRowGap;
+            // 가장 블롭이 많은 행에서 기준 찾기
+            const bestRow = structuredRows.reduce((best, r) => r.blobs.length > (best ? best.blobs.length : 0) ? r : best, null);
+            if (!bestRow || bestRow.blobs.length === 0) {
+                this._log(`[Stage4+패턴] 기준 블롭 없음 - 스킵`);
+                return;
+            }
+            // bestRow 블롭들을 정렬 → 각 블롭의 col 인덱스를 기대 간격으로 역추정
+            const sortedBlobs = [...bestRow.blobs].sort((a, b) => a[prop] - b[prop]);
+            const firstBlobPos = sortedBlobs[0][prop];
+            // firstBlob이 어떤 열인지 추정: 0열로 가정 (가장 왼쪽/위)
+            colAvgX = Array.from({ length: numC }, (_, c) => firstBlobPos + c * expectedGap);
+            colGap = expectedGap;
+            tolerance = expectedGap * 0.4;
+            this._log(`[Stage4+패턴] 열 평균 추정(간격=${expectedGap.toFixed(1)})=[${colAvgX.map(Math.round).join(',')}]`);
+        } else {
+            // 기준 부족, 패턴도 없음 → 스킵
+            return;
+        }
 
         structuredRows.forEach((row, q) => {
             // 4-2. 블롭 부족 행: 열 평균에 매칭 → 누락 열 복원
@@ -466,7 +490,7 @@ const OmrEngine = {
                 if (needResample) {
                     row.blobs = newBlobs;
                     row._autoCorrected = true;
-                    this._resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert);
+                    this._resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert, elongatedMode);
                 }
             }
 
@@ -485,60 +509,52 @@ const OmrEngine = {
                 });
                 if (needResample) {
                     row._autoCorrected = true;
-                    this._resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert);
+                    this._resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert, elongatedMode);
                 }
             }
         });
     },
 
-    // 행 재샘플링 + 마킹 재판별
-    _resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert) {
+    // 행 재샘플링 + 마킹 재판별 (복합스코어)
+    _resampleRow(row, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert, _isElong) {
         const cellScores = [];
         row.blobs.forEach((blob, c) => {
-            // blob.cx/cy는 절대좌표(offset 포함) → sampleCell은 ROI 내부 상대좌표 필요
             const cx = blob.cx - offsetX;
             const cy = blob.cy - offsetY;
             const sample = this.sampleCell(grayData, width, height, cx, cy, sampleW, sampleH);
-            const score = (sample.darkRatio * 300) + (255 - sample.brightness) + (sample.centerFill * 800);
+            const _eq = Array.isArray(sample.erodedQuadrants) ? sample.erodedQuadrants : [0, 0, 0, 0];
+            const qMin = _eq.length > 0 ? Math.min(..._eq) : 0;
+            const comp = _isElong
+                ? sample.centerFill * 0.55 + sample.erodedFill * 0.45
+                : sample.centerFill * 0.4 + sample.erodedFill * 0.35 + qMin * 0.25;
             blob.boxBrightness = sample.brightness;
             blob.inkRatio = sample.darkRatio;
             blob.centerFillRatio = sample.centerFill;
             blob.isMarked = false;
-            cellScores.push({ col: c, score, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
+            cellScores.push({ col: c, comp, f: sample.centerFill, e: sample.erodedFill, qMin, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
         });
 
-        // 마킹 재판별
         if (cellScores.length < 2) return;
-        const prominences = cellScores.map((c, i) => {
-            const others = cellScores.filter((_, j) => j !== i);
-            const oAvg = others.length > 0 ? others.reduce((s, o) => s + o.score, 0) / others.length : 0;
-            return { idx: i, prom: c.score - oAvg };
-        }).sort((a, b) => b.prom - a.prom);
-        const bestProm = prominences[0].prom;
-        const secondProm = prominences.length > 1 ? prominences[1].prom : 0;
-        const promRatio = secondProm > 0 ? bestProm / secondProm : (bestProm > 30 ? 999 : 0);
 
-        let bestIdx = -1, bestScore = -999;
-        const avgBright = cellScores.reduce((s, c) => s + c.brightness, 0) / cellScores.length;
-        const avgInk = cellScores.reduce((s, c) => s + c.darkRatio, 0) / cellScores.length;
-        const avgFill = cellScores.reduce((s, c) => s + c.centerFill, 0) / cellScores.length;
-        cellScores.forEach((c, i) => { if (c.score > bestScore) { bestScore = c.score; bestIdx = i; } });
+        // 복합스코어 정렬
+        const sorted = [...cellScores].sort((a, b) => b.comp - a.comp);
+        const gap = sorted[0].comp - sorted[1].comp;
+
+        // 백지 판별
+        const maxFill = Math.max(...cellScores.map(c => c.f));
+        const minFill = Math.min(...cellScores.map(c => c.f));
+        const isBlank = _isElong
+            ? maxFill < 0.35 && (maxFill - minFill) < 0.10
+            : maxFill < 0.5 && (maxFill - minFill) < 0.15;
 
         let primaryMarked = -1;
-        if (bestIdx !== -1 && numC > 1) {
-            const best = cellScores[bestIdx];
-            const dB = avgBright - best.brightness, dI = best.darkRatio - avgInk, dF = best.centerFill - avgFill;
-            if ((dB > 8 || dI > 0.03 || dF > 0.05) && promRatio > 1.5) primaryMarked = bestIdx;
-
-            const maxFill = Math.max(...cellScores.map(c => c.centerFill));
-            const minFill = Math.min(...cellScores.map(c => c.centerFill));
-            if (maxFill < 0.5 && (maxFill - minFill) < 0.15) primaryMarked = -1; // 백지
-
-            // 침식 + 사분면 균일성 필터
-            if (primaryMarked !== -1) {
-                const c = cellScores[primaryMarked];
-                const qMin = Math.min(...c.erodedQuadrants);
-                if (c.erodedFill < 0.30 || qMin < 0.40) primaryMarked = -1;
+        if (!isBlank) {
+            if (_isElong) {
+                const passBase = gap >= 0.10 || sorted[0].f >= 0.95;
+                const passEroded = sorted[0].e >= 0.25;
+                if (passBase && passEroded) primaryMarked = sorted[0].col;
+            } else {
+                if (gap >= 0.10 || sorted[0].f >= 0.95) primaryMarked = sorted[0].col;
             }
         }
 
@@ -592,10 +608,23 @@ const OmrEngine = {
     // ==========================================
     // 메인 분석 (4단계 파이프라인)
     // ==========================================
-    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0, elongatedMode = false, elongatedThresholds = null) {
+    analyzeROI(imageData, offsetX, offsetY, orientation = 'vertical', numQ = 0, numC = 0, _unused = null, bubbleSize = 0, elongatedMode = false, elongatedThresholds = null, blobPattern = null) {
         const width = imageData.width, height = imageData.height;
         const grayData = this.preprocess(imageData);
         let isVert = orientation === 'vertical';
+
+        // 양식 블롭 패턴 → 현재 ROI 크기에 맞춘 기대 규격
+        const patternHint = blobPattern ? {
+            expectedBubbleW: width * blobPattern.bubbleWRatio,
+            expectedBubbleH: height * blobPattern.bubbleHRatio,
+            expectedColGap:  width * blobPattern.colSpacingRatio,
+            expectedRowGap:  height * blobPattern.rowSpacingRatio,
+            numRows: blobPattern.numRows,
+            numCols: blobPattern.numCols,
+        } : null;
+        if (patternHint) {
+            this._log(`[Pattern] 기대 규격: 버블 ${patternHint.expectedBubbleW.toFixed(1)}×${patternHint.expectedBubbleH.toFixed(1)}, 간격 열=${patternHint.expectedColGap.toFixed(1)} 행=${patternHint.expectedRowGap.toFixed(1)}`);
+        }
 
         // ──────────────────────────────────────
         // Stage 1: 빈 버블 위치 찾기
@@ -705,83 +734,67 @@ const OmrEngine = {
 
             if (cellScores.length === 0) continue;
 
-            // 돌출도 계산
-            const prominences = cellScores.map((c, i) => {
-                const others = cellScores.filter((_, j) => j !== i);
-                const oAvg = others.length > 0 ? others.reduce((s, o) => s + o.score, 0) / others.length : 0;
-                return { idx: i, prom: c.score - oAvg };
-            }).sort((a, b) => b.prom - a.prom);
-            const bestProm = prominences[0].prom;
-            const secondProm = prominences.length > 1 ? prominences[1].prom : 0;
-            const promRatio = secondProm > 0 ? bestProm / secondProm : (bestProm > 30 ? 999 : 0);
+            // ─────────────────────────────────────────────────
+            // 복합스코어 마킹 판별
+            // 동그란 버블(공식E): comp = f×0.4 + e×0.35 + qMin×0.25, gap≥0.06|f≥0.82
+            // 세로길쭉 버블(E-v4): comp = f×0.55 + e×0.45 (qMin 제거), gap≥0.04|f≥0.75
+            // ─────────────────────────────────────────────────
+            const _isElong = elongatedMode;
+            const compScores = cellScores.map((c, i) => {
+                const _eq = Array.isArray(c.erodedQuadrants) ? c.erodedQuadrants : [0, 0, 0, 0];
+                const qMin = _eq.length > 0 ? Math.min(..._eq) : 0;
+                const comp = _isElong
+                    ? c.centerFill * 0.55 + c.erodedFill * 0.45
+                    : c.centerFill * 0.4 + c.erodedFill * 0.35 + qMin * 0.25;
+                return { col: i, comp, f: c.centerFill, e: c.erodedFill };
+            }).sort((a, b) => b.comp - a.comp);
+            const compGap = compScores.length > 1 ? compScores[0].comp - compScores[1].comp : compScores[0].comp;
 
-            let bestIdx = -1, bestScore = -999;
-            cellScores.forEach((c, i) => { if (c.score > bestScore) { bestScore = c.score; bestIdx = i; } });
-            const avgBright = cellScores.reduce((s, c) => s + c.brightness, 0) / cellScores.length;
-            const avgInk = cellScores.reduce((s, c) => s + c.darkRatio, 0) / cellScores.length;
-            const avgFill = cellScores.reduce((s, c) => s + c.centerFill, 0) / cellScores.length;
+            // 백지 판별
+            const maxFill = Math.max(...cellScores.map(c => c.centerFill));
+            const minFill = Math.min(...cellScores.map(c => c.centerFill));
+            const isBlank = _isElong
+                ? maxFill < 0.35 && (maxFill - minFill) < 0.10
+                : maxFill < 0.5 && (maxFill - minFill) < 0.15;
 
-            // 마킹 판별
             let primaryMarked = -1;
-            if (bestIdx !== -1 && numC > 1) {
-                const best = cellScores[bestIdx];
-                const dB = avgBright - best.brightness, dI = best.darkRatio - avgInk, dF = best.centerFill - avgFill;
-                if ((dB > 8 || dI > 0.03 || dF > 0.05) && promRatio > 1.5) primaryMarked = bestIdx;
+            // 1배가 "약한 후보"라도 봤는지 기록 (ring 비교용)
+            const top = compScores[0];
+            const hadWeakCandidate = !isBlank && (compGap >= 0.06 || top.f >= 0.82);
+            const weakCandidateCol = hadWeakCandidate ? top.col : -1;
 
-                // 백지 판별
-                const maxFill = Math.max(...cellScores.map(c => c.centerFill));
-                const minFill = Math.min(...cellScores.map(c => c.centerFill));
-                const isBlank = maxFill < 0.5 && (maxFill - minFill) < 0.15;
-
-                // 2차 검증
-                const bestFill = cellScores[bestIdx].centerFill;
-                if (!isBlank && promRatio < 3 && bestFill < 0.9) {
-                    const narrowScores = [];
-                    for (let c2 = 0; c2 < numC; c2++) {
-                        const ncx = isVert ? colAvgPositions[c2] : rowY;
-                        const ncy = isVert ? rowY : colAvgPositions[c2];
-                        const nw = sw * 0.5, nh = sh * 0.5;
-                        const s2 = this.sampleCell(grayData, width, height, ncx, ncy, nw, nh);
-                        narrowScores.push({ col: c2, score: (s2.darkRatio * 300) + (255 - s2.brightness) + (s2.centerFill * 800) });
-                    }
-                    const nProms = narrowScores.map((c, i) => {
-                        const others = narrowScores.filter((_, j) => j !== i);
-                        const oA = others.length > 0 ? others.reduce((s, o) => s + o.score, 0) / others.length : 0;
-                        return { idx: i, prom: c.score - oA };
-                    }).sort((a, b) => b.prom - a.prom);
-                    const nPromRatio = nProms.length > 1 && nProms[1].prom > 0 ? nProms[0].prom / nProms[1].prom : (nProms[0].prom > 30 ? 999 : 0);
-                    if (nPromRatio > 1.5) { if (primaryMarked === -1 || nProms[0].idx !== primaryMarked) primaryMarked = nProms[0].idx; }
-                    else if (primaryMarked !== -1) primaryMarked = -1;
-                }
-            } else if (numC === 1) primaryMarked = 0;
-
-            // ─────────────────────────────────────────────────
-            // 침식 + 사분면 균일성 필터:
-            // 1) 침식 후 중앙 fill이 충분히 살아남아야 (얇은 선 제거)
-            // 2) 4사분면(TL/TR/BL/BR) 중 최소값이 임계 이상이어야 (숫자는 불균일)
-            //    진짜 마킹은 4사분면이 모두 진함, 숫자는 어느 한 사분면이 비어 있음
-            // ─────────────────────────────────────────────────
-            const ERODED_THRESHOLD = 0.30;
-            const QUAD_MIN_THRESHOLD = 0.40;
-            if (primaryMarked !== -1) {
-                const c = cellScores[primaryMarked];
-                const qMin = Math.min(...c.erodedQuadrants);
-                if (c.erodedFill < ERODED_THRESHOLD || qMin < QUAD_MIN_THRESHOLD) {
-                    primaryMarked = -1;
+            if (numC === 1) {
+                primaryMarked = 0;
+            } else if (!isBlank) {
+                // 엄격 판정: gap≥0.12 OR f≥0.95 (f 단독은 거의 꽉 참 수준)
+                if (_isElong) {
+                    const passBase = compGap >= 0.12 || top.f >= 0.95;
+                    const passEroded = top.e >= 0.25;
+                    if (passBase && passEroded) primaryMarked = top.col;
+                } else {
+                    if (compGap >= 0.12 || top.f >= 0.95) primaryMarked = top.col;
                 }
             }
 
-            this._log(`  Q${q + 1}: ${cellScores.map(c => {
-                const qMin = Math.min(...c.erodedQuadrants);
-                return `[${c.col + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)} qMin=${qMin.toFixed(3)}`;
-            }).join(' | ')} prom=${promRatio.toFixed(2)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
+            this._log(`  Q${q + 1}: ${cellScores.map((c, ci) => {
+                const _eq = Array.isArray(c.erodedQuadrants) ? c.erodedQuadrants : [0, 0, 0, 0];
+                const qMin = _eq.length > 0 ? Math.min(..._eq) : 0;
+                const comp = _isElong
+                    ? c.centerFill * 0.55 + c.erodedFill * 0.45
+                    : c.centerFill * 0.4 + c.erodedFill * 0.35 + qMin * 0.25;
+                return `[${ci + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)} qMin=${qMin.toFixed(3)} comp=${comp.toFixed(3)}`;
+            }).join(' | ')} gap=${compGap.toFixed(3)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
-            // 중복 감지
+            // 중복 감지 (composite 기반)
             const markedIndices = [];
             if (primaryMarked !== -1 && numC > 1) {
-                const pS = cellScores[primaryMarked].score, pF = cellScores[primaryMarked].centerFill;
+                const pComp = compScores[0].comp, pF = compScores[0].f;
                 cellScores.forEach((c, i) => {
-                    if (i !== primaryMarked && c.score > pS * 0.95 && c.centerFill > pF * 0.9 && c.centerFill > 0.8) markedIndices.push(i);
+                    if (i === primaryMarked) return;
+                    const _eq = Array.isArray(c.erodedQuadrants) ? c.erodedQuadrants : [0, 0, 0, 0];
+                    const qm = _eq.length > 0 ? Math.min(..._eq) : 0;
+                    const iComp = c.centerFill * 0.4 + c.erodedFill * 0.35 + qm * 0.25;
+                    if (iComp > pComp * 0.90 && c.centerFill > pF * 0.9 && c.centerFill > 0.8) markedIndices.push(i);
                 });
                 if (markedIndices.length > 0) markedIndices.unshift(primaryMarked);
             }
@@ -792,7 +805,11 @@ const OmrEngine = {
             else if (primaryMarked !== -1) blobs[primaryMarked].isMarked = true;
             const finalMarked = !isMulti && primaryMarked !== -1 ? primaryMarked + 1 : null;
 
-            structuredRows.push({ questionNumber: q + 1, numChoices: numC, markedAnswer: finalMarked, multiMarked: isMulti, markedIndices: markedIndices.map(i => i + 1), blobs });
+            structuredRows.push({
+                questionNumber: q + 1, numChoices: numC, markedAnswer: finalMarked,
+                multiMarked: isMulti, markedIndices: markedIndices.map(i => i + 1), blobs,
+                _weakCandidate: weakCandidateCol >= 0 ? weakCandidateCol + 1 : null, // 1배의 약한 후보
+            });
         }
 
         // ──────────────────────────────────────
@@ -800,7 +817,7 @@ const OmrEngine = {
         // ──────────────────────────────────────
         const avgSampleW = sampleSize || 18;
         const avgSampleH = sampleSize || 18;
-        this._stage4_postProcess(structuredRows, grayData, width, height, numC, avgSampleW, avgSampleH, isVert, offsetX, offsetY);
+        this._stage4_postProcess(structuredRows, grayData, width, height, numC, avgSampleW, avgSampleH, isVert, offsetX, offsetY, patternHint);
 
         // 디버그 블롭
         const debugBlobs = this._debugBlobs ? {
@@ -808,7 +825,157 @@ const OmrEngine = {
             filtered: this._debugBlobs.filtered.map(b => ({ cx: b.cx + offsetX, cy: b.cy + offsetY, w: b.w, h: b.h })),
         } : null;
 
+        // ──────────────────────────────────────
+        // Stage 5: 1.5배 확장 교차 검증
+        // 기존 버블 위치에서 1.5배 넓힌 영역으로 재샘플링 → 원본과 비교
+        // ──────────────────────────────────────
+        this._expandedVerify(grayData, width, height, numC, isVert, structuredRows, offsetX, offsetY, elongatedMode);
+
         return { rows: structuredRows, maxCols: numC, debugBlobs };
+    },
+
+    // ==========================================
+    // Stage 5: 링(1.5배 - 1배) 교차 검증
+    // 1배 바깥 둘레(링)만 샘플링 → 진짜 마킹(번짐 있음) vs 인쇄 노이즈(번짐 없음) 판별
+    // ==========================================
+    _expandedVerify(grayData, width, height, numC, isVert, rows, offsetX, offsetY, elongatedMode) {
+        if (rows.length === 0 || numC < 2) return;
+        const EXPAND = 1.5;
+
+        // 전체 평균 밝기 기반 임계값
+        let totalBright = 0;
+        for (let i = 0; i < grayData.length; i++) totalBright += grayData[i];
+        const globalMean = grayData.length > 0 ? totalBright / grayData.length : 200;
+        const threshold = Math.max(globalMean * 0.75, 30);
+
+        // 링 영역 4분면 darkRatio 계산 (상/하/좌/우 독립)
+        // 한쪽만 마킹이 번져도 잡아내기 위함
+        const ringDarkQuadrants = (cx, cy, iw, ih, ow, oh) => {
+            const innerSx = Math.round(cx - iw/2), innerSy = Math.round(cy - ih/2);
+            const innerEx = innerSx + Math.round(iw), innerEy = innerSy + Math.round(ih);
+            const outerSx = Math.round(cx - ow/2), outerSy = Math.round(cy - oh/2);
+            const outerEx = outerSx + Math.round(ow), outerEy = outerSy + Math.round(oh);
+
+            // 영역 계산 헬퍼
+            const calc = (sx, sy, ex, ey) => {
+                let dark = 0, total = 0;
+                for (let yy = Math.max(0, sy); yy < Math.min(height, ey); yy++) {
+                    for (let xx = Math.max(0, sx); xx < Math.min(width, ex); xx++) {
+                        total++;
+                        if (grayData[yy * width + xx] < threshold) dark++;
+                    }
+                }
+                return total > 0 ? dark / total : 0;
+            };
+
+            // 4분면 (링만)
+            const top    = calc(outerSx, outerSy, outerEx, innerSy);         // 위쪽 줄
+            const bottom = calc(outerSx, innerEy, outerEx, outerEy);          // 아래쪽 줄
+            const left   = calc(outerSx, innerSy, innerSx, innerEy);          // 왼쪽 줄 (1배 위아래 제외)
+            const right  = calc(innerEx, innerSy, outerEx, innerEy);          // 오른쪽 줄
+            return { top, bottom, left, right };
+        };
+
+        rows.forEach(row => {
+            if (!row.blobs || row.blobs.length < 2) {
+                row._xvMatch = 'no_data';
+                return;
+            }
+
+            // 각 블롭의 링 4분면 darkRatio 계산 → MAX값 채택
+            const xvScores = [];
+            row.blobs.forEach((blob, c) => {
+                const bw = blob.w || 16, bh = blob.h || 16;
+                const cx = blob.cx - offsetX;
+                const cy = blob.cy - offsetY;
+                const ew = bw * EXPAND, eh = bh * EXPAND;
+
+                const ringQuad = ringDarkQuadrants(cx, cy, bw, bh, ew, eh);
+                // 4분면 중 최대값 (한쪽만 번져도 포착)
+                const ringMax = Math.max(ringQuad.top, ringQuad.bottom, ringQuad.left, ringQuad.right);
+                const ringAvg = (ringQuad.top + ringQuad.bottom + ringQuad.left + ringQuad.right) / 4;
+
+                // 1.5배 전체(참고용 시각화)
+                const full = this.sampleCell(grayData, width, height, cx, cy, Math.round(ew), Math.round(eh));
+
+                xvScores.push({
+                    col: c,
+                    comp: ringMax,            // 판별 지표 = 4분면 MAX
+                    ringMax, ringAvg,
+                    ringQuad,                  // {top, bottom, left, right}
+                    f: full.centerFill, e: full.erodedFill, qMin: 0,
+                    origRect: { x: blob.cx - bw/2, y: blob.cy - bh/2, w: bw, h: bh },
+                    expandRect: { x: blob.cx - ew/2, y: blob.cy - eh/2, w: ew, h: eh },
+                });
+            });
+
+            // 링 MAX 기준 정렬
+            const sorted = [...xvScores].sort((a, b) => b.ringMax - a.ringMax);
+            const gap = sorted.length > 1 ? sorted[0].ringMax - sorted[1].ringMax : sorted[0].ringMax;
+
+            // 링 판정:
+            //   링 MAX ≥ 0.30 AND gap ≥ 0.10 → 감지
+            //   (한 방향만이라도 0.30 이상 진하면 인정)
+            const RING_TH = 0.30;
+            const GAP_TH = 0.10;
+            const xvAnswer = (sorted[0].ringMax >= RING_TH && gap >= GAP_TH)
+                ? sorted[0].col + 1 : null;
+
+            // 교차 비교
+            const bubbleAnswer = row.markedAnswer;
+            row._xvAnswer = xvAnswer;
+            row._xvScores = xvScores;
+            row._xvGap = gap;
+
+            // ─────────────────────────────────────────
+            // 최종 결정 매트릭스 (단순 규칙):
+            //   1배 null + 링 null   → null
+            //   1배 null + 링 Y      → Y (자동교정 🟢)
+            //   1배 X    + 링 X      → X (일치, 확정)
+            //   1배 X    + 링 Y (≠)  → X (1배 신뢰)
+            //   1배 X    + 링 null   → X (1배 신뢰, 깔끔한 마킹)
+            // → 결론: 1배가 뭐라도 감지했으면 무조건 1배
+            //         링은 1배가 null일 때만 보완 (자동교정)
+            // ─────────────────────────────────────────
+            if (bubbleAnswer === null && xvAnswer === null) {
+                row._xvMatch = 'both_null';
+            } else if (bubbleAnswer === null && xvAnswer !== null) {
+                // 1배 null + 링만 감지
+                // 1배가 "약한 후보"라도 봤는데, 링이 다른 걸 가리키면 → ambiguous → null 유지
+                // (둘 다 약한 신호인데 서로 다른 답이면 믿을 수 없음)
+                if (row._weakCandidate !== null && row._weakCandidate !== xvAnswer) {
+                    row._xvMatch = 'ambiguous';
+                    // row.markedAnswer는 그대로 null
+                } else {
+                    // 1배가 아무 후보도 안 봤거나, 약한 후보 = 링 답 → 링 채택
+                    row._xvMatch = 'xv_only';
+                    row.markedAnswer = xvAnswer;
+                    row.markedIndices = [xvAnswer];
+                    row.multiMarked = false;
+                    row.undetected = false;
+                    row.corrected = true;
+                    row._xvAutoCorrected = true;
+                    if (row.blobs) {
+                        row.blobs.forEach((b, bi) => { b.isMarked = (bi + 1 === xvAnswer); });
+                    }
+                }
+            } else if (bubbleAnswer === xvAnswer) {
+                row._xvMatch = 'match';
+            } else if (xvAnswer === null) {
+                row._xvMatch = 'bubble_only';
+                // 1배 값 그대로 유지
+            } else {
+                row._xvMatch = 'conflict';
+                // 1배 값 그대로 유지 (참고용으로 링 결과만 기록)
+            }
+
+            // 로그: 링 4분면 값 출력
+            const xvStr = xvScores.map((xv, i) => {
+                const q = xv.ringQuad;
+                return `[${i+1}]max=${xv.ringMax.toFixed(2)}(T${q.top.toFixed(2)} B${q.bottom.toFixed(2)} L${q.left.toFixed(2)} R${q.right.toFixed(2)})`;
+            }).join(' | ');
+            this._log(`    └링4분면: ${xvStr} gap=${gap.toFixed(3)} → ${xvAnswer || 'null'} [${row._xvMatch}]`);
+        });
     },
 
     // ==========================================
