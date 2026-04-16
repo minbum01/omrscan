@@ -98,17 +98,40 @@ const TemplateManager = {
                 }
             }
 
+            // 각 행의 대표 Y (상대 비율)
+            const rowYRatios = [];
+            res.rows.forEach((row, rowIdx) => {
+                const inRow = allBlobs.filter(b => b.rowIdx === rowIdx);
+                if (inRow.length === 0) return;
+                const avgY = inRow.reduce((s, b) => s + b.cy, 0) / inRow.length;
+                rowYRatios.push((avgY - roi.y) / roi.h);
+            });
+
+            // 각 열의 대표 X (상대 비율)
+            const colXRatios = [];
+            for (let c = 0; c < numC; c++) {
+                const inCol = allBlobs.filter(b => b.colIdx === c);
+                if (inCol.length === 0) continue;
+                const avgX = inCol.reduce((s, b) => s + b.cx, 0) / inCol.length;
+                colXRatios.push((avgX - roi.x) / roi.w);
+            }
+
             return {
                 savedAt: new Date().toISOString(),
                 numRows: res.rows.length,
                 numCols: numC,
                 orientation: (roi.settings && roi.settings.orientation) || 'vertical',
-                // 상대 규격 (ROI 크기 대비 비율로 저장 → 다른 ROI 크기에도 스케일링 가능)
-                bubbleWRatio: avgBubbleW / roi.w,     // 버블 폭 / ROI 폭
-                bubbleHRatio: avgBubbleH / roi.h,     // 버블 높이 / ROI 높이
-                colSpacingRatio: avgColSpacing / roi.w, // 열 간격 / ROI 폭
-                rowSpacingRatio: avgRowSpacing / roi.h, // 행 간격 / ROI 높이
-                // 샘플 수 (신뢰도 참고)
+                // ── 절대 픽셀값 (동일 OMR 양식은 버블 크기/간격이 고정) ──
+                bubbleW: avgBubbleW,        // 버블 폭 (px)
+                bubbleH: avgBubbleH,        // 버블 높이 (px)
+                colSpacing: avgColSpacing,  // 열 간격 (px)
+                rowSpacing: avgRowSpacing,  // 행 간격 (px)
+                // ── 비율값 (하위호환, 최후의 fallback용) ──
+                bubbleWRatio: avgBubbleW / roi.w,
+                bubbleHRatio: avgBubbleH / roi.h,
+                colSpacingRatio: avgColSpacing / roi.w,
+                rowSpacingRatio: avgRowSpacing / roi.h,
+                rowYRatios, colXRatios,
                 sampleBlobCount: allBlobs.length,
             };
         };

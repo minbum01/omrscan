@@ -386,37 +386,33 @@ const OmrEngine = {
         let colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
         let tolerance = colGap * 0.35;
 
-        // 패턴 힌트 기반 열 평균 재정렬 — BFS가 일부 열을 옆 열 위치에서 잡았을 때 보정
-        // sortProp이 'cx'이면 vertical 방향(열이 가로로 나열), 'cy'이면 horizontal 방향
+        // Stage3 열 평균 재정렬 — 감지된 열 간격의 중앙값이 기대값과 다르면 그 중앙값 사용
+        // 절대 좌표 비교가 아닌, 감지된 간격 자체를 신뢰
         const patternHint = this._currentPatternHint;
         if (patternHint && numC >= 3) {
             const expectedGap = sortProp === 'cx' ? patternHint.expectedColGap : patternHint.expectedRowGap;
             if (expectedGap >= 5) {
-                // 감지된 열 간격들의 편차 계산
-                let maxDeviation = 0;
-                for (let i = 1; i < numC; i++) {
-                    const gap = colAvgX[i] - colAvgX[i - 1];
-                    const dev = Math.abs(gap - expectedGap) / expectedGap;
-                    if (dev > maxDeviation) maxDeviation = dev;
+                // 감지된 열 간격들
+                const detectedGaps = [];
+                for (let c = 1; c < numC; c++) detectedGaps.push(colAvgX[c] - colAvgX[c - 1]);
+                const sortedGaps = [...detectedGaps].sort((a, b) => a - b);
+                const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+
+                // 개별 간격이 중앙값 대비 30% 이상 편차면, 그 열만 재배치
+                let anyFixed = false;
+                const before = [...colAvgX];
+                for (let c = 1; c < numC; c++) {
+                    const gap = colAvgX[c] - colAvgX[c - 1];
+                    if (Math.abs(gap - medianGap) > medianGap * 0.3) {
+                        // 이상한 간격 → 이전 열 위치 + 중앙값으로 재계산
+                        colAvgX[c] = colAvgX[c - 1] + medianGap;
+                        anyFixed = true;
+                    }
                 }
-                // 30% 이상 편차 있으면 재정렬
-                if (maxDeviation > 0.3) {
-                    // 기대 간격에 가장 가까운 열 쌍을 앵커로 선택
-                    let bestAnchorIdx = 0;
-                    let bestDiff = Infinity;
-                    for (let i = 1; i < numC; i++) {
-                        const gap = colAvgX[i] - colAvgX[i - 1];
-                        const diff = Math.abs(gap - expectedGap);
-                        if (diff < bestDiff) { bestDiff = diff; bestAnchorIdx = i - 1; }
-                    }
-                    const anchor = colAvgX[bestAnchorIdx];
-                    const before = [...colAvgX];
-                    for (let c = 0; c < numC; c++) {
-                        colAvgX[c] = anchor + (c - bestAnchorIdx) * expectedGap;
-                    }
-                    colGap = expectedGap;
+                if (anyFixed) {
+                    colGap = medianGap;
                     tolerance = colGap * 0.35;
-                    this._log(`[Stage3+패턴] 열 재정렬(앵커=[${bestAnchorIdx}]=${Math.round(anchor)}): [${before.map(Math.round).join(',')}] → [${colAvgX.map(Math.round).join(',')}]`);
+                    this._log(`[Stage3+재정렬] medianGap=${medianGap.toFixed(1)}: [${before.map(Math.round).join(',')}] → [${colAvgX.map(Math.round).join(',')}]`);
                 }
             }
         }
@@ -549,18 +545,12 @@ const OmrEngine = {
             }
         });
 
-        // 4-4. 누락 행 전체 복원 — 패턴이 있고 행 수가 부족하면 빠진 Y위치를 추정해 행 삽입
-        if (patternHint && numQ && structuredRows.length > 0 && structuredRows.length < numQ) {
+        // 4-4. 누락 행 복원 — 사용자 지정 numQ vs 감지 행 수 차이만큼 보간
+        // 양식 의존 없음. 감지된 행 간격 중앙값을 truth로 사용.
+        if (numQ && structuredRows.length > 0 && structuredRows.length < numQ) {
             const rowProp = isVert ? 'cy' : 'cx';
-            const expectedRowGap = isVert ? patternHint.expectedRowGap : patternHint.expectedColGap;
 
-            // 안전장치: 기대 간격이 유효한지 확인
-            if (!expectedRowGap || expectedRowGap < 5 || !isFinite(expectedRowGap)) {
-                this._log(`[Stage4-누락행] 스킵: 기대 간격 유효하지 않음(${expectedRowGap})`);
-                return;
-            }
-
-            // 각 행의 대표 Y 계산 (blob이 없으면 제외)
+            // 각 행의 대표 Y 계산
             const indexed = structuredRows
                 .map((r, i) => {
                     if (!r.blobs || r.blobs.length === 0) return null;
@@ -576,19 +566,97 @@ const OmrEngine = {
                 return;
             }
 
-            // 기존 행 "사이"의 누락만 채움 (extrapolation 안 함)
-            // 앞/뒤로 추가하면 실제 OMR에 없는 행까지 만들 위험
+            // ⚠ 좌표계 주의: blob의 cx/cy는 절대 좌표 (offset 포함).
+            // ROI 경계도 절대 좌표로 계산해야 비교 가능.
+            const roiDim = isVert ? height : width;
+            const roiOffset = isVert ? offsetY : offsetX;
+            const roiTop = roiOffset;                // 절대 상단
+            const roiBottom = roiOffset + roiDim;    // 절대 하단
+            const MAX_MARGIN = 5;
             const missingYs = [];
-            const MAX_MISSING = Math.max(0, numQ - structuredRows.length);
 
-            for (let i = 1; i < indexed.length && missingYs.length < MAX_MISSING; i++) {
-                const gap = indexed[i].y - indexed[i - 1].y;
-                // gap이 기대 간격의 2배 이상이어야 누락 행 있다고 판단 (round ≥ 2)
-                const missingCount = Math.round(gap / expectedRowGap) - 1;
-                for (let k = 1; k <= missingCount && missingYs.length < MAX_MISSING; k++) {
-                    missingYs.push(indexed[i - 1].y + expectedRowGap * k);
+            // 감지된 행 간격 중앙값 = 이 OMR의 실제 간격
+            const ys = indexed.map(d => d.y); // 절대 Y
+            const gaps = [];
+            for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
+            if (gaps.length === 0) {
+                this._log(`[Stage4-누락행] 스킵: 감지 행 1개뿐`);
+                return;
+            }
+            const sortedGaps = [...gaps].sort((a, b) => a - b);
+            const detectedGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+            if (detectedGap < 5) {
+                this._log(`[Stage4-누락행] 스킵: gap(${detectedGap}) 너무 작음`);
+                return;
+            }
+
+            const totalMissing = numQ - indexed.length;
+            let addedFromMiddle = 0;
+
+            // 1) 중간 gap이 detectedGap의 2배 이상이면 사이에 누락 행 있음
+            for (let i = 1; i < ys.length && addedFromMiddle < totalMissing; i++) {
+                const gap = ys[i] - ys[i - 1];
+                const missingCount = Math.round(gap / detectedGap) - 1;
+                for (let k = 1; k <= missingCount && addedFromMiddle < totalMissing; k++) {
+                    const y = ys[i - 1] + detectedGap * k;
+                    if (y > roiTop + MAX_MARGIN && y < roiBottom - MAX_MARGIN) {
+                        missingYs.push(y);
+                        addedFromMiddle++;
+                    }
                 }
             }
+
+            // 2) 앞/뒤 extrapolation
+            let remaining = totalMissing - addedFromMiddle;
+            if (remaining > 0) {
+                const firstY = ys[0];
+                const lastY = ys[ys.length - 1];
+                const frontMargin = firstY - roiTop;       // 절대 좌표 기반
+                const backMargin  = roiBottom - lastY;     // 절대 좌표 기반
+
+                const canAddFront = frontMargin >= detectedGap * 0.7;
+                const canAddBack  = backMargin  >= detectedGap * 0.7;
+
+                let addFront = 0, addBack = 0;
+                if (!canAddFront && !canAddBack) {
+                    this._log(`[Stage4-누락행] 양쪽 여유 없음(front=${frontMargin.toFixed(0)}, back=${backMargin.toFixed(0)}, gap=${detectedGap.toFixed(0)}) → ROI 확장 필요`);
+                    remaining = 0;
+                } else if (!canAddFront) {
+                    addBack = remaining; // 첫 감지가 1번 슬롯 확정 → 전부 뒤
+                } else if (!canAddBack) {
+                    addFront = remaining; // 마지막 감지가 마지막 슬롯 확정 → 전부 앞
+                } else if (frontMargin > backMargin * 1.5) {
+                    addFront = remaining;
+                } else if (backMargin > frontMargin * 1.5) {
+                    addBack = remaining;
+                } else {
+                    addBack = Math.ceil(remaining / 2);
+                    addFront = remaining - addBack;
+                }
+
+                for (let k = 1; k <= addFront; k++) {
+                    const y = firstY - detectedGap * k;
+                    if (y > roiTop + MAX_MARGIN) missingYs.unshift(y);
+                    else break;
+                }
+                for (let k = 1; k <= addBack; k++) {
+                    const y = lastY + detectedGap * k;
+                    if (y < roiBottom - MAX_MARGIN) missingYs.push(y);
+                    else break;
+                }
+
+                this._log(`[Stage4-누락행] front여유=${frontMargin.toFixed(0)} back여유=${backMargin.toFixed(0)} gap=${detectedGap.toFixed(0)} → 앞+${addFront}, 뒤+${addBack}`);
+            }
+
+            // 최종 안전장치: ROI 밖 Y 필터링 (절대 좌표 기준)
+            for (let i = missingYs.length - 1; i >= 0; i--) {
+                if (missingYs[i] < roiTop + MAX_MARGIN || missingYs[i] > roiBottom - MAX_MARGIN) {
+                    this._log(`[Stage4-누락행] 범위밖 Y=${missingYs[i].toFixed(0)} 제외 (ROI=${roiTop.toFixed(0)}~${roiBottom.toFixed(0)})`);
+                    missingYs.splice(i, 1);
+                }
+            }
+
+            this._log(`[Stage4-누락행] 감지=${indexed.length}, 기대=${numQ}, detectedGap=${detectedGap.toFixed(1)}, 중간 ${addedFromMiddle}개, 총 ${missingYs.length}개 추가`);
 
             if (missingYs.length > 0) {
                 this._log(`[Stage4-누락행] 기존 ${structuredRows.length}행 → ${missingYs.length}행 추가 (목표 ${numQ})`);
@@ -632,6 +700,28 @@ const OmrEngine = {
                 });
                 structuredRows.forEach((r, i) => { r.questionNumber = i + 1; });
             }
+        }
+
+        // ──────────────────────────────────────
+        // 4-5. 최종 점검 — 사용자 지정 numQ/numC 일치 확인
+        // ──────────────────────────────────────
+        const finalQ = structuredRows.length;
+        const finalC_mismatch = structuredRows.filter(r => r.blobs && r.blobs.length !== numC).length;
+        const issues = [];
+        if (numQ && finalQ !== numQ) {
+            issues.push(`문항수 불일치: 양식=${numQ}, 현재=${finalQ}`);
+        }
+        if (finalC_mismatch > 0) {
+            issues.push(`선택지 수 불일치: ${finalC_mismatch}개 행의 블롭≠${numC}`);
+        }
+        if (issues.length === 0) {
+            this._log(`[Stage4-점검] ✓ 일치 (문항 ${finalQ}/${numQ}, 모든 행 ${numC}지선다)`);
+        } else {
+            this._log(`[Stage4-점검] ⚠ ${issues.join(' | ')}`);
+            // 각 행에 점검 플래그 추가 (UI에서 경고 표시 가능)
+            structuredRows.forEach(r => {
+                if (r.blobs && r.blobs.length !== numC) r._choiceMismatch = true;
+            });
         }
     },
 
@@ -733,20 +823,26 @@ const OmrEngine = {
         const grayData = this.preprocess(imageData);
         let isVert = orientation === 'vertical';
 
-        // 양식 블롭 패턴 → 현재 ROI 크기에 맞춘 기대 규격
+        // 양식 블롭 패턴 → 기대 규격
+        // 절대 픽셀값(bubbleW, colSpacing 등) 우선 사용 (동일 OMR은 버블 크기 고정)
+        // 절대값 없으면(구버전 양식) 비율 × 현재 ROI 크기로 fallback
         const patternHint = blobPattern ? {
-            expectedBubbleW: width * blobPattern.bubbleWRatio,
-            expectedBubbleH: height * blobPattern.bubbleHRatio,
-            expectedColGap:  width * blobPattern.colSpacingRatio,
-            expectedRowGap:  height * blobPattern.rowSpacingRatio,
+            expectedBubbleW: blobPattern.bubbleW    || (width  * (blobPattern.bubbleWRatio    || 0)),
+            expectedBubbleH: blobPattern.bubbleH    || (height * (blobPattern.bubbleHRatio    || 0)),
+            expectedColGap:  blobPattern.colSpacing || (width  * (blobPattern.colSpacingRatio || 0)),
+            expectedRowGap:  blobPattern.rowSpacing || (height * (blobPattern.rowSpacingRatio || 0)),
             numRows: blobPattern.numRows,
             numCols: blobPattern.numCols,
+            rowYRatios: Array.isArray(blobPattern.rowYRatios) ? blobPattern.rowYRatios : null,
+            colXRatios: Array.isArray(blobPattern.colXRatios) ? blobPattern.colXRatios : null,
         } : null;
         if (patternHint) {
             this._log(`[Pattern] 기대 규격: 버블 ${patternHint.expectedBubbleW.toFixed(1)}×${patternHint.expectedBubbleH.toFixed(1)}, 간격 열=${patternHint.expectedColGap.toFixed(1)} 행=${patternHint.expectedRowGap.toFixed(1)}`);
         }
         // Stage3에서 접근 가능하도록 임시 저장
         this._currentPatternHint = patternHint;
+        this._currentRoiWidth = width;
+        this._currentRoiHeight = height;
 
         // ──────────────────────────────────────
         // Stage 1: 빈 버블 위치 찾기
@@ -953,7 +1049,17 @@ const OmrEngine = {
         // ──────────────────────────────────────
         this._expandedVerify(grayData, width, height, numC, isVert, structuredRows, offsetX, offsetY, elongatedMode);
 
-        return { rows: structuredRows, maxCols: numC, debugBlobs };
+        // 최종 점검 결과 요약
+        const validation = {
+            expectedQ: numQ,
+            actualQ: structuredRows.length,
+            expectedC: numC,
+            choiceMismatchRows: structuredRows.filter(r => r._choiceMismatch).map(r => r.questionNumber),
+            passed: (numQ ? structuredRows.length === numQ : true)
+                 && structuredRows.every(r => !r.blobs || r.blobs.length === numC),
+        };
+
+        return { rows: structuredRows, maxCols: numC, debugBlobs, validation };
     },
 
     // ==========================================

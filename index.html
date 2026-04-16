@@ -275,6 +275,8 @@
         console.error = function() { origError.apply(console, arguments); appendToInline(arguments, 'log-error'); };
     })();
     </script>
+    <!-- SheetJS (xlsx 생성) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="js/toast.js"></script>
     <script src="js/app.js"></script>
     <script src="js/omrEngine.js"></script>

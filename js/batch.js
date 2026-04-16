@@ -125,12 +125,23 @@ const BatchProcess = {
                     });
                 }
 
+                // 선택지 수 불일치 점검 (analyzeROI validation 결과)
+                if (analysis.validation && analysis.validation.choiceMismatchRows && analysis.validation.choiceMismatchRows.length > 0) {
+                    imgObj.validationErrors.push({
+                        roiIndex: idx + 1, regionName,
+                        type: 'choice_mismatch',
+                        expected: expectedC,
+                        rows: analysis.validation.choiceMismatchRows,
+                    });
+                }
+
                 imgObj.results.push({
                     roiIndex: idx + 1,
                     numQuestions: analysis.rows.length,
                     numChoices: analysis.maxCols,
                     rows: analysis.rows,
-                    settings: s
+                    settings: s,
+                    validation: analysis.validation,
                 });
             });
 

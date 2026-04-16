@@ -92,8 +92,9 @@ const Correction = {
 
                 <!-- 3칼럼: 1.5배 수정중 -->
                 <div>
-                    <h2 style="font-size:13px; font-weight:700; color:#16a34a; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #22c55e;">
-                        1.5배 수정중 <span style="background:#22c55e; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${autoPending.length}</span>
+                    <h2 style="font-size:13px; font-weight:700; color:#16a34a; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #22c55e; display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                        <span>1.5배 수정중 <span style="background:#22c55e; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${autoPending.length}</span></span>
+                        ${autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:3px 8px; font-size:11px; background:#22c55e; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:700;">✓ 전체 확인</button>` : ''}
                     </h2>
                     <div id="col-auto-pending" style="display:flex; flex-direction:column; gap:8px;"></div>
                 </div>
@@ -475,6 +476,35 @@ const Correction = {
 
     setAnswer(imgIdx, roiIdx, qNum, newAnswer) {
         this.setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer);
+    },
+
+    // 1.5배 수정중 전체 일괄 확인 — 값은 그대로 유지, 확정 처리만
+    confirmAllAutoPending() {
+        const { autoPending } = this.collect();
+        if (autoPending.length === 0) return;
+
+        const count = autoPending.length;
+        autoPending.forEach(e => {
+            const row = e.row;
+            row.corrected = true;
+            row._userCorrected = true;
+            row._xvAutoCorrected = false; // 이력 칼럼으로 이동시킴
+            row.undetected = false;
+            // markedAnswer, markedIndices, blobs.isMarked 은 기존 값 그대로 유지
+        });
+
+        // 영향받은 이미지들의 채점 재실행
+        const affectedImgs = new Set(autoPending.map(e => e.imgIdx));
+        affectedImgs.forEach(imgIdx => {
+            const img = App.state.images[imgIdx];
+            if (img && img.results && typeof Grading !== 'undefined') {
+                img.gradeResult = Grading.grade(img.results, img);
+            }
+        });
+
+        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        this.render(document.getElementById('correction-content'));
+        Toast.success(`1.5배 수정중 ${count}개 전체 확인 → 이력으로 이동`);
     },
 
     goTo(imgIdx, roiIdx, qNum) {
