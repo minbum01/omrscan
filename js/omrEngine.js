@@ -383,8 +383,43 @@ const OmrEngine = {
             return vals.reduce((s, v) => s + v, 0) / vals.length;
         });
 
-        const colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
-        const tolerance = colGap * 0.35;
+        let colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
+        let tolerance = colGap * 0.35;
+
+        // 패턴 힌트 기반 열 평균 재정렬 — BFS가 일부 열을 옆 열 위치에서 잡았을 때 보정
+        // sortProp이 'cx'이면 vertical 방향(열이 가로로 나열), 'cy'이면 horizontal 방향
+        const patternHint = this._currentPatternHint;
+        if (patternHint && numC >= 3) {
+            const expectedGap = sortProp === 'cx' ? patternHint.expectedColGap : patternHint.expectedRowGap;
+            if (expectedGap >= 5) {
+                // 감지된 열 간격들의 편차 계산
+                let maxDeviation = 0;
+                for (let i = 1; i < numC; i++) {
+                    const gap = colAvgX[i] - colAvgX[i - 1];
+                    const dev = Math.abs(gap - expectedGap) / expectedGap;
+                    if (dev > maxDeviation) maxDeviation = dev;
+                }
+                // 30% 이상 편차 있으면 재정렬
+                if (maxDeviation > 0.3) {
+                    // 기대 간격에 가장 가까운 열 쌍을 앵커로 선택
+                    let bestAnchorIdx = 0;
+                    let bestDiff = Infinity;
+                    for (let i = 1; i < numC; i++) {
+                        const gap = colAvgX[i] - colAvgX[i - 1];
+                        const diff = Math.abs(gap - expectedGap);
+                        if (diff < bestDiff) { bestDiff = diff; bestAnchorIdx = i - 1; }
+                    }
+                    const anchor = colAvgX[bestAnchorIdx];
+                    const before = [...colAvgX];
+                    for (let c = 0; c < numC; c++) {
+                        colAvgX[c] = anchor + (c - bestAnchorIdx) * expectedGap;
+                    }
+                    colGap = expectedGap;
+                    tolerance = colGap * 0.35;
+                    this._log(`[Stage3+패턴] 열 재정렬(앵커=[${bestAnchorIdx}]=${Math.round(anchor)}): [${before.map(Math.round).join(',')}] → [${colAvgX.map(Math.round).join(',')}]`);
+                }
+            }
+        }
 
         this._log(`[Stage3] 열평균=[${colAvgX.map(Math.round).join(',')}] tolerance=${Math.round(tolerance)}`);
 
@@ -402,7 +437,7 @@ const OmrEngine = {
     // ==========================================
     // Stage 4: 후처리 — 누락 열 복원 + 위치 교정
     // ==========================================
-    _stage4_postProcess(structuredRows, grayData, width, height, numC, sampleW, sampleH, isVert, offsetX, offsetY, patternHint) {
+    _stage4_postProcess(structuredRows, grayData, width, height, numC, sampleW, sampleH, isVert, offsetX, offsetY, patternHint, numQ, elongatedMode) {
         // 4-1. 정상 행(numC개 블롭)에서 열 평균 계산
         const normalRows = structuredRows.filter(r => r.blobs.length === numC);
         const prop = isVert ? 'cx' : 'cy';
@@ -513,6 +548,91 @@ const OmrEngine = {
                 }
             }
         });
+
+        // 4-4. 누락 행 전체 복원 — 패턴이 있고 행 수가 부족하면 빠진 Y위치를 추정해 행 삽입
+        if (patternHint && numQ && structuredRows.length > 0 && structuredRows.length < numQ) {
+            const rowProp = isVert ? 'cy' : 'cx';
+            const expectedRowGap = isVert ? patternHint.expectedRowGap : patternHint.expectedColGap;
+
+            // 안전장치: 기대 간격이 유효한지 확인
+            if (!expectedRowGap || expectedRowGap < 5 || !isFinite(expectedRowGap)) {
+                this._log(`[Stage4-누락행] 스킵: 기대 간격 유효하지 않음(${expectedRowGap})`);
+                return;
+            }
+
+            // 각 행의 대표 Y 계산 (blob이 없으면 제외)
+            const indexed = structuredRows
+                .map((r, i) => {
+                    if (!r.blobs || r.blobs.length === 0) return null;
+                    const ys = r.blobs.map(b => b[rowProp]).filter(v => isFinite(v));
+                    if (ys.length === 0) return null;
+                    return { y: ys.reduce((s, v) => s + v, 0) / ys.length, row: r };
+                })
+                .filter(x => x !== null)
+                .sort((a, b) => a.y - b.y);
+
+            if (indexed.length === 0) {
+                this._log(`[Stage4-누락행] 스킵: 유효한 기존 행 없음`);
+                return;
+            }
+
+            // 기존 행 "사이"의 누락만 채움 (extrapolation 안 함)
+            // 앞/뒤로 추가하면 실제 OMR에 없는 행까지 만들 위험
+            const missingYs = [];
+            const MAX_MISSING = Math.max(0, numQ - structuredRows.length);
+
+            for (let i = 1; i < indexed.length && missingYs.length < MAX_MISSING; i++) {
+                const gap = indexed[i].y - indexed[i - 1].y;
+                // gap이 기대 간격의 2배 이상이어야 누락 행 있다고 판단 (round ≥ 2)
+                const missingCount = Math.round(gap / expectedRowGap) - 1;
+                for (let k = 1; k <= missingCount && missingYs.length < MAX_MISSING; k++) {
+                    missingYs.push(indexed[i - 1].y + expectedRowGap * k);
+                }
+            }
+
+            if (missingYs.length > 0) {
+                this._log(`[Stage4-누락행] 기존 ${structuredRows.length}행 → ${missingYs.length}행 추가 (목표 ${numQ})`);
+                // 각 누락 Y에 대해 새 행 생성 (blob 보간)
+                missingYs.forEach(y => {
+                    const newBlobs = [];
+                    for (let c = 0; c < numC; c++) {
+                        const cx = isVert ? colAvgX[c] : y;
+                        const cy = isVert ? y : colAvgX[c];
+                        // sampleCell로 실제 값 측정
+                        const sample = this.sampleCell(grayData, width, height, cx - offsetX, cy - offsetY, sampleW, sampleH);
+                        newBlobs.push({
+                            x: Math.round(cx - sampleW / 2),
+                            y: Math.round(cy - sampleH / 2),
+                            w: Math.round(sampleW), h: Math.round(sampleH),
+                            cx, cy, r: Math.min(sampleW, sampleH) / 2,
+                            boxBrightness: sample.brightness,
+                            inkRatio: sample.darkRatio,
+                            centerFillRatio: sample.centerFill,
+                            _interpolated: true, _patternRestored: true, isMarked: false,
+                            erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants,
+                        });
+                    }
+                    const newRow = {
+                        questionNumber: 0, // 아래에서 재번호
+                        numChoices: numC,
+                        markedAnswer: null, multiMarked: false, markedIndices: [],
+                        blobs: newBlobs,
+                        _patternRestored: true,
+                    };
+                    // 마킹 판별 (resampleRow와 동일 로직으로 간단히)
+                    this._resampleRow(newRow, grayData, width, height, sampleW, sampleH, numC, offsetX, offsetY, isVert, elongatedMode);
+                    structuredRows.push(newRow);
+                });
+
+                // Y 기준으로 전체 행 재정렬 + 번호 재부여
+                structuredRows.sort((a, b) => {
+                    const ay = a.blobs[0] ? a.blobs[0][rowProp] : 0;
+                    const by = b.blobs[0] ? b.blobs[0][rowProp] : 0;
+                    return ay - by;
+                });
+                structuredRows.forEach((r, i) => { r.questionNumber = i + 1; });
+            }
+        }
     },
 
     // 행 재샘플링 + 마킹 재판별 (복합스코어)
@@ -625,6 +745,8 @@ const OmrEngine = {
         if (patternHint) {
             this._log(`[Pattern] 기대 규격: 버블 ${patternHint.expectedBubbleW.toFixed(1)}×${patternHint.expectedBubbleH.toFixed(1)}, 간격 열=${patternHint.expectedColGap.toFixed(1)} 행=${patternHint.expectedRowGap.toFixed(1)}`);
         }
+        // Stage3에서 접근 가능하도록 임시 저장
+        this._currentPatternHint = patternHint;
 
         // ──────────────────────────────────────
         // Stage 1: 빈 버블 위치 찾기
@@ -817,7 +939,7 @@ const OmrEngine = {
         // ──────────────────────────────────────
         const avgSampleW = sampleSize || 18;
         const avgSampleH = sampleSize || 18;
-        this._stage4_postProcess(structuredRows, grayData, width, height, numC, avgSampleW, avgSampleH, isVert, offsetX, offsetY, patternHint);
+        this._stage4_postProcess(structuredRows, grayData, width, height, numC, avgSampleW, avgSampleH, isVert, offsetX, offsetY, patternHint, numQ, elongatedMode);
 
         // 디버그 블롭
         const debugBlobs = this._debugBlobs ? {

@@ -130,62 +130,43 @@ const Correction = {
     _renderItem(e, type) {
         const isHistory = type.endsWith('-history');
         const isNull = type.startsWith('null');
-        // 세로형박스 = orientation='vertical' = 한 문항 이미지가 가로로 김 → 가로 레이아웃
-        const isWideImage = e.roi.settings.orientation === 'vertical';
 
-        const wrap = document.createElement('div');
-        wrap.style.cssText = `padding:8px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; ${isHistory ? 'opacity:0.75;' : ''}`;
+        // 이력: 이미지만 보이는 컴팩트 카드 → 클릭 시 팝업
+        if (isHistory) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = `cursor:pointer; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; padding:4px; transition:transform 0.1s;`;
+            wrap.onmouseenter = () => { wrap.style.transform = 'scale(1.03)'; wrap.style.borderColor = '#3b82f6'; };
+            wrap.onmouseleave = () => { wrap.style.transform = ''; wrap.style.borderColor = 'var(--border)'; };
+            wrap.onclick = () => this._openEditPopup(e, type);
 
-        // 메인 컨테이너 (이미지 + 컨트롤 배치 결정)
-        const main = document.createElement('div');
-        main.style.cssText = isWideImage
-            ? 'display:flex; flex-direction:row; gap:10px; align-items:center;'
-            : 'display:flex; flex-direction:column; gap:6px; align-items:center;';
-        wrap.appendChild(main);
+            const zoomEl = this._makeZoomCanvas(e, true); // 이력: 작게 + 교정된 블롭 강조
+            if (zoomEl) wrap.appendChild(zoomEl);
 
-        // ─── 이미지 박스
-        const imgBox = document.createElement('div');
-        imgBox.style.cssText = 'display:flex; flex-direction:column; gap:3px; align-items:center; flex-shrink:0;';
-        const canvas = this._makeZoomCanvas(e);
-        if (canvas) imgBox.appendChild(canvas);
+            // 작은 라벨 (문항번호 + 교정값)
+            const curVal = e.row.markedAnswer
+                ? (e.choiceLabels && e.choiceLabels[e.row.markedAnswer - 1] ? e.choiceLabels[e.row.markedAnswer - 1] : String(e.row.markedAnswer))
+                : '─';
+            const lbl = document.createElement('div');
+            lbl.style.cssText = 'font-size:10px; color:var(--text-muted); text-align:center; margin-top:2px;';
+            lbl.innerHTML = `Q${e.qNum}: <strong style="color:${isNull ? '#d97706' : '#16a34a'};">${curVal}</strong>`;
+            wrap.appendChild(lbl);
 
-        const meta = document.createElement('div');
-        const regionName = e.roi.settings.name || `영역${e.roiIdx + 1}`;
-        const shortName = (e.img.name.length > 18) ? e.img.name.substring(0, 18) + '…' : e.img.name;
-        meta.style.cssText = 'font-size:10px; color:var(--text-muted); text-align:center;';
-        meta.innerHTML = `<strong style="color:var(--text);">Q${e.qNum}</strong> · ${regionName}<br><span title="${e.img.name}">${shortName}</span>`;
-        imgBox.appendChild(meta);
-        main.appendChild(imgBox);
-
-        // ─── 컨트롤 박스
-        const ctrl = document.createElement('div');
-        ctrl.style.cssText = 'display:flex; flex-direction:column; gap:4px; flex:1;';
-
-        // 선택지 버튼 + 빈칸 + 입력칸 (한 줄)
-        const btnRow = document.createElement('div');
-        btnRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:2px; align-items:center;';
-        for (let i = 1; i <= e.numChoices; i++) {
-            const label = (e.choiceLabels && e.choiceLabels[i - 1]) || String(i);
-            const active = e.row.markedAnswer === i;
-            const btn = document.createElement('button');
-            btn.textContent = label;
-            btn.style.cssText = `min-width:26px; padding:3px 6px; border-radius:3px; cursor:pointer;
-                font-size:12px; font-weight:${active ? '800' : '500'};
-                border:1px solid ${active ? '#3b82f6' : 'var(--border)'};
-                background:${active ? 'var(--blue)' : 'var(--bg-input)'};
-                color:${active ? '#fff' : 'var(--text)'};`;
-            btn.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, i);
-            btnRow.appendChild(btn);
+            return wrap;
         }
-        const clearBtn = document.createElement('button');
-        clearBtn.textContent = '─';
-        clearBtn.title = '빈칸';
-        clearBtn.style.cssText = `min-width:26px; padding:3px 6px; border-radius:3px; cursor:pointer;
-            font-size:12px; border:1px solid #94a3b8; background:var(--bg-input); color:#64748b;`;
-        clearBtn.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, null);
-        btnRow.appendChild(clearBtn);
 
-        // 텍스트 입력 (현재값 프리필)
+        // 수정중: 2×2 그리드 — 왼쪽(큰 썸네일, 2행 병합) + 오른쪽(1행: 입력칸, 2행: 분석탭)
+        const wrap = document.createElement('div');
+        wrap.style.cssText = `padding:6px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px;
+            display:grid; grid-template-columns:auto 1fr; grid-template-rows:auto auto; gap:6px; align-items:center;`;
+
+        // 왼쪽 (2행 병합): 썸네일
+        const imgBox = document.createElement('div');
+        imgBox.style.cssText = 'grid-row:1 / span 2; grid-column:1;';
+        const zoomEl = this._makeZoomCanvas(e, false);
+        if (zoomEl) imgBox.appendChild(zoomEl);
+        wrap.appendChild(imgBox);
+
+        // 오른쪽 1행: 입력칸
         const curAnswer = e.row.markedAnswer;
         const preVal = curAnswer
             ? (e.choiceLabels && e.choiceLabels[curAnswer - 1] ? e.choiceLabels[curAnswer - 1] : String(curAnswer))
@@ -195,79 +176,183 @@ const Correction = {
         textInput.type = 'text';
         textInput.maxLength = 3;
         textInput.value = preVal;
-        textInput.placeholder = preVal ? '' : '숫자 → Enter';
-        textInput.className = isHistory ? 'correction-input-history' : 'correction-input';
+        textInput.placeholder = preVal ? '' : '숫자/Enter';
+        textInput.className = `correction-input correction-input-${type}`;
         textInput.dataset.imgIdx = e.imgIdx;
         textInput.dataset.roiIdx = e.roiIdx;
         textInput.dataset.qNum = e.qNum;
-        const borderColor = isHistory ? 'var(--border)' : (isNull ? '#f59e0b' : '#22c55e');
-        textInput.style.cssText = `padding:4px 8px; border:2px solid ${borderColor}; border-radius:4px; font-size:14px; font-weight:700; width:70px; text-align:center; box-sizing:border-box;`;
+        textInput.dataset.columnType = type;
+        const borderColor = isNull ? '#f59e0b' : '#22c55e';
+        textInput.style.cssText = `grid-row:1; grid-column:2;
+            padding:4px 8px; border:2px solid ${borderColor}; border-radius:4px;
+            font-size:14px; font-weight:700; width:100%; text-align:center; box-sizing:border-box;`;
         textInput.onkeydown = (ev) => this._onInputKey(ev, textInput, e);
         textInput.onfocus = () => {
             wrap.style.outline = '3px solid #3b82f6';
             wrap.style.outlineOffset = '-1px';
             wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // 프리필된 값 전체 선택 → 숫자 입력 시 바로 대체됨
             setTimeout(() => textInput.select(), 0);
         };
         textInput.onblur = () => { wrap.style.outline = ''; };
-        btnRow.appendChild(textInput);
+        wrap.appendChild(textInput);
 
-        ctrl.appendChild(btnRow);
-
-        // 하단: 분석 탭 이동 버튼
+        // 오른쪽 2행: 분석 탭 이동 버튼
         const gotoBtn = document.createElement('button');
         gotoBtn.textContent = '→ 분석 탭';
-        gotoBtn.style.cssText = 'padding:3px 8px; font-size:10px; background:var(--bg-input); border:1px solid var(--border); border-radius:3px; cursor:pointer; align-self:flex-start;';
+        gotoBtn.style.cssText = `grid-row:2; grid-column:2;
+            padding:4px 8px; font-size:11px; background:var(--bg-input); border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%;`;
         gotoBtn.onclick = () => this.goTo(e.imgIdx, e.roiIdx, e.qNum);
-        ctrl.appendChild(gotoBtn);
+        wrap.appendChild(gotoBtn);
 
-        main.appendChild(ctrl);
         return wrap;
     },
 
-    _makeZoomCanvas(e) {
+    // 이력 항목 클릭 시 수정 팝업
+    _openEditPopup(e, type) {
+        // 기존 팝업 제거
+        const existing = document.getElementById('correction-edit-popup');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'correction-edit-popup';
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+        overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background:var(--bg-card); border-radius:8px; padding:20px; min-width:400px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,0.4);';
+
+        const regionName = e.roi.settings.name || `영역${e.roiIdx + 1}`;
+        const title = document.createElement('h3');
+        title.style.cssText = 'margin:0 0 12px 0; font-size:16px; color:var(--text);';
+        title.textContent = `Q${e.qNum} · ${regionName} 수정`;
+        modal.appendChild(title);
+
+        const fileInfo = document.createElement('div');
+        fileInfo.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:12px;';
+        fileInfo.textContent = e.img.name;
+        modal.appendChild(fileInfo);
+
+        // 팝업용 큰 줌 이미지 — 썸네일 클릭으로 답 선택
+        // _makeZoomCanvas(e, false, 60)은 클릭 핸들러 포함됨
+        const zoomWrap = document.createElement('div');
+        zoomWrap.style.cssText = 'margin-bottom:16px;';
+        // 팝업에서 썸네일 클릭 시 답 설정 후 팝업 닫기
+        const popupClick = (idx) => { this.setAnswer(e.imgIdx, e.roiIdx, e.qNum, idx); overlay.remove(); };
+
+        // 썸네일 생성 후 click을 팝업 전용으로 override
+        const zoomEl = this._makeZoomCanvas(e, false, 60);
+        if (zoomEl) {
+            // 각 canvas 클릭 → popupClick로 대체
+            Array.from(zoomEl.querySelectorAll('canvas')).forEach((cv, idx) => {
+                cv.onclick = () => popupClick(idx + 1);
+            });
+            zoomWrap.appendChild(zoomEl);
+        }
+        modal.appendChild(zoomWrap);
+
+        // 빈칸 버튼만 제공 (숫자는 썸네일 클릭으로)
+        const clearRow = document.createElement('div');
+        clearRow.style.cssText = 'display:flex; gap:4px; margin-bottom:12px; justify-content:center;';
+        const clearBtn = document.createElement('button');
+        clearBtn.textContent = '─ 빈칸 처리';
+        clearBtn.style.cssText = `padding:8px 16px; border-radius:4px; cursor:pointer;
+            font-size:13px; border:2px solid #94a3b8; background:var(--bg-input); color:#64748b;`;
+        clearBtn.onclick = () => { this.setAnswer(e.imgIdx, e.roiIdx, e.qNum, null); overlay.remove(); };
+        clearRow.appendChild(clearBtn);
+        modal.appendChild(clearRow);
+
+        // 하단 버튼
+        const footer = document.createElement('div');
+        footer.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '닫기';
+        closeBtn.style.cssText = 'padding:6px 14px; font-size:12px; border:1px solid var(--border); background:var(--bg-input); border-radius:4px; cursor:pointer;';
+        closeBtn.onclick = () => overlay.remove();
+        footer.appendChild(closeBtn);
+
+        const gotoBtn = document.createElement('button');
+        gotoBtn.textContent = '→ 분석 탭에서 보기';
+        gotoBtn.style.cssText = 'padding:6px 14px; font-size:12px; border:1px solid #3b82f6; background:var(--blue); color:#fff; border-radius:4px; cursor:pointer;';
+        gotoBtn.onclick = () => { overlay.remove(); this.goTo(e.imgIdx, e.roiIdx, e.qNum); };
+        footer.appendChild(gotoBtn);
+        modal.appendChild(footer);
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+    },
+
+    // 각 버블을 개별 썸네일로 잘라 가로로 나열 (진하기 적용, 클릭 가능)
+    // isSmall: 이력용 작은 크기  |  thumbOverride: 팝업용 큰 크기
+    _makeZoomCanvas(e, isSmall, thumbOverride) {
         const img = e.img;
         const row = e.row;
         if (!img || !img.imgElement || !row.blobs || row.blobs.length === 0) return null;
 
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        row.blobs.forEach(b => {
-            if (b.x < minX) minX = b.x;
-            if (b.y < minY) minY = b.y;
-            if (b.x + b.w > maxX) maxX = b.x + b.w;
-            if (b.y + b.h > maxY) maxY = b.y + b.h;
+        // 진하기 적용된 이미지 소스
+        let sourceImg = img.imgElement;
+        if (typeof CanvasManager !== 'undefined') {
+            const prevIntensity = CanvasManager.intensity;
+            const imgIntensity = img.intensity || prevIntensity || 100;
+            CanvasManager.intensity = imgIntensity;
+            const intensified = CanvasManager._getIntensifiedImage(img);
+            CanvasManager.intensity = prevIntensity;
+            if (intensified) sourceImg = intensified;
+        }
+
+        const THUMB_SIZE = thumbOverride || (isSmall ? 28 : 36);
+        const PAD = 3;
+        const GAP = isSmall ? 2 : 3;
+
+        const container = document.createElement('div');
+        container.style.cssText = `display:flex; flex-direction:row; gap:${GAP}px; padding:3px; background:#fff; border:1px solid var(--border); border-radius:4px;`;
+
+        row.blobs.forEach((b, idx) => {
+            const cellWrap = document.createElement('div');
+            cellWrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:1px;';
+
+            const cx = b.cx !== undefined ? b.cx : (b.x + b.w / 2);
+            const cy = b.cy !== undefined ? b.cy : (b.y + b.h / 2);
+            const cropSize = Math.max(b.w, b.h) + PAD * 2;
+            const sx = Math.max(0, Math.round(cx - cropSize / 2));
+            const sy = Math.max(0, Math.round(cy - cropSize / 2));
+            const sw = Math.min(sourceImg.width - sx, cropSize);
+            const sh = Math.min(sourceImg.height - sy, cropSize);
+
+            const cv = document.createElement('canvas');
+            cv.width = THUMB_SIZE;
+            cv.height = THUMB_SIZE;
+            const bgColor = b.isMarked ? '#dcfce7' : '#fff';
+            const borderColor = b.isMarked ? '#22c55e' : '#e4e4e7';
+            const borderWidth = b.isMarked ? 2 : 1;
+            cv.style.cssText = `border:${borderWidth}px solid ${borderColor}; border-radius:3px; background:${bgColor}; image-rendering:pixelated;`;
+
+            // 수정중 카드: 썸네일 클릭 → 답안 선택
+            if (!isSmall) {
+                cv.style.cursor = 'pointer';
+                cv.title = `클릭 → ${(e.choiceLabels && e.choiceLabels[idx]) || (idx + 1)} 선택`;
+                cv.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, idx + 1);
+                cv.onmouseenter = () => { cv.style.outline = '2px solid #3b82f6'; };
+                cv.onmouseleave = () => { cv.style.outline = ''; };
+            }
+
+            const cvctx = cv.getContext('2d');
+            cvctx.imageSmoothingEnabled = false;
+            if (sw > 0 && sh > 0) {
+                cvctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
+            }
+            cellWrap.appendChild(cv);
+
+            const label = (e.choiceLabels && e.choiceLabels[idx]) || String(idx + 1);
+            const lbl = document.createElement('div');
+            const labelColor = b.isMarked ? '#16a34a' : '#64748b';
+            lbl.style.cssText = `font-size:${isSmall ? '9' : '10'}px; font-weight:${b.isMarked ? '800' : '600'}; color:${labelColor}; line-height:1;`;
+            lbl.textContent = label;
+            cellWrap.appendChild(lbl);
+
+            container.appendChild(cellWrap);
         });
-        const pad = 6;
-        minX = Math.max(0, minX - pad);
-        minY = Math.max(0, minY - pad);
-        maxX = Math.min(img.imgElement.width, maxX + pad);
-        maxY = Math.min(img.imgElement.height, maxY + pad);
 
-        const cropW = maxX - minX, cropH = maxY - minY;
-        if (cropW < 5 || cropH < 5) return null;
-
-        const maxDim = 180; // 4칼럼이라 작게
-        const scale = Math.min(maxDim / Math.max(cropW, cropH), 4);
-        const outW = Math.round(cropW * scale), outH = Math.round(cropH * scale);
-
-        const canvas = document.createElement('canvas');
-        canvas.width = outW;
-        canvas.height = outH;
-        canvas.style.cssText = 'border:1px solid var(--border); border-radius:3px; background:#fff;';
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(img.imgElement, minX, minY, cropW, cropH, 0, 0, outW, outH);
-
-        row.blobs.forEach(b => {
-            if (!b.isMarked) return;
-            const bx = (b.x - minX) * scale;
-            const by = (b.y - minY) * scale;
-            ctx.strokeStyle = '#22c55e';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(bx, by, b.w * scale, b.h * scale);
-        });
-        return canvas;
+        return container;
     },
 
     _onInputKey(ev, input, e) {
@@ -329,17 +414,28 @@ const Correction = {
         }
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
 
-        // 현재 input 위치 기억 (수정중 칼럼 기준)
-        const allInputs = Array.from(document.querySelectorAll('.correction-input'));
-        const curIdx = allInputs.indexOf(document.activeElement);
+        // 현재 input의 칼럼 타입 기억 (같은 칼럼에서만 다음으로 이동)
+        const curEl = document.activeElement;
+        const curColumnType = curEl && curEl.dataset ? curEl.dataset.columnType : null;
+        const columnSelector = curColumnType
+            ? `.correction-input-${curColumnType}`
+            : '.correction-input';
+        const allInputs = Array.from(document.querySelectorAll(columnSelector));
+        const curIdx = allInputs.indexOf(curEl);
 
         this.render(document.getElementById('correction-content'));
 
-        // 다음 수정중 칼럼의 input으로 이동
+        // 리렌더 후 같은 칼럼의 다음 input으로 이동
         setTimeout(() => {
-            const newInputs = Array.from(document.querySelectorAll('.correction-input'));
+            const newInputs = Array.from(document.querySelectorAll(columnSelector));
             if (newInputs.length === 0) {
-                Toast.success('수정중인 항목을 모두 처리했습니다!');
+                // 같은 칼럼은 비었음 → 다른 칼럼에 남은 항목 있는지 확인
+                const anyPending = document.querySelector('.correction-input-null-pending, .correction-input-auto-pending');
+                if (anyPending) {
+                    Toast.info(`${curColumnType === 'null-pending' ? 'null' : '1.5배'} 칼럼 완료. 다른 칼럼으로 이동하려면 클릭하세요.`);
+                } else {
+                    Toast.success('수정중인 항목을 모두 처리했습니다!');
+                }
                 return;
             }
             const target = newInputs[Math.min(Math.max(0, curIdx), newInputs.length - 1)];
@@ -348,9 +444,9 @@ const Correction = {
     },
 
     _focusNextInput(input) {
-        // 같은 클래스(수정중 vs 이력)끼리 순회
-        const cls = input.className;
-        const inputs = Array.from(document.querySelectorAll('.' + cls));
+        // 같은 칼럼 내에서만 이동
+        const columnType = input.dataset.columnType;
+        const inputs = Array.from(document.querySelectorAll(`.correction-input-${columnType}`));
         const idx = inputs.indexOf(input);
         if (idx >= 0 && idx < inputs.length - 1) {
             inputs[idx + 1].focus();
@@ -358,8 +454,8 @@ const Correction = {
         }
     },
     _focusPrevInput(input) {
-        const cls = input.className;
-        const inputs = Array.from(document.querySelectorAll('.' + cls));
+        const columnType = input.dataset.columnType;
+        const inputs = Array.from(document.querySelectorAll(`.correction-input-${columnType}`));
         const idx = inputs.indexOf(input);
         if (idx > 0) {
             inputs[idx - 1].focus();
@@ -369,7 +465,10 @@ const Correction = {
 
     focusFirst() {
         setTimeout(() => {
-            const first = document.querySelector('.correction-input');
+            // 우선순위: null-pending → auto-pending (수정중 먼저)
+            const first = document.querySelector('.correction-input-null-pending')
+                       || document.querySelector('.correction-input-auto-pending')
+                       || document.querySelector('.correction-input');
             if (first) { first.focus(); first.select(); }
         }, 100);
     },

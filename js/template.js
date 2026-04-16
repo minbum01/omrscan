@@ -38,24 +38,65 @@ const TemplateManager = {
             const avgBubbleW = allBlobs.reduce((s, b) => s + b.w, 0) / allBlobs.length;
             const avgBubbleH = allBlobs.reduce((s, b) => s + b.h, 0) / allBlobs.length;
 
+            const numC = (roi.settings && roi.settings.numChoices) || 5;
+
             // 열 간격 (같은 행 내 인접 열 간 거리)
             const colSpacings = [];
             res.rows.forEach((row, rowIdx) => {
                 const inRow = allBlobs.filter(b => b.rowIdx === rowIdx).sort((a, b) => a.cx - b.cx);
                 for (let i = 1; i < inRow.length; i++) colSpacings.push(inRow[i].cx - inRow[i - 1].cx);
             });
-            const avgColSpacing = colSpacings.length > 0
+            let avgColSpacing = colSpacings.length > 0
                 ? colSpacings.reduce((s, v) => s + v, 0) / colSpacings.length : 0;
+
+            // Fallback: 인접 간격 계산 실패 시 → 전체 블롭의 cx 분포에서 클러스터링으로 추정
+            if (avgColSpacing < 5) {
+                // cx 값을 정렬 후 10px 이내 간격을 같은 열로 묶음
+                const xs = allBlobs.map(b => b.cx).sort((a, b) => a - b);
+                const uniqueXs = [];
+                xs.forEach(x => {
+                    if (uniqueXs.length === 0 || x - uniqueXs[uniqueXs.length - 1] > 10) {
+                        uniqueXs.push(x);
+                    }
+                });
+                if (uniqueXs.length >= 2) {
+                    // 인접 unique-x 간 거리 평균
+                    const gaps = [];
+                    for (let i = 1; i < uniqueXs.length; i++) gaps.push(uniqueXs[i] - uniqueXs[i - 1]);
+                    avgColSpacing = gaps.reduce((s, v) => s + v, 0) / gaps.length;
+                } else if (numC > 1) {
+                    // 최후의 수단: ROI 폭을 numC로 균등 분할
+                    avgColSpacing = roi.w / numC;
+                }
+            }
 
             // 행 간격 (같은 열 내 인접 행 간 거리)
             const rowSpacings = [];
-            const numC = (roi.settings && roi.settings.numChoices) || 5;
             for (let c = 0; c < numC; c++) {
                 const inCol = allBlobs.filter(b => b.colIdx === c).sort((a, b) => a.cy - b.cy);
                 for (let i = 1; i < inCol.length; i++) rowSpacings.push(inCol[i].cy - inCol[i - 1].cy);
             }
-            const avgRowSpacing = rowSpacings.length > 0
+            let avgRowSpacing = rowSpacings.length > 0
                 ? rowSpacings.reduce((s, v) => s + v, 0) / rowSpacings.length : 0;
+
+            // Fallback: 행 간격도 같은 방식으로 추정
+            if (avgRowSpacing < 5) {
+                const ys = allBlobs.map(b => b.cy).sort((a, b) => a - b);
+                const uniqueYs = [];
+                ys.forEach(y => {
+                    if (uniqueYs.length === 0 || y - uniqueYs[uniqueYs.length - 1] > 10) {
+                        uniqueYs.push(y);
+                    }
+                });
+                if (uniqueYs.length >= 2) {
+                    const gaps = [];
+                    for (let i = 1; i < uniqueYs.length; i++) gaps.push(uniqueYs[i] - uniqueYs[i - 1]);
+                    avgRowSpacing = gaps.reduce((s, v) => s + v, 0) / gaps.length;
+                } else {
+                    const numR = res.rows.length;
+                    if (numR > 1) avgRowSpacing = roi.h / numR;
+                }
+            }
 
             return {
                 savedAt: new Date().toISOString(),
