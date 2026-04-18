@@ -134,9 +134,28 @@ const CanvasManager = {
     deleteRoi(index) {
         const imgObj = App.getCurrentImage();
         if (!imgObj || index < 0 || index >= imgObj.rois.length) return;
+        const deletedId = imgObj.rois[index]._id;
         imgObj.rois.splice(index, 1);
+        // 삭제된 ROI를 참조하는 다른 ROI의 코드 연결 정리
+        if (deletedId) {
+            imgObj.rois.forEach(r => {
+                if (!r.settings) return;
+                if (r.settings.linkedCodeRoiId === deletedId) {
+                    r.settings.linkedCodeRoiId = null;
+                    r.settings.answerSource = 'direct';
+                }
+                if (r.settings.linkedCodeRoiIds && r.settings.linkedCodeRoiIds.includes(deletedId)) {
+                    r.settings.linkedCodeRoiIds = r.settings.linkedCodeRoiIds.filter(id => id !== deletedId);
+                    if (r.settings.linkedCodeRoiIds.length === 0) {
+                        r.settings.linkedCodeRoiIds = null;
+                        r.settings.answerSource = 'direct';
+                    }
+                }
+            });
+        }
         imgObj.results = null;
         imgObj.gradeResult = null;
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.render();
         App.updateStep(App.STEPS.REGION);
         ImageManager.updateList();
@@ -351,6 +370,7 @@ const CanvasManager = {
             if (moved) {
                 imgObj.results = null;
                 imgObj.gradeResult = null;
+                if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
                 this.render();
                 setTimeout(() => this.runAnalysis(), 50);
             }
@@ -392,15 +412,24 @@ const CanvasManager = {
             }
 
             // ROI 추가
-            imgObj.rois.push({ x: rx, y: ry, w: rw, h: rh, settings: newSettings });
+            const roiId = (typeof UI !== 'undefined') ? UI._genRoiId() : ('roi_' + Date.now().toString(36));
+            imgObj.rois.push({ x: rx, y: ry, w: rw, h: rh, _id: roiId, settings: newSettings, _isNewRoi: true });
             imgObj.results = null;
             imgObj.gradeResult = null;
+            if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
             App.els.btnAnalyze.disabled = false;
 
-            // 설정 팝업 먼저 표시 → 확인 시 분석 실행
             this.render();
             const newIdx = imgObj.rois.length - 1;
-            setTimeout(() => UI.openRoiSettingsPopup(newIdx), 100);
+            // 과목코드 박스 치기 모드면 코드 타입으로 세팅 후 팝업 열기
+            if (typeof UI !== 'undefined' && UI._pendingCodeLinkRoiIdx != null) {
+                imgObj.rois[newIdx].settings.type = 'subject_code';
+                imgObj.rois[newIdx].settings.name = '';
+                imgObj.rois[newIdx]._isPendingCodeBox = true;
+                setTimeout(() => UI.openRoiSettingsPopup(newIdx), 100);
+            } else {
+                setTimeout(() => UI.openRoiSettingsPopup(newIdx), 100);
+            }
         } else {
             this.render();
         }
@@ -549,6 +578,8 @@ const CanvasManager = {
             this.render();
             ImageManager.updateList();
             UI.updateRightPanel();
+            if (typeof Correction !== 'undefined' && Correction.updateBadge) Correction.updateBadge();
+            if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
           } catch (err) {
             console.error('분석 오류:', err);
@@ -866,8 +897,28 @@ const CanvasManager = {
                 });
             }
 
+            // 과목코드 연결선 표시
+            if (roi.settings && roi.settings.linkedCodeRoiId) {
+                const cIdx = imgObj.rois.findIndex(r => r._id === roi.settings.linkedCodeRoiId);
+                if (cIdx >= 0) {
+                    const cRoi = imgObj.rois[cIdx];
+                    ctx.save();
+                    ctx.strokeStyle = '#0ea5e9';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(roi.x + roi.w / 2, roi.y + roi.h / 2);
+                    ctx.lineTo(cRoi.x + cRoi.w / 2, cRoi.y + cRoi.h / 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
+                }
+            }
+
             // 영역명 + 설정 라벨 (클릭 가능)
-            const name = (roi.settings && roi.settings.name) || `영역 ${idx + 1}`;
+            let name = (roi.settings && roi.settings.name) || `영역 ${idx + 1}`;
+            if (roi.settings && roi.settings.linkedCodeRoiId) name = `[코드연동] ${name}`;
+            if (roi.settings && roi.settings.type === 'subject_code') name = `[과목코드] ${name || idx + 1}`;
             const orient = (roi.settings && roi.settings.orientation === 'horizontal') ? '가로' : '세로';
             const nq = roi.settings ? (roi.settings.numQuestions || '?') : '?';
             const nc = roi.settings ? (roi.settings.numChoices || '?') : '?';

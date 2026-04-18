@@ -371,11 +371,30 @@ const OmrEngine = {
     // Stage 3: 열 위치 일관성으로 노이즈 필터링
     // ==========================================
     _stage3_filterByColumnConsistency(rowGroups, numC, sortProp) {
+        const patternHintEarly = this._currentPatternHint;
+
+        // ── 양식 절대좌표가 있으면 항상 우선 사용 ──
+        // (감지가 불안정할 수 있으므로 양식의 검증된 좌표를 신뢰)
+        if (sortProp === 'cx'
+            && patternHintEarly
+            && Array.isArray(patternHintEarly.colXAbsolute)
+            && patternHintEarly.colXAbsolute.length === numC) {
+            const colAvgX = [...patternHintEarly.colXAbsolute];
+            const colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
+            const tolerance = colGap * 0.4;
+            this._log(`[Stage3-양식] 양식 좌표 사용: [${colAvgX.map(Math.round).join(',')}]`);
+            const filtered = rowGroups.map(row => {
+                const sorted = [...row].sort((a, b) => a[sortProp] - b[sortProp]);
+                return sorted.filter(b => colAvgX.some(avg => Math.abs(b[sortProp] - avg) < tolerance));
+            }).filter(r => r.length > 0);
+            return { filtered, colAvg: colAvgX };
+        }
+
         // 정상 행(numC개 블롭)에서 열 평균 계산
         const normalRows = rowGroups.filter(r => r.length === numC);
         if (normalRows.length < 2) return { filtered: rowGroups, colAvg: null };
 
-        const colAvgX = Array.from({ length: numC }, (_, c) => {
+        let colAvgX = Array.from({ length: numC }, (_, c) => {
             const vals = normalRows.map(r => {
                 const sorted = [...r].sort((a, b) => a[sortProp] - b[sortProp]);
                 return sorted[c] ? sorted[c][sortProp] : null;
@@ -512,7 +531,8 @@ const OmrEngine = {
                             cx: interpCx, cy: interpCy,
                             r: Math.min(sampleW, sampleH) / 2,
                             _interpolated: true, isMarked: false,
-                            boxBrightness: 255, inkRatio: 0, centerFillRatio: 0
+                            boxBrightness: 255, inkRatio: 0, centerFillRatio: 0,
+                            erodedFill: 0, erodedQuadrants: [0,0,0,0]
                         });
                         needResample = true;
                     }
@@ -740,6 +760,8 @@ const OmrEngine = {
             blob.boxBrightness = sample.brightness;
             blob.inkRatio = sample.darkRatio;
             blob.centerFillRatio = sample.centerFill;
+            blob.erodedFill = sample.erodedFill;
+            blob.erodedQuadrants = sample.erodedQuadrants;
             blob.isMarked = false;
             cellScores.push({ col: c, comp, f: sample.centerFill, e: sample.erodedFill, qMin, brightness: sample.brightness, darkRatio: sample.darkRatio, centerFill: sample.centerFill, erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants });
         });
@@ -835,6 +857,8 @@ const OmrEngine = {
             numCols: blobPattern.numCols,
             rowYRatios: Array.isArray(blobPattern.rowYRatios) ? blobPattern.rowYRatios : null,
             colXRatios: Array.isArray(blobPattern.colXRatios) ? blobPattern.colXRatios : null,
+            // 절대 좌표 (동일 크기 OMR에선 비율보다 정확)
+            colXAbsolute: Array.isArray(blobPattern.colXAbsolute) ? blobPattern.colXAbsolute : null,
         } : null;
         if (patternHint) {
             this._log(`[Pattern] 기대 규격: 버블 ${patternHint.expectedBubbleW.toFixed(1)}×${patternHint.expectedBubbleH.toFixed(1)}, 간격 열=${patternHint.expectedColGap.toFixed(1)} 행=${patternHint.expectedRowGap.toFixed(1)}`);
@@ -946,7 +970,9 @@ const OmrEngine = {
                     x: Math.round(cx - sw / 2) + offsetX, y: Math.round(cy - sh / 2) + offsetY,
                     w: Math.round(sw), h: Math.round(sh),
                     cx: cx + offsetX, cy: cy + offsetY, r: Math.min(sw, sh) / 2,
-                    boxBrightness: sample.brightness, inkRatio: sample.darkRatio, centerFillRatio: sample.centerFill, isMarked: false
+                    boxBrightness: sample.brightness, inkRatio: sample.darkRatio, centerFillRatio: sample.centerFill,
+                    erodedFill: sample.erodedFill, erodedQuadrants: sample.erodedQuadrants,
+                    isMarked: false
                 });
             }
 
@@ -1003,30 +1029,16 @@ const OmrEngine = {
                 return `[${ci + 1}] s=${Math.round(c.score)} f=${c.centerFill.toFixed(3)} e=${c.erodedFill.toFixed(3)} qMin=${qMin.toFixed(3)} comp=${comp.toFixed(3)}`;
             }).join(' | ')} gap=${compGap.toFixed(3)} → ${primaryMarked !== -1 ? primaryMarked + 1 : 'null'}`);
 
-            // 중복 감지 (composite 기반)
-            const markedIndices = [];
-            if (primaryMarked !== -1 && numC > 1) {
-                const pComp = compScores[0].comp, pF = compScores[0].f;
-                cellScores.forEach((c, i) => {
-                    if (i === primaryMarked) return;
-                    const _eq = Array.isArray(c.erodedQuadrants) ? c.erodedQuadrants : [0, 0, 0, 0];
-                    const qm = _eq.length > 0 ? Math.min(..._eq) : 0;
-                    const iComp = c.centerFill * 0.4 + c.erodedFill * 0.35 + qm * 0.25;
-                    if (iComp > pComp * 0.90 && c.centerFill > pF * 0.9 && c.centerFill > 0.8) markedIndices.push(i);
-                });
-                if (markedIndices.length > 0) markedIndices.unshift(primaryMarked);
-            }
-            if (markedIndices.length === 0 && primaryMarked !== -1) markedIndices.push(primaryMarked);
-
-            const isMulti = markedIndices.length > 1;
-            if (isMulti) markedIndices.forEach(i => { blobs[i].isMarked = true; });
-            else if (primaryMarked !== -1) blobs[primaryMarked].isMarked = true;
-            const finalMarked = !isMulti && primaryMarked !== -1 ? primaryMarked + 1 : null;
+            // 1등을 답으로 채택 (중복 판별은 최종 Stage6에서 gap 기반으로 수행)
+            if (primaryMarked !== -1) blobs[primaryMarked].isMarked = true;
 
             structuredRows.push({
-                questionNumber: q + 1, numChoices: numC, markedAnswer: finalMarked,
-                multiMarked: isMulti, markedIndices: markedIndices.map(i => i + 1), blobs,
-                _weakCandidate: weakCandidateCol >= 0 ? weakCandidateCol + 1 : null, // 1배의 약한 후보
+                questionNumber: q + 1, numChoices: numC,
+                markedAnswer: primaryMarked !== -1 ? primaryMarked + 1 : null,
+                multiMarked: false,
+                markedIndices: primaryMarked !== -1 ? [primaryMarked + 1] : [],
+                blobs,
+                _weakCandidate: weakCandidateCol >= 0 ? weakCandidateCol + 1 : null,
             });
         }
 
@@ -1048,6 +1060,44 @@ const OmrEngine = {
         // 기존 버블 위치에서 1.5배 넓힌 영역으로 재샘플링 → 원본과 비교
         // ──────────────────────────────────────
         this._expandedVerify(grayData, width, height, numC, isVert, structuredRows, offsetX, offsetY, elongatedMode);
+
+        // ──────────────────────────────────────
+        // Stage 6: 중복의심 — 2등 comp ≥ 0.85 절대값 기준
+        // ──────────────────────────────────────
+        let multiCount = 0;
+        structuredRows.forEach(row => {
+            if (row.corrected || row._userCorrected || row._xvAutoCorrected) return;
+            if (!row.blobs || row.blobs.length < 2) return;
+            if (row.markedAnswer === null) return;
+
+            const scores = row.blobs.map((b, i) => {
+                const f = b.centerFillRatio || 0;
+                const e = b.erodedFill || 0;
+                const eq = Array.isArray(b.erodedQuadrants) ? b.erodedQuadrants : [0, 0, 0, 0];
+                const qm = eq.length > 0 ? Math.min(...eq) : 0;
+                const comp = elongatedMode
+                    ? f * 0.55 + e * 0.45
+                    : f * 0.4 + e * 0.35 + qm * 0.25;
+                return { choice: i + 1, comp, f, e, qm };
+            });
+            const sorted6 = [...scores].sort((a, b) => b.comp - a.comp);
+            if (sorted6.length < 2) return;
+
+            // 2등의 comp가 0.85 이상이면 중복의심
+            if (sorted6[1].comp >= 0.85) {
+                const idx1 = sorted6[0].choice - 1;
+                const idx2 = sorted6[1].choice - 1;
+                row.multiMarked = true;
+                row.markedAnswer = null;
+                row.markedIndices = [idx1 + 1, idx2 + 1];
+                row.blobs.forEach(b => b.isMarked = false);
+                row.blobs[idx1].isMarked = true;
+                row.blobs[idx2].isMarked = true;
+                multiCount++;
+                this._log(`[Stage6-중복] Q${row.questionNumber}: 2등 comp=${sorted6[1].comp.toFixed(3)} ≥ 0.85 (1등=[${sorted6[0].choice}]${sorted6[0].comp.toFixed(3)}, 2등=[${sorted6[1].choice}]${sorted6[1].comp.toFixed(3)})`);
+            }
+        });
+        this._log(`[Stage6-중복] 중복의심 ${multiCount}건 (2등 comp≥0.85)`);
 
         // 최종 점검 결과 요약
         const validation = {

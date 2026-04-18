@@ -7,6 +7,18 @@ const BatchProcess = {
         // 드롭다운 메뉴의 개별 항목에서 직접 호출하므로 별도 바인딩 불필요
     },
 
+    // 현재 이미지만 분석 (기울기/진하기/박스 등 개별 조정 유지)
+    runCurrentOnly() {
+        const img = App.getCurrentImage();
+        if (!img) { Toast.error('현재 이미지가 없습니다'); return; }
+        if (!img.rois || img.rois.length === 0) { Toast.error('영역 박스를 먼저 설정하세요'); return; }
+        if (typeof CanvasManager !== 'undefined' && typeof CanvasManager.runAnalysis === 'function') {
+            CanvasManager.runAnalysis();
+        } else {
+            Toast.error('분석 엔진을 찾을 수 없습니다');
+        }
+    },
+
     run(forceResetAll = false) {
         const images = App.state.images;
         if (images.length === 0) {
@@ -407,6 +419,7 @@ const BatchProcess = {
                 }
             });
         }
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         Toast.success(`전체 ${periodCount}교시 일괄 처리 완료`);
     },
 
@@ -491,6 +504,7 @@ const BatchProcess = {
             });
         }
 
+        if (typeof Correction !== 'undefined' && Correction.updateBadge) Correction.updateBadge();
         Toast.success('일괄 처리 완료');
     }
 };

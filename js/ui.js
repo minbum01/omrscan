@@ -41,17 +41,26 @@ const UI = {
         s.elongatedMaxFill = d.maxFill;
     },
 
+    _genRoiId() {
+        return 'roi_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    },
+
+    // ID로 ROI 찾기 (인덱스 반환)
+    _findRoiByIdIndex(imgObj, id) {
+        if (!imgObj || !imgObj.rois || !id) return -1;
+        return imgObj.rois.findIndex(r => r._id === id);
+    },
+
     defaultSettings() {
         return {
             name: '', startNum: 1, numQuestions: 20, numChoices: 5,
             orientation: 'vertical',
             choiceLabels: ['1','2','3','4','5'],
             elongatedMode: false,
-            // 임계값은 getThresholds()가 모드별 기본값 반환 (필드 미포함)
             type: 'subject_answer',
             answerKey: null,
             answerSource: 'direct',
-            linkedCodeRoi: null,
+            linkedCodeRoiId: null, // 과목코드 ROI의 _id (고유ID 기반)
             codeList: [],
         };
     },
@@ -125,7 +134,20 @@ const UI = {
             return;
         }
 
-        title.textContent = 'OMR 판독';
+        // 제목 + 교정확정 큰 버튼
+        const _anyConfirmedT = (App.state.images || []).some(img => img._correctionConfirmed);
+        title.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <span>OMR 판독</span>
+                <button onclick="UI.toggleConfirmCorrection()"
+                    style="padding:10px 18px; font-size:14px; font-weight:800; letter-spacing:0.5px;
+                           border-radius:10px; cursor:pointer; white-space:nowrap;
+                           border:2px solid ${_anyConfirmedT ? '#166534' : '#ca8a04'};
+                           background:${_anyConfirmedT ? 'linear-gradient(135deg,#166534,#15803d)' : 'linear-gradient(135deg,#eab308,#f59e0b)'};
+                           color:${_anyConfirmedT ? '#fff' : '#000'}; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+                    ${_anyConfirmedT ? '✓ 확정됨 — 재확정' : '★ 교정확정 및 내용반영 ★'}
+                </button>
+            </div>`;
 
         // 영역 목록 상단 패널 제거 (이제 탭으로 이동)
         const oldListPanel = document.getElementById('roi-list-panel');
@@ -165,35 +187,48 @@ const UI = {
             const pct = Math.round((gr.score / gr.totalPossible) * 100);
             let sc = pct >= 90 ? 'perfect' : pct >= 60 ? 'good' : 'bad';
             html += `<div class="score-summary ${sc}">
-                <div class="score-big ${sc}">${gr.score} <span class="score-total">/ ${gr.totalPossible}</span></div>
-                <div class="score-detail">맞음 ${gr.correctCount} ✓ · 틀림 ${gr.wrongCount} ✗ · ${pct}%</div>
+                <div class="score-big ${sc}">${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.score) : gr.score)} <span class="score-total">/ ${(typeof Scoring !== 'undefined' ? Scoring._fmtMax(gr.totalPossible) : gr.totalPossible)}</span></div>
+                <div class="score-detail">맞음 ${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.correctCount) : gr.correctCount)} ✓ · 틀림 ${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.wrongCount) : gr.wrongCount)} ✗ · ${pct}%</div>
             </div>`;
         }
 
-        // 상단 버튼 (영역 추가 / 영역 목록 / 양식 불러오기 / 교정 확정)
+        // 상단 버튼 (영역 추가 / 영역 목록 / 양식 불러오기) — sticky로 고정 · 교정확정은 헤더의 큰 버튼으로 이동
         const listOpen = this._roiListTabOpen;
-        const _anyConfirmed = (App.state.images || []).some(img => img._correctionConfirmed);
-        html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
+        html += `<div style="display:flex; gap:6px; margin:-16px -16px 8px; padding:12px 16px 8px; position:sticky; top:-16px; background:var(--bg-card, #fff); z-index:10; border-bottom:1px solid var(--border-light);">
             <button class="btn btn-primary btn-sm" onclick="UI.addRegionManually()" style="flex:1;">+ 영역 추가</button>
             <button class="btn btn-sm ${listOpen ? 'btn-primary' : ''}" onclick="UI.toggleRoiListTab()" style="flex:1;">
                 영역 목록 ${imgObj.rois.length > 0 ? `(${imgObj.rois.length})` : ''}
             </button>
             <button class="btn btn-sm" onclick="TemplateManager.triggerLoad()" style="flex:1;">양식 불러오기</button>
-            <button class="btn btn-sm" onclick="UI.toggleConfirmCorrection()" style="flex:1; font-size:10px; ${_anyConfirmed ? 'background:#166534;color:#4ade80;border-color:#166534;' : ''}">
-                ${_anyConfirmed ? '✓ 확정됨' : '교정 확정'}
-            </button>
         </div>`;
 
-        // 영역 목록 탭 펼침 시 내용 표시
+        // 영역 목록 탭 펼침 시 내용 표시 — sticky로 상단 고정
+        // 다른 ROI에 연결된 코드 ROI ID 수집 (목록에서 숨김)
+        const _linkedCodeIds = new Set();
+        imgObj.rois.forEach(r => {
+            const ids = r.settings && r.settings.linkedCodeRoiIds;
+            if (ids) ids.forEach(id => _linkedCodeIds.add(id));
+            if (r.settings && r.settings.linkedCodeRoiId) _linkedCodeIds.add(r.settings.linkedCodeRoiId);
+        });
+
         if (listOpen && imgObj.rois.length > 0) {
-            html += `<div style="margin-bottom:12px; padding:6px; background:var(--bg-input); border-radius:6px;">`;
+            html += `<div style="margin:-1px -16px 12px; padding:6px 16px; background:var(--bg-input); border-top:1px solid var(--border-light); border-bottom:1px solid var(--border-light); position:sticky; top:44px; z-index:9; max-height:40vh; overflow-y:auto;">`;
             imgObj.rois.forEach((roi, idx) => {
+                // 연결된 과목코드 ROI는 목록에서 숨김
+                if (roi._id && _linkedCodeIds.has(roi._id)) return;
                 this.ensureSettings(roi);
                 const s = roi.settings;
                 const name = s.name || `영역 ${idx + 1}`;
                 const typeInfo = this.ROI_TYPES[s.type] || this.ROI_TYPES['subject_answer'];
                 const orient = s.orientation === 'horizontal' ? '가로' : '세로';
                 const isActive = idx === (typeof CanvasManager !== 'undefined' ? CanvasManager.selectedRoiIdx : -1);
+                // 과목답안이면 시작~끝 문항 범위 표시 (동일 이름 구분용)
+                let qRangeHtml = '';
+                if (s.type === 'subject_answer') {
+                    const startN = s.startNum || 1;
+                    const endN = startN + (s.numQuestions || 0) - 1;
+                    qRangeHtml = `<span class="roi-list-qrange" style="font-size:10px; color:var(--blue); font-weight:700; background:var(--blue-light); padding:1px 5px; border-radius:3px; margin-left:4px; white-space:nowrap;">${startN}~${endN}번</span>`;
+                }
                 html += `<div class="roi-list-item ${isActive ? 'active' : ''}" data-roi-idx="${idx}"
                     draggable="true"
                     ondragstart="UI.onRoiDragStart(event, ${idx})"
@@ -206,6 +241,7 @@ const UI = {
                         placeholder="영역 ${idx + 1}" data-roi="${idx}"
                         onclick="event.stopPropagation()"
                         onchange="UI.onRoiListNameChange(this)">
+                    ${qRangeHtml}
                     <span class="roi-list-meta" onclick="UI.onRoiListClick(${idx})">${typeInfo.icon} ${orient}·${s.numQuestions}</span>
                 </div>`;
             });
@@ -226,6 +262,9 @@ const UI = {
 
             // 영역별로 설정 + 결과를 묶어서 표시
             imgObj.rois.forEach((roi, idx) => {
+                // 연결된 과목코드 ROI는 카드 숨김
+                if (roi._id && _linkedCodeIds.has(roi._id)) return;
+
                 this.ensureSettings(roi);
                 const s = roi.settings;
                 const isVert = s.orientation === 'vertical';
@@ -247,6 +286,29 @@ const UI = {
                     ${s.bubbleSize ? `<span style="color:#22c55e;font-size:10px;font-weight:700;margin-left:4px;">버블${s.bubbleSize}px</span>` : ''}
                     <button class="roi-delete-btn" onclick="CanvasManager.deleteRoi(${idx}); UI.updateRightPanel();">✕</button>
                 </div>`;
+
+                // 과목코드 연동 표시 (합산)
+                const _cIds = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
+                if (_cIds.length > 0) {
+                    let _codeStr = '';
+                    _cIds.forEach(id => {
+                        const ci = imgObj.rois.findIndex(r => r._id === id);
+                        if (ci >= 0 && hasResults && imgObj.results[ci] && imgObj.results[ci].rows) {
+                            imgObj.results[ci].rows.forEach(r => {
+                                if (r.markedAnswer != null) {
+                                    const cl = imgObj.rois[ci].settings.choiceLabels;
+                                    _codeStr += cl && cl[r.markedAnswer - 1] ? cl[r.markedAnswer - 1] : String(r.markedAnswer);
+                                } else { _codeStr += '?'; }
+                            });
+                        } else { _codeStr += '?'; }
+                    });
+                    const _gSubj = (App.state.subjects || []).find(sub => sub.code === _codeStr);
+                    html += `<div style="padding:4px 8px;margin:-2px 0 4px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:4px;display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:10px;color:#0369a1;font-weight:600;">과목코드</span>
+                        <span style="font-size:16px;font-weight:800;font-family:monospace;color:#1e3a5f;letter-spacing:2px;">${_codeStr}</span>
+                        ${_gSubj ? `<span style="font-size:12px;font-weight:700;color:#16a34a;">${_gSubj.name}</span>` : `<span style="font-size:10px;color:#dc2626;">미매칭</span>`}
+                    </div>`;
+                }
 
                 // 좌우 분할 시작
                 html += `<div class="roi-card-body">`;
@@ -300,20 +362,34 @@ const UI = {
                     </div>`;
                     html += this.renderChoicesUI(idx, s);
                 } else if (s.type === 'subject_code') {
+                    // 시험관리에서 과목코드 목록 자동 로드
+                    const globalSubjects = App.state.subjects || [];
+                    const codeListFromSubjects = globalSubjects.filter(sub => sub.code).map(sub => sub.code + ':' + sub.name);
+                    const currentCodes = (s.codeList || []).map(c => c.code + ':' + c.name);
+                    const displayCodes = currentCodes.length > 0 ? currentCodes : codeListFromSubjects;
+
                     html += `<div class="roi-fields">
                         <div class="roi-field">
-                            <span class="roi-field-label">코드 수</span>
+                            <span class="roi-field-label">코드 자리수</span>
                             <input type="number" class="roi-field-input" value="${s.numQuestions}" min="1" max="20"
                                 data-roi="${idx}" data-field="numQuestions" onchange="UI.onSettingChange(this)">
                         </div>
                     </div>`;
-                    html += `<div class="roi-choice-section">
-                        <span class="roi-field-label">코드 목록</span>
-                        <textarea class="roi-code-list" data-roi="${idx}" onchange="UI.onCodeListChange(this)"
-                            placeholder="한 줄에 하나씩:&#10;1:경찰학&#10;2:행정법&#10;3:형법"
-                            style="width:100%; height:60px; font-size:11px; padding:4px 6px; border:1px solid var(--border); border-radius:6px; resize:vertical;"
-                        >${(s.codeList || []).map(c => c.code + ':' + c.name).join('\n')}</textarea>
-                    </div>`;
+                    if (globalSubjects.length > 0 && globalSubjects.some(sub => sub.code)) {
+                        html += `<div class="roi-choice-section" style="margin-top:4px;">
+                            <span class="roi-field-label">시험관리 과목코드 (참고용)</span>
+                            <div style="font-size:10px; color:var(--text-muted); background:var(--bg-input); padding:4px 6px; border-radius:4px; max-height:80px; overflow-y:auto; user-select:none;">
+                                ${globalSubjects.filter(sub => sub.code).map(sub =>
+                                    `<div><strong>${sub.code}</strong> → ${sub.name}</div>`
+                                ).join('')}
+                            </div>
+                        </div>`;
+                    } else {
+                        html += `<div class="roi-choice-section" style="margin-top:4px;">
+                            <span class="roi-field-label" style="color:#d97706;">시험관리에 과목코드가 없습니다</span>
+                            <div style="font-size:10px; color:var(--text-muted);">시험관리에서 과목코드를 먼저 등록하세요.</div>
+                        </div>`;
+                    }
                 } else {
                     // subject_answer (기본)
                     html += `<div class="roi-fields">
@@ -330,13 +406,14 @@ const UI = {
                     </div>`;
                     html += this.renderChoicesUI(idx, s);
 
-                    // 과목 매칭 힌트 (영역 이름 = 과목 이름)
+                    // 과목 매칭 힌트 (영역 이름 = 과목 이름 또는 omrSubjectName 매핑)
                     const subjName = s.name || '';
                     const matchedSubj = subjName && typeof SubjectManager !== 'undefined'
-                        ? SubjectManager.findByName(subjName) : null;
+                        ? SubjectManager.findByRoiName(subjName) : null;
                     if (subjName) {
+                        const viaMapping = matchedSubj && matchedSubj.omrSubjectName === subjName && matchedSubj.name !== subjName;
                         html += `<div style="padding:4px 8px; font-size:10px; color:${matchedSubj ? 'var(--green)' : 'var(--text-muted)'}; border-top:1px solid var(--border-light);">
-                            ${matchedSubj ? `✓ 과목 "${this.esc(subjName)}" 매칭됨` : `• 이 영역 이름이 과목명으로 등록됩니다`}
+                            ${matchedSubj ? `✓ 과목 "${this.esc(matchedSubj.name)}"${viaMapping ? ` (양식 "${this.esc(subjName)}")` : ''} 매칭됨` : `• 시험관리에서 "양식 과목" 드롭다운으로 매칭하세요`}
                         </div>`;
                     }
 
@@ -431,28 +508,33 @@ const UI = {
                             <div style="font-size:24px; font-weight:800; font-family:monospace; letter-spacing:4px; color:var(--blue);">${digits}</div>
                         </div>`;
 
-                        // 과목코드면 코드명 표시
-                        if (s.type === 'subject_code' && s.codeList && s.codeList.length > 0) {
-                            const matched = s.codeList.find(c => c.code === digits);
-                            if (matched) {
-                                html += `<div style="text-align:center; font-size:13px; font-weight:700; color:var(--green); padding-bottom:8px;">${matched.name}</div>`;
+                        // 과목코드: 시험관리 매칭 표시
+                        if (s.type === 'subject_code') {
+                            const globalSubjects = App.state.subjects || [];
+                            const matchedSubj = globalSubjects.find(sub => sub.code === digits);
+                            if (matchedSubj) {
+                                html += `<div style="text-align:center; font-size:13px; font-weight:700; color:var(--green); padding-bottom:4px;">${matchedSubj.name}</div>`;
+                            } else if (s.codeList && s.codeList.length > 0) {
+                                const matchedCode = s.codeList.find(c => c.code === digits);
+                                if (matchedCode) html += `<div style="text-align:center; font-size:13px; font-weight:700; color:var(--green); padding-bottom:4px;">${matchedCode.name}</div>`;
                             }
+                            // 과목코드는 개별 셀 그리드 없이 합쳐진 값만 표시
+                        } else {
+                            // 생년월일/수험번호/전화 등: 수정 가능한 셀 그리드
+                            html += `<div class="result-grid" style="gap:2px;">`;
+                            res.rows.forEach(row => {
+                                const ansText = row.markedAnswer !== null
+                                    ? (labels && labels[row.markedAnswer-1] ? labels[row.markedAnswer-1] : `${row.markedAnswer}`)
+                                    : '?';
+                                const cellClass = row.markedAnswer !== null ? 'grid-cell-ok' : 'grid-cell-empty';
+                                html += `<div class="grid-cell ${cellClass}" data-roi="${idx}" data-q="${row.questionNumber}" data-choices="${numC}" onclick="UI.selectCell(this)" style="min-height:32px;">
+                                    <span class="grid-cell-num">${row.questionNumber}</span>
+                                    <span class="grid-cell-ans" style="font-size:12px;">${ansText}</span>
+                                    <input class="grid-cell-input" type="text" maxlength="2" data-roi="${idx}" data-q="${row.questionNumber}" data-choices="${numC}" oninput="UI.onCellInput(this)" onkeydown="UI.onCellKeydown(event, this)">
+                                </div>`;
+                            });
+                            html += `</div>`;
                         }
-
-                        // 수정 가능한 셀 그리드 (작게)
-                        html += `<div class="result-grid" style="gap:2px;">`;
-                        res.rows.forEach(row => {
-                            const ansText = row.markedAnswer !== null
-                                ? (labels && labels[row.markedAnswer-1] ? labels[row.markedAnswer-1] : `${row.markedAnswer}`)
-                                : '?';
-                            const cellClass = row.markedAnswer !== null ? 'grid-cell-ok' : 'grid-cell-empty';
-                            html += `<div class="grid-cell ${cellClass}" data-roi="${idx}" data-q="${row.questionNumber}" data-choices="${numC}" onclick="UI.selectCell(this)" style="min-height:32px;">
-                                <span class="grid-cell-num">${row.questionNumber}</span>
-                                <span class="grid-cell-ans" style="font-size:12px;">${ansText}</span>
-                                <input class="grid-cell-input" type="text" maxlength="2" data-roi="${idx}" data-q="${row.questionNumber}" data-choices="${numC}" oninput="UI.onCellInput(this)" onkeydown="UI.onCellKeydown(event, this)">
-                            </div>`;
-                        });
-                        html += `</div>`;
                     } else {
                         // 과목답안: 기존 결과 그리드
                         const errs = (imgObj.validationErrors || []).filter(e => e.roiIndex === res.roiIndex);
@@ -516,13 +598,6 @@ const UI = {
                 html += `<p style="font-size:11px; color:var(--text-muted); margin-bottom:8px; text-align:center;">영역별 정답을 입력하거나 전역 정답을 설정하세요.</p>`;
             }
 
-            if (hasResults) {
-                html += `<div style="display:flex; gap:6px; margin-top:8px;">
-                    <button class="btn btn-export" onclick="ExportManager.exportCsv()" style="flex:1;">CSV</button>
-                    <button class="btn btn-export" onclick="ExportManager.exportExcel()" style="flex:1;">Excel</button>
-                </div>`;
-            }
-
             html += `<div class="roi-actions-sub" style="margin-top:8px;">
                 <button class="btn btn-sm" onclick="TemplateManager.save()">양식 저장</button>
             </div></div>`;
@@ -556,8 +631,8 @@ const UI = {
             let sc = pct >= 90 ? 'perfect' : pct >= 60 ? 'good' : 'bad';
             html += `
                 <div class="score-summary ${sc}">
-                    <div class="score-big ${sc}">${gr.score} <span class="score-total">/ ${gr.totalPossible}</span></div>
-                    <div class="score-detail">맞음 ${gr.correctCount} ✓ · 틀림 ${gr.wrongCount} ✗ · ${pct}%</div>
+                    <div class="score-big ${sc}">${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.score) : gr.score)} <span class="score-total">/ ${(typeof Scoring !== 'undefined' ? Scoring._fmtMax(gr.totalPossible) : gr.totalPossible)}</span></div>
+                    <div class="score-detail">맞음 ${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.correctCount) : gr.correctCount)} ✓ · 틀림 ${(typeof Scoring !== 'undefined' ? Scoring._fmtScore(gr.wrongCount) : gr.wrongCount)} ✗ · ${pct}%</div>
                 </div>`;
         }
 
@@ -652,11 +727,6 @@ const UI = {
                     " style="width:100%;">채점하기</button>
                 </div>`;
             }
-        } else {
-            html += `<div style="display:flex; gap:8px; margin-top:12px;">
-                <button class="btn btn-export" onclick="ExportManager.exportCsv()" style="flex:1;">CSV</button>
-                <button class="btn btn-export" onclick="ExportManager.exportExcel()" style="flex:1;">Excel</button>
-            </div>`;
         }
 
         panel.innerHTML = html;
@@ -887,8 +957,9 @@ const UI = {
             settings.name = this._nextAutoSubjectName(imgObj);
         }
 
-        imgObj.rois.push({ x, y, w, h, settings });
+        imgObj.rois.push({ x, y, w, h, _id: this._genRoiId(), settings });
         imgObj.results = null; imgObj.gradeResult = null;
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         CanvasManager.render(); ImageManager.updateList(); this.updateRightPanel();
     },
 
@@ -917,6 +988,7 @@ const UI = {
             else if (CanvasManager.selectedRoiIdx === newIdx) CanvasManager.selectedRoiIdx = idx;
         }
 
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         CanvasManager.render();
         this.updateRightPanel();
     },
@@ -934,7 +1006,7 @@ const UI = {
             s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';
         } else if (s.type === 'exam_no' || s.type === 'phone') {
-            s.numQuestions = 11;
+            // numQuestions는 기존값 유지 (사용자가 자릿수 지정)
             s.choiceLabels = ['0','1','2','3','4','5','6','7','8','9'];
             s.numChoices = 10; s.orientation = 'horizontal';
         } else if (s.type === 'subject_code') {
@@ -1155,7 +1227,7 @@ const UI = {
         const s = roi.settings;
         const name = (s.name || '').trim();
         if (!name || typeof SubjectManager === 'undefined') return false;
-        const subj = SubjectManager.findByName(name);
+        const subj = SubjectManager.findByRoiName(name); // ROI 이름 → 매핑된 CSV 과목
         if (!subj || !subj.answers) return false;
 
         // 과목 정답은 항상 쉼표 구분으로 저장됨 (subjectManager.save에서 보장)
@@ -1221,13 +1293,22 @@ const UI = {
         const old = document.getElementById('roi-settings-popup');
         if (old) old.remove();
 
+        // 과목코드 박스 치기 모드인지 판별
+        const _isCodeBoxMode = !!roi._isPendingCodeBox;
+        const _codeDrawn = this._pendingCodeDrawnIds ? this._pendingCodeDrawnIds.length : 0;
+        const _codeTotal = this._pendingCodeTotalDigits || 0;
+        const _answerRoiIdx = this._pendingCodeLinkRoiIdx;
+        const _popupTitle = _isCodeBoxMode
+            ? `영역 ${(_answerRoiIdx != null ? _answerRoiIdx + 1 : '?')}의 과목코드 설정중 (${_codeDrawn + 1}/${_codeTotal})`
+            : `영역 ${roiIdx + 1} 설정`;
+
         const overlay = document.createElement('div');
         overlay.id = 'roi-settings-popup';
         overlay.className = 'modal-overlay';
         overlay.innerHTML = `
             <div class="modal" style="width:340px;">
                 <div class="modal-header">
-                    <h2>영역 ${roiIdx + 1} 설정</h2>
+                    <h2>${_popupTitle}</h2>
                 </div>
                 <div class="modal-body">
                     <div class="roi-popup-field">
@@ -1236,7 +1317,13 @@ const UI = {
                             `<option value="${k}" ${s.type === k ? 'selected' : ''}>${t.icon} ${t.label}</option>`
                         ).join('')}</select>
                     </div>
-                    <div id="rp-subject-btns">${this._renderSubjectButtons(roiIdx, s.name, imgObj)}</div>
+                    ${(() => {
+                        const hasCodeLink = !!(s.linkedCodeRoiIds && s.linkedCodeRoiIds.length > 0) || !!s.linkedCodeRoiId;
+                        if (hasCodeLink) {
+                            // 과목코드 연동 시: 과목뱃지/과목명 숨김, hidden input으로 빈 이름 전달
+                            return `<input type="hidden" id="rp-name" value="">`;
+                        }
+                        return `<div id="rp-subject-btns">${this._renderSubjectButtons(roiIdx, s.name, imgObj)}</div>
                     <div class="roi-popup-field">
                         <label>과목/영역명</label>
                         <input type="text" id="rp-name" value="${this.esc(s.name)}" placeholder="과목명 입력 또는 선택"
@@ -1244,12 +1331,13 @@ const UI = {
                         <datalist id="rp-subject-list">
                             ${(App.state.subjects || []).map(subj => `<option value="${this.esc(subj.name)}">${subj.code ? `[${this.esc(subj.code)}]` : ''}</option>`).join('')}
                         </datalist>
-                    </div>
+                    </div>`;
+                    })()}
                     <div class="roi-popup-field">
                         <label>방향</label>
                         <div class="roi-popup-orient">
-                            <button id="rp-vert" class="${s.orientation === 'vertical' ? 'active' : ''}" onclick="document.getElementById('rp-vert').classList.add('active');document.getElementById('rp-horiz').classList.remove('active');">⬇ 세로</button>
-                            <button id="rp-horiz" class="${s.orientation === 'horizontal' ? 'active' : ''}" onclick="document.getElementById('rp-horiz').classList.add('active');document.getElementById('rp-vert').classList.remove('active');">➡ 가로</button>
+                            <button id="rp-vert" class="${s.orientation === 'vertical' ? 'active' : ''}" onclick="document.getElementById('rp-vert').classList.add('active');document.getElementById('rp-horiz').classList.remove('active');UI.onPopupOrientChange(${roiIdx},'vertical');">⬇ 세로</button>
+                            <button id="rp-horiz" class="${s.orientation === 'horizontal' ? 'active' : ''}" onclick="document.getElementById('rp-horiz').classList.add('active');document.getElementById('rp-vert').classList.remove('active');UI.onPopupOrientChange(${roiIdx},'horizontal');">➡ 가로</button>
                         </div>
                     </div>
                     <div class="roi-popup-field">
@@ -1266,21 +1354,90 @@ const UI = {
                     </div>
                     <div class="roi-popup-field" id="rp-labels-field">
                         <label>선택지</label>
-                        <div id="rp-labels" style="display:flex; gap:3px; flex-wrap:wrap; flex:1;">
-                            ${(s.choiceLabels || []).slice(0, s.numChoices || 5).map((lbl, i) =>
-                                `<input type="text" class="rp-label-input" data-idx="${i}" value="${this.esc(lbl)}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`
-                            ).join('')}
+                        <div style="display:flex; flex-direction:column; gap:4px; flex:1;">
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:11px; color:var(--text-muted); white-space:nowrap;">첫 번호</span>
+                                <input type="text" id="rp-label-start" value="${(s.choiceLabels && s.choiceLabels[0]) || '1'}" maxlength="5"
+                                    style="width:50px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px; font-weight:700;"
+                                    oninput="UI.onPopupLabelStartChange(${roiIdx})"
+                                    title="여기 숫자를 적으면 나머지가 자동으로 채워짐 (예: 0 → 0,1,2,3...)">
+                                <span style="font-size:10px; color:var(--text-muted);">→ 자동 채움</span>
+                            </div>
+                            <div id="rp-labels" style="display:flex; gap:3px; flex-wrap:wrap;">
+                                ${(s.choiceLabels || []).slice(0, s.numChoices || 5).map((lbl, i) =>
+                                    `<input type="text" class="rp-label-input" data-idx="${i}" value="${this.esc(lbl)}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`
+                                ).join('')}
+                            </div>
                         </div>
                     </div>
-                    <div class="roi-popup-field">
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                            <input type="checkbox" id="rp-elongated" ${s.elongatedMode ? 'checked' : ''} onchange="UI.onPopupElongatedToggle(${roiIdx}, this.checked)">
-                            길쭉 버블 분석
-                        </label>
+                    <!-- 과목코드 연동 (코드박스 모드일 땐 숨김) -->
+                    <div id="rp-code-link-section" style="margin-top:8px; padding:8px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; ${_isCodeBoxMode ? 'display:none;' : ''}">
+                        <div style="font-size:11px; font-weight:700; color:#0369a1; margin-bottom:4px;">과목코드 연동</div>
+                        ${(() => {
+                            const ids = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
+                            if (ids.length > 0) {
+                                // 연결된 코드 박스 목록 + 감지된 코드 합산
+                                let codeDigits = '';
+                                const boxes = ids.map((id, di) => {
+                                    const ci = imgObj.rois.findIndex(r => r._id === id);
+                                    if (ci < 0) return `<span style="color:#dc2626;font-size:10px;">${di+1}자리: 삭제됨</span>`;
+                                    // 감지된 값
+                                    const cRes = imgObj.results && imgObj.results[ci];
+                                    let digit = '?';
+                                    if (cRes && cRes.rows && cRes.rows[0] && cRes.rows[0].markedAnswer != null) {
+                                        const cl = imgObj.rois[ci].settings.choiceLabels;
+                                        digit = cl && cl[cRes.rows[0].markedAnswer - 1] ? cl[cRes.rows[0].markedAnswer - 1] : String(cRes.rows[0].markedAnswer);
+                                    }
+                                    codeDigits += digit;
+                                    return `<span style="font-size:10px;color:#0369a1;">${di+1}자리: <strong>${digit}</strong></span>`;
+                                });
+                                const globalSubjects = App.state.subjects || [];
+                                const matchedSubj = globalSubjects.find(sub => sub.code === codeDigits);
+                                return `<div style="display:flex;flex-direction:column;gap:3px;">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                        <span style="font-size:14px;font-weight:800;font-family:monospace;color:#0369a1;letter-spacing:2px;">${codeDigits}</span>
+                                        ${matchedSubj ? `<span style="font-size:12px;font-weight:700;color:#16a34a;">${matchedSubj.name}</span>` : ''}
+                                        <button class="btn btn-sm" onclick="UI._unlinkCodeRoi(${roiIdx})" style="font-size:9px;padding:1px 5px;color:#dc2626;margin-left:auto;">해제</button>
+                                    </div>
+                                    <div style="font-size:9px;color:var(--text-muted);">${boxes.join(' · ')}</div>
+                                </div>`;
+                            } else {
+                                return `<div style="display:flex;align-items:center;gap:6px;">
+                                    <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
+                                        자리수 <input type="number" id="rp-code-digits" value="2" min="1" max="5" style="width:40px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;text-align:center;">
+                                    </label>
+                                    <button class="btn btn-sm btn-primary" onclick="UI._startCodeBoxDraw(${roiIdx})" style="font-size:10px;padding:3px 8px;">과목코드 박스 치기</button>
+                                </div>`;
+                            }
+                        })()}
+                    </div>
+                    <!-- 버블 형태 선택 — 영역 설정과 분리된 단 -->
+                    <div style="margin-top:8px; padding-top:8px; border-top:2px solid var(--border-light);">
+                        <div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:6px;">버블 형태</div>
+                        <div style="display:flex; gap:8px;">
+                            <button id="rp-bubble-circle" onclick="UI._setBubbleType(false)"
+                                style="flex:1; padding:10px; border:2px solid ${!s.elongatedMode ? '#22c55e' : 'var(--border)'}; border-radius:8px; cursor:pointer;
+                                       background:${!s.elongatedMode ? '#dcfce7' : 'var(--bg-input)'}; display:flex; flex-direction:column; align-items:center; gap:6px; transition:all 0.15s;">
+                                <svg width="32" height="32" viewBox="0 0 32 32">
+                                    <circle cx="16" cy="16" r="12" fill="none" stroke="${!s.elongatedMode ? '#16a34a' : '#94a3b8'}" stroke-width="2.5"/>
+                                    <circle cx="16" cy="16" r="5" fill="${!s.elongatedMode ? '#16a34a' : '#d4d4d8'}"/>
+                                </svg>
+                                <span style="font-size:12px; font-weight:700; color:${!s.elongatedMode ? '#16a34a' : 'var(--text-muted)'};">원형 버블</span>
+                            </button>
+                            <button id="rp-bubble-elongated" onclick="UI._setBubbleType(true)"
+                                style="flex:1; padding:10px; border:2px solid ${s.elongatedMode ? '#22c55e' : 'var(--border)'}; border-radius:8px; cursor:pointer;
+                                       background:${s.elongatedMode ? '#dcfce7' : 'var(--bg-input)'}; display:flex; flex-direction:column; align-items:center; gap:6px; transition:all 0.15s;">
+                                <svg width="32" height="32" viewBox="0 0 32 32">
+                                    <ellipse cx="16" cy="16" rx="7" ry="13" fill="none" stroke="${s.elongatedMode ? '#16a34a' : '#94a3b8'}" stroke-width="2.5"/>
+                                    <ellipse cx="16" cy="16" rx="3" ry="6" fill="${s.elongatedMode ? '#16a34a' : '#d4d4d8'}"/>
+                                </svg>
+                                <span style="font-size:12px; font-weight:700; color:${s.elongatedMode ? '#16a34a' : 'var(--text-muted)'};">세로 길쭉 버블</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-sm" onclick="UI.closeRoiSettingsPopup()">취소</button>
+                    <button class="btn btn-sm" onclick="UI.cancelRoiSettingsPopup(${roiIdx})">취소</button>
                     <button class="btn btn-sm" style="color:var(--red);" onclick="UI.deleteRoiFromPopup(${roiIdx})">삭제</button>
                     <button class="btn btn-sm btn-primary" onclick="UI.applyRoiSettingsPopup(${roiIdx})">확인</button>
                 </div>
@@ -1314,7 +1471,169 @@ const UI = {
         if (el) el.remove();
     },
 
+    // 과목코드 박스 치기 — 자리수만큼 순차 드래그
+    _pendingCodeLinkRoiIdx: null,
+    _pendingCodeTotalDigits: 0,
+    _pendingCodeDrawnIds: [],
+
+    _startCodeBoxDraw(answerRoiIdx) {
+        const digitsInput = document.getElementById('rp-code-digits');
+        const totalDigits = digitsInput ? Math.max(1, Math.min(5, parseInt(digitsInput.value) || 2)) : 2;
+        const imgObj = App.getCurrentImage();
+
+        this._pendingCodeLinkRoiIdx = answerRoiIdx;
+        this._pendingCodeAnswerRoiId = imgObj && imgObj.rois[answerRoiIdx] ? imgObj.rois[answerRoiIdx]._id : null;
+        this._pendingCodeTotalDigits = totalDigits;
+        this._pendingCodeDrawnIds = [];
+        this.closeRoiSettingsPopup();
+
+        Toast.canvasGuide(`과목코드 ${totalDigits}자리 — 1자리째 영역을 드래그하세요`);
+        CanvasManager.setMode('draw');
+    },
+
+
+    // 과목코드 연결 해제 — 연결된 코드 박스도 삭제
+    _unlinkCodeRoi(answerRoiIdx) {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj || !imgObj.rois[answerRoiIdx]) return;
+        const s = imgObj.rois[answerRoiIdx].settings;
+        const ids = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
+        // 코드 박스들 삭제 (뒤에서부터 삭제해야 인덱스 안 밀림)
+        const codeIndices = ids.map(id => imgObj.rois.findIndex(r => r._id === id)).filter(i => i >= 0).sort((a, b) => b - a);
+        codeIndices.forEach(ci => imgObj.rois.splice(ci, 1));
+        // answerRoiIdx 재계산 (앞에서 삭제된 것 감안)
+        const deleted = codeIndices.filter(ci => ci < answerRoiIdx).length;
+        const newIdx = answerRoiIdx - deleted;
+        const newS = imgObj.rois[newIdx] ? imgObj.rois[newIdx].settings : null;
+        if (newS) {
+            newS.linkedCodeRoiIds = null;
+            newS.linkedCodeRoiId = null;
+            newS.answerSource = 'direct';
+        }
+        imgObj.results = null; imgObj.gradeResult = null;
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+        CanvasManager.render();
+        this.closeRoiSettingsPopup();
+        setTimeout(() => this.openRoiSettingsPopup(newIdx), 100);
+    },
+
+    // 팝업 "첫 번호" 변경 → 나머지 라벨 자동 채움
+    // 빈칸이면 아래 개별 라벨 건드리지 않음 (사용자가 직접 입력)
+    onPopupLabelStartChange(roiIdx) {
+        const startInput = document.getElementById('rp-label-start');
+        if (!startInput) return;
+        const startVal = startInput.value.trim();
+        if (startVal === '') return; // 빈칸이면 아무것도 안 함
+
+        const numC = parseInt(document.getElementById('rp-numc')?.value) || 5;
+        const labelsDiv = document.getElementById('rp-labels');
+        if (!labelsDiv) return;
+
+        const startNum = parseInt(startVal);
+        const isNumeric = !isNaN(startNum) && String(startNum) === startVal;
+
+        let html = '';
+        for (let i = 0; i < numC; i++) {
+            const val = isNumeric ? String(startNum + i) : (i === 0 ? startVal : String(i + 1));
+            html += `<input type="text" class="rp-label-input" data-idx="${i}" value="${val}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`;
+        }
+        labelsDiv.innerHTML = html;
+    },
+
+    // 팝업에서 방향(세로/가로) 변경 시 문항수/선택지수 재할당
+    onPopupOrientChange(roiIdx, orient) {
+        const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[roiIdx]) return;
+        const roi = imgObj.rois[roiIdx];
+        roi.settings.orientation = orient;
+        const isElong = !!roi.settings.elongatedMode;
+        try {
+            const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h);
+            const detected = OmrEngine.autoDetect(imageData, roi.x, roi.y, 0, isElong);
+            if (detected) {
+                // autoDetect는 자체 방향 추정을 하지만,
+                // 사용자가 직접 방향을 지정했으므로 그 방향에 맞춰 numQ/numC 결정
+                // BFS가 찾은 행/열 수는 grid.numRows × grid.numCols
+                // vertical: 행=문항, 열=선택지
+                // horizontal: 열=문항, 행=선택지
+                let numQ, numC;
+                if (orient === detected.orientation) {
+                    // 같은 방향 → autoDetect 결과 그대로
+                    numQ = detected.numQuestions;
+                    numC = detected.numChoices;
+                } else {
+                    // 다른 방향 → 뒤집기
+                    numQ = detected.numChoices;
+                    numC = detected.numQuestions;
+                }
+
+                const nqInput = document.getElementById('rp-numq');
+                if (nqInput) nqInput.value = numQ;
+                const ncInput = document.getElementById('rp-numc');
+                if (ncInput) ncInput.value = numC;
+
+                // 라벨 재생성
+                const labelsDiv = document.getElementById('rp-labels');
+                if (labelsDiv) {
+                    let newHtml = '';
+                    for (let i = 0; i < numC; i++) {
+                        newHtml += `<input type="text" class="rp-label-input" data-idx="${i}" value="${i + 1}" maxlength="10" style="width:36px; text-align:center; padding:4px; border:1px solid var(--border); border-radius:4px; font-size:12px;">`;
+                    }
+                    labelsDiv.innerHTML = newHtml;
+                }
+                // 첫 번호 입력칸도 리셋
+                const startInput = document.getElementById('rp-label-start');
+                if (startInput) startInput.value = '1';
+
+                console.log(`[팝업 방향변경] ${orient} → 문항=${numQ} 선택지=${numC}`);
+            }
+        } catch (e) {
+            console.warn('팝업 방향 재감지 실패:', e);
+        }
+    },
+
     // 팝업에서 길쭉 모드 토글 시 임계값 리셋 + 자동감지 재실행
+    _setBubbleType(isElongated) {
+        const circleBtn = document.getElementById('rp-bubble-circle');
+        const elongBtn = document.getElementById('rp-bubble-elongated');
+        if (!circleBtn || !elongBtn) return;
+
+        // 원형 버튼 스타일
+        circleBtn.style.border = `2px solid ${!isElongated ? '#22c55e' : 'var(--border)'}`;
+        circleBtn.style.background = !isElongated ? '#dcfce7' : 'var(--bg-input)';
+        const cSvg = circleBtn.querySelector('svg');
+        if (cSvg) {
+            cSvg.querySelector('circle:first-child').setAttribute('stroke', !isElongated ? '#16a34a' : '#94a3b8');
+            cSvg.querySelector('circle:last-child').setAttribute('fill', !isElongated ? '#16a34a' : '#d4d4d8');
+        }
+        const cSpan = circleBtn.querySelector('span');
+        if (cSpan) cSpan.style.color = !isElongated ? '#16a34a' : 'var(--text-muted)';
+
+        // 길쭉 버튼 스타일
+        elongBtn.style.border = `2px solid ${isElongated ? '#22c55e' : 'var(--border)'}`;
+        elongBtn.style.background = isElongated ? '#dcfce7' : 'var(--bg-input)';
+        const eSvg = elongBtn.querySelector('svg');
+        if (eSvg) {
+            eSvg.querySelector('ellipse:first-child').setAttribute('stroke', isElongated ? '#16a34a' : '#94a3b8');
+            eSvg.querySelector('ellipse:last-child').setAttribute('fill', isElongated ? '#16a34a' : '#d4d4d8');
+        }
+        const eSpan = elongBtn.querySelector('span');
+        if (eSpan) eSpan.style.color = isElongated ? '#16a34a' : 'var(--text-muted)';
+
+        // active 클래스
+        circleBtn.classList.toggle('active', !isElongated);
+        elongBtn.classList.toggle('active', isElongated);
+
+        // 로직 호출 (roiIdx는 팝업 DOM에서 추출)
+        const popup = document.getElementById('roi-settings-popup');
+        if (popup) {
+            const applyBtn = popup.querySelector('[onclick*="applyRoiSettingsPopup"]');
+            if (applyBtn) {
+                const m = applyBtn.getAttribute('onclick').match(/applyRoiSettingsPopup\((\d+)\)/);
+                if (m) this.onPopupElongatedToggle(parseInt(m[1]), isElongated);
+            }
+        }
+    },
+
     onPopupElongatedToggle(roiIdx, checked) {
         const imgObj = App.getCurrentImage(); if (!imgObj || !imgObj.rois[roiIdx]) return;
         const roi = imgObj.rois[roiIdx];
@@ -1357,7 +1676,57 @@ const UI = {
         }
     },
 
+    // 팝업 취소 — 새 박스(_isNewRoi)이면 삭제
+    cancelRoiSettingsPopup(roiIdx) {
+        const imgObj = App.getCurrentImage();
+        const isPendingCode = imgObj && imgObj.rois[roiIdx] && imgObj.rois[roiIdx]._isPendingCodeBox;
+
+        if (imgObj && imgObj.rois[roiIdx] && imgObj.rois[roiIdx]._isNewRoi) {
+            this.closeRoiSettingsPopup();
+            CanvasManager.deleteRoi(roiIdx);
+            this.updateRightPanel();
+            Toast.info('영역 추가 취소됨');
+        } else {
+            this.closeRoiSettingsPopup();
+        }
+
+        // 과목코드 박스 치기 취소 → 이전에 그린 코드박스들도 전부 롤백 → 답안 팝업 복귀
+        Toast.canvasGuideClear();
+        if (isPendingCode && this._pendingCodeLinkRoiIdx != null) {
+            // 이미 그린 코드박스들 삭제 (뒤에서부터)
+            if (imgObj && this._pendingCodeDrawnIds.length > 0) {
+                const delIndices = this._pendingCodeDrawnIds
+                    .map(id => imgObj.rois.findIndex(r => r._id === id))
+                    .filter(i => i >= 0)
+                    .sort((a, b) => b - a);
+                delIndices.forEach(ci => imgObj.rois.splice(ci, 1));
+                imgObj.results = null; imgObj.gradeResult = null;
+                CanvasManager.render();
+            }
+            const answerIdx = this._pendingCodeLinkRoiIdx;
+            // answerIdx 재계산 (삭제로 인덱스 밀렸을 수 있음)
+            const answerId = this._pendingCodeAnswerRoiId;
+            const newAnswerIdx = answerId ? imgObj.rois.findIndex(r => r._id === answerId) : answerIdx;
+
+            this._pendingCodeLinkRoiIdx = null;
+            this._pendingCodeDrawnIds = [];
+            this._pendingCodeTotalDigits = 0;
+            this._pendingCodeAnswerRoiId = null;
+            setTimeout(() => this.openRoiSettingsPopup(newAnswerIdx >= 0 ? newAnswerIdx : 0), 200);
+        }
+    },
+
     deleteRoiFromPopup(roiIdx) {
+        const imgObj = App.getCurrentImage();
+        // 연결된 과목코드 박스들도 함께 삭제
+        if (imgObj && imgObj.rois[roiIdx]) {
+            const s = imgObj.rois[roiIdx].settings;
+            const ids = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
+            const codeIndices = ids.map(id => imgObj.rois.findIndex(r => r._id === id)).filter(i => i >= 0).sort((a, b) => b - a);
+            codeIndices.forEach(ci => imgObj.rois.splice(ci, 1));
+            const deleted = codeIndices.filter(ci => ci < roiIdx).length;
+            roiIdx = roiIdx - deleted;
+        }
         this.closeRoiSettingsPopup();
         CanvasManager.deleteRoi(roiIdx);
         this.updateRightPanel();
@@ -1370,14 +1739,26 @@ const UI = {
         const newOrient = document.getElementById('rp-vert').classList.contains('active') ? 'vertical' : 'horizontal';
         const orientChanged = s.orientation !== newOrient;
 
-        s.type = document.getElementById('rp-type').value;
+        const newType = document.getElementById('rp-type').value;
         const newName = document.getElementById('rp-name').value;
+
+        // 과목 답안인데 이름 비었으면 경고 (과목코드 연동 시 이름 불필요)
+        const hasCodeLink = !!(s.linkedCodeRoiIds && s.linkedCodeRoiIds.length > 0) || !!s.linkedCodeRoiId;
+        if (newType === 'subject_answer' && !newName.trim() && !hasCodeLink) {
+            Toast.error('과목/영역명을 입력하거나 과목코드 박스를 연결하세요');
+            const nameInput = document.getElementById('rp-name');
+            if (nameInput) { nameInput.focus(); nameInput.style.borderColor = '#ef4444'; }
+            return;
+        }
+
+        s.type = newType;
         const nameChanged = s.name !== newName;
         s.name = newName;
         s.orientation = newOrient;
         s.startNum = parseInt(document.getElementById('rp-start').value) || 1;
         s.numQuestions = parseInt(document.getElementById('rp-numq').value) || 0;
-        const newElongated = document.getElementById('rp-elongated').checked;
+        const elongBtn = document.getElementById('rp-bubble-elongated');
+        const newElongated = elongBtn ? elongBtn.classList.contains('active') : false;
         const elongatedChanged = s.elongatedMode !== newElongated;
         s.elongatedMode = newElongated;
         if (elongatedChanged) this.resetThresholdsForMode(s);
@@ -1395,13 +1776,59 @@ const UI = {
         // 이름 변경 시 과목 매칭/자동 로드
         if (nameChanged) this._syncRoiNameAsSubject(imgObj.rois[roiIdx]);
 
-        // 방향이 바뀌어도 사용자가 입력한 문항수/선택지수는 유지
+        // 신규 박스 플래그 해제 (확인 완료)
+        delete imgObj.rois[roiIdx]._isNewRoi;
+
+        // 과목코드 박스 치기로 만들어진 경우 → 답안 ROI에 연결 + 답안 팝업 재오픈
+        const isPendingCode = imgObj.rois[roiIdx]._isPendingCodeBox;
+        delete imgObj.rois[roiIdx]._isPendingCodeBox;
+
         imgObj.results = null; imgObj.gradeResult = null;
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.closeRoiSettingsPopup();
-        CanvasManager.render();
-        ImageManager.updateList();
-        this.updateRightPanel();
-        setTimeout(() => CanvasManager.runAnalysis(), 100);
+
+        if (isPendingCode && this._pendingCodeLinkRoiIdx != null) {
+            const codeRoi = imgObj.rois[roiIdx];
+            if (codeRoi) {
+                codeRoi.settings.numQuestions = 1;
+                this._pendingCodeDrawnIds.push(codeRoi._id);
+            }
+
+            const drawn = this._pendingCodeDrawnIds.length;
+            const total = this._pendingCodeTotalDigits;
+
+            CanvasManager.render();
+
+            if (drawn < total) {
+                // 다음 자리 드래그 — setMode를 setTimeout으로 확실히 적용
+                setTimeout(() => {
+                    Toast.canvasGuide(`과목코드 ${total}자리 중 ${drawn}자리 완료 — ${drawn + 1}자리째를 드래그하세요`);
+                    CanvasManager.setMode('draw');
+                }, 50);
+            } else {
+                // 전체 완료 → 답안 ROI에 연결 (_id 기반으로 찾기)
+                const answerId = this._pendingCodeAnswerRoiId;
+                const answerIdx = answerId ? imgObj.rois.findIndex(r => r._id === answerId) : this._pendingCodeLinkRoiIdx;
+                this._pendingCodeLinkRoiIdx = null;
+                this._pendingCodeAnswerRoiId = null;
+                const answerRoi = answerIdx >= 0 ? imgObj.rois[answerIdx] : null;
+                if (answerRoi) {
+                    answerRoi.settings.linkedCodeRoiIds = [...this._pendingCodeDrawnIds];
+                    answerRoi.settings.linkedCodeRoiId = null;
+                    answerRoi.settings.answerSource = 'code';
+                    Toast.canvasGuideClear();
+                    Toast.success(`과목코드 ${total}자리 연결 완료`);
+                }
+                this._pendingCodeDrawnIds = [];
+                this._pendingCodeTotalDigits = 0;
+                setTimeout(() => this.openRoiSettingsPopup(answerIdx >= 0 ? answerIdx : 0), 200);
+            }
+        } else {
+            CanvasManager.render();
+            ImageManager.updateList();
+            this.updateRightPanel();
+            setTimeout(() => CanvasManager.runAnalysis(), 100);
+        }
     },
 
     setOrientation(roiIdx, value) {
@@ -1480,10 +1907,12 @@ const UI = {
         // 해당 행 블롭들의 바운딩 박스
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         row.blobs.forEach(b => {
-            if (b.x < minX) minX = b.x;
-            if (b.y < minY) minY = b.y;
-            if (b.x + b.w > maxX) maxX = b.x + b.w;
-            if (b.y + b.h > maxY) maxY = b.y + b.h;
+            const bx = b.x != null ? b.x : (b.cx - (b.w || 0) / 2);
+            const by = b.y != null ? b.y : (b.cy - (b.h || 0) / 2);
+            if (bx < minX) minX = bx;
+            if (by < minY) minY = by;
+            if (bx + (b.w || 0) > maxX) maxX = bx + (b.w || 0);
+            if (by + (b.h || 0) > maxY) maxY = by + (b.h || 0);
         });
 
         // 패딩 추가
@@ -1743,6 +2172,7 @@ const UI = {
             row._userCorrected = true;
         });
         imgObj.gradeResult = null;
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         CanvasManager.render();
         ImageManager.updateList();
         this.updateRightPanel();
@@ -1792,6 +2222,7 @@ const UI = {
         }
 
         ImageManager.updateList();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
         // 로컬 자동 저장
         this.autoSaveLocal();
@@ -1813,6 +2244,12 @@ const UI = {
             ImageManager.updateList();
             this.updateRightPanel();
             Toast.info('전체 교정 확정 해제');
+
+            // 교정 탭이 열려있으면 즉시 재렌더링
+            const cv1 = document.getElementById('correction-view');
+            if (cv1 && cv1.style.display !== 'none' && typeof Correction !== 'undefined') {
+                Correction.render(document.getElementById('correction-content'));
+            }
         } else {
             // 전체 확정: 모든 이미지에 대해 수험번호 재매칭 + 재채점
             let updated = 0;
@@ -1831,7 +2268,14 @@ const UI = {
             ImageManager.updateList();
             this.updateRightPanel();
             Toast.success(`전체 교정 확정 — ${updated}장 수험번호/채점 갱신됨`);
+
+            // 교정 탭이 열려있으면 즉시 재렌더링
+            const cv2 = document.getElementById('correction-view');
+            if (cv2 && cv2.style.display !== 'none' && typeof Correction !== 'undefined') {
+                Correction.render(document.getElementById('correction-content'));
+            }
         }
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
     },
 
     // 로컬스토리지 자동 저장 (수기 교정 데이터)

@@ -35,6 +35,41 @@ const SubjectManager = {
     findByName(name) { return (App.state.subjects || []).find(s => s.name === name); },
     findByCode(code) { return (App.state.subjects || []).find(s => s.code === code); },
 
+    // ROI(양식)의 과목명 → CSV 과목 매칭
+    // 1) subject.omrSubjectName 과 일치  2) subject.name 과 일치 (fallback)
+    findByRoiName(roiName) {
+        if (!roiName) return null;
+        const subs = App.state.subjects || [];
+        return subs.find(s => s.omrSubjectName === roiName)
+            || subs.find(s => s.name === roiName)
+            || null;
+    },
+
+    // 현재 세션의 모든 ROI subject_answer 이름 수집 (중복 제거, 등장 순)
+    collectOmrSubjectNames() {
+        const seen = [];
+        const set = new Set();
+        const periods = App.state.periods || [];
+        const pools = periods.length > 0 ? periods.map(p => p.images || []) : [App.state.images || []];
+        pools.forEach(imgs => {
+            imgs.forEach(img => {
+                (img.rois || []).forEach(roi => {
+                    if (roi.settings && roi.settings.type === 'subject_answer') {
+                        const n = (roi.settings.name || '').trim();
+                        if (n && !set.has(n)) { set.add(n); seen.push(n); }
+                    }
+                });
+            });
+        });
+        return seen;
+    },
+
+    // CSV 과목이 매핑된 ROI 이름(또는 자신의 name) 반환 — 역방향 조회용
+    mappedRoiNameFor(subjectName) {
+        const s = this.findByName(subjectName);
+        return (s && s.omrSubjectName) || subjectName;
+    },
+
     getSubjects() {
         if (!App.state.subjects) App.state.subjects = [];
         return App.state.subjects;
@@ -67,8 +102,8 @@ const SubjectManager = {
                     </div>
                 </div>
                 <div class="modal-body" style="overflow-y:auto; max-height:60vh;">
-                    <div id="subject-list" style="display:${activeTab === 'subjects' ? 'block' : 'none'};"></div>
-                    <div id="student-list" style="display:${activeTab === 'students' ? 'block' : 'none'};"></div>
+                    <div id="subject-list" style="display:${activeTab === 'subjects' ? 'block' : 'none'}; max-height:480px; overflow-y:auto;"></div>
+                    <div id="student-list" style="display:${activeTab === 'students' ? 'block' : 'none'}; max-height:480px; overflow-y:auto;"></div>
                 </div>
                 <div class="modal-footer" id="sm-footer"></div>
             </div>
@@ -96,6 +131,9 @@ const SubjectManager = {
             return;
         }
 
+        const omrNames = this.collectOmrSubjectNames();
+        const _esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
         let html = '';
         subjects.forEach((subj, idx) => {
             const answers = this.answersToArray(subj.answers);
@@ -110,11 +148,15 @@ const SubjectManager = {
             while (answers.length < numQ) answers.push('');
             if (answers.length > numQ) answers.length = numQ;
 
+            const srcBadge = subj._source === 'csv'
+                ? '<span style="font-size:9px; padding:1px 5px; border-radius:3px; background:#dbeafe; color:#2563eb; font-weight:700;">CSV</span>'
+                : (subj._source === 'manual' ? '<span style="font-size:9px; padding:1px 5px; border-radius:3px; background:#fef3c7; color:#d97706; font-weight:700;">수기</span>' : '');
             html += `
-            <div class="subject-card" data-idx="${idx}" style="border:1px solid var(--border); border-radius:8px; padding:8px; margin-bottom:8px;">
+            <div class="subject-card" data-idx="${idx}" style="border:1px solid ${subj._source === 'csv' ? '#93c5fd' : 'var(--border)'}; border-radius:8px; padding:8px; margin-bottom:8px;">
                 <!-- 상단: 코드/과목명/선택지/총점/문항수 -->
                 <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;">
                     <span style="font-weight:700; font-size:14px; color:var(--blue); min-width:16px;">${idx + 1}</span>
+                    ${srcBadge}
 
                     <label style="display:flex; align-items:center; gap:3px; font-size:10px; cursor:pointer;">
                         <input type="checkbox" class="sm-use-code" ${useCode ? 'checked' : ''}
@@ -154,6 +196,19 @@ const SubjectManager = {
                             style="width:45px; font-size:12px; padding:3px; background:var(--bg-input); color:var(--text-muted); text-align:center;">
                     </div>
                     <button class="roi-delete-btn" onclick="SubjectManager.removeRow(${idx})" title="삭제" style="align-self:center;">✕</button>
+                </div>
+
+                <!-- 양식 과목 매칭 -->
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; padding:4px 6px; background:var(--bg-input); border-radius:4px;">
+                    <span style="font-size:10px; font-weight:600; color:var(--text-muted);">양식 과목:</span>
+                    ${omrNames.length > 0 ? `
+                    <select class="sm-omr-name" onchange="SubjectManager.onOmrNameChange(${idx}, this.value)"
+                        style="font-size:11px; padding:3px 6px; border:1px solid var(--border); border-radius:4px; background:white; min-width:140px;">
+                        <option value="">(매칭 안 함 — 이름으로 자동)</option>
+                        ${omrNames.map(n => `<option value="${_esc(n)}" ${subj.omrSubjectName === n ? 'selected' : ''}>${_esc(n)}</option>`).join('')}
+                    </select>
+                    ${subj.omrSubjectName ? `<span style="font-size:10px; color:var(--blue);">✓ "${_esc(subj.omrSubjectName)}" → "${_esc(subj.name || '-')}"</span>` : `<span style="font-size:10px; color:var(--text-muted);">양식의 과목명 그대로 이름 매칭</span>`}
+                    ` : `<span style="font-size:10px; color:var(--text-muted);">양식에 과목(subject_answer) 영역이 없습니다</span>`}
                 </div>
 
                 <!-- 정답 입력 (개별 셀) -->
@@ -207,6 +262,14 @@ const SubjectManager = {
     // ==========================================
     // 이벤트 핸들러 (DOM 직접 조작 — 리렌더 없이)
     // ==========================================
+
+    // 양식 과목명 매핑 변경
+    onOmrNameChange(idx, omrName) {
+        const subj = this.getSubjects()[idx]; if (!subj) return;
+        subj.omrSubjectName = omrName || '';
+        this.saveToStorage();
+        this.renderList();
+    },
 
     // 문항수 변경: 정답 셀 추가/제거 (기존 정답 유지)
     onNumQChange(idx, newVal) {
@@ -355,7 +418,8 @@ const SubjectManager = {
             scorePerQuestion: 5,
             totalScore: 100,
             useCustomScore: false, scoreMap: [],
-            answers: Array(20).fill('').join(',')
+            answers: Array(20).fill('').join(','),
+            _source: 'manual',
         });
         this.renderList();
     },
@@ -373,12 +437,15 @@ const SubjectManager = {
         this._saveCurrentToData();
         const subjects = this.getSubjects();
 
-        // 기본배점 재계산
+        // 기본배점 재계산 (차등배점이 아니고, 사용자가 직접 배점을 지정하지 않은 경우만)
         subjects.forEach(s => {
             const answers = this.answersToArray(s.answers);
             s.numQuestions = answers.length || s.numQuestions;
             if (!s.totalScore) s.totalScore = 100;
-            s.scorePerQuestion = s.numQuestions > 0 ? Math.round((s.totalScore / s.numQuestions) * 100) / 100 : 0;
+            // scorePerQuestion이 아직 없거나 0이면 자동 계산
+            if (!s.scorePerQuestion || s.scorePerQuestion <= 0) {
+                s.scorePerQuestion = s.numQuestions > 0 ? Math.round((s.totalScore / s.numQuestions) * 100) / 100 : 0;
+            }
         });
 
         this.saveToStorage();
@@ -407,8 +474,12 @@ const SubjectManager = {
         ImageManager.updateList();
         CanvasManager.render();
         UI.updateRightPanel();
+        // Electron: 세션 파일에 즉시 저장
+        if (typeof SessionManager !== 'undefined' && SessionManager.saveCurrentSession) {
+            SessionManager.saveCurrentSession();
+        }
         Toast.success(`${subjects.length}개 과목 저장 완료`);
-        overlay.remove();
+        // 모달은 닫지 않음 — 사용자가 계속 편집/매핑할 수 있게 유지
     },
 
     // ==========================================
@@ -416,7 +487,7 @@ const SubjectManager = {
     // ==========================================
     importCSV(file) {
         if (!file) return;
-        this._readFileWithEncoding(file, (text) => {
+        this._readFileWithEncoding(file, async (text) => {
             try {
                 const delimiter = this._detectDelimiter(text);
                 const allLines = text.split('\n').map(l => l.trim());
@@ -434,8 +505,14 @@ const SubjectManager = {
                 }
                 if (dataRows.length === 0) { Toast.error('데이터가 없습니다. 21행부터 입력하세요.'); return; }
 
-                let imported = 0;
                 const subjects = this.getSubjects();
+
+                // CSV 항목만 삭제 (수기 추가 항목은 보존)
+                for (let i = subjects.length - 1; i >= 0; i--) {
+                    if (subjects[i]._source === 'csv') subjects.splice(i, 1);
+                }
+
+                let imported = 0;
 
                 dataRows.forEach(line => {
                     const cells = this._parseCSVLine(line, delimiter);
@@ -446,7 +523,14 @@ const SubjectManager = {
                     // 첫 셀이 숫자면 코드+이름 구조 (코드,이름,선택지,배점,총점,답...)
                     // 첫 셀이 빈칸이면 코드 없음 (빈칸,이름,선택지,배점,총점,답...)
                     // 첫 셀이 한글이면 코드 없이 이름부터 시작 (이름,선택지,배점,총점,답...)
-                    const firstCell = cells[0].trim();
+                    let firstCell = cells[0].trim();
+
+                    // 구버전 CSV 호환: 첫 열이 'CSV' 또는 '수기' 구분값이면 건너뜀
+                    if (firstCell === 'CSV' || firstCell === '수기') {
+                        cells.shift();
+                        firstCell = (cells[0] || '').trim();
+                    }
+
                     let code, name, numChoices, scoreField, totalScore, dataCells;
 
                     if (/^\d+$/.test(firstCell) || firstCell === '' || firstCell === '-') {
@@ -454,7 +538,7 @@ const SubjectManager = {
                         code = (firstCell === '-') ? '' : firstCell;
                         name = (cells[1] || '').trim();
                         numChoices = parseInt(cells[2]) || 5;
-                        scoreField = (cells[3] || '4').trim();
+                        scoreField = (cells[3] || '').trim();
                         totalScore = parseFloat(cells[4]) || 100;
                         dataCells = cells.slice(5);
                     } else {
@@ -462,7 +546,7 @@ const SubjectManager = {
                         code = '';
                         name = firstCell;
                         numChoices = parseInt(cells[1]) || 5;
-                        scoreField = (cells[2] || '4').trim();
+                        scoreField = (cells[2] || '').trim();
                         totalScore = parseFloat(cells[3]) || 100;
                         dataCells = cells.slice(4);
                     }
@@ -481,7 +565,9 @@ const SubjectManager = {
 
                     const numQ = answers.length;
                     if (numQ === 0) return;
-                    const baseScore = isCustomScore ? (numQ > 0 ? totalScore / numQ : 0) : (parseFloat(scoreField) || (numQ > 0 ? Math.round((totalScore / numQ) * 100) / 100 : 4));
+                    const baseScore = isCustomScore
+                        ? (numQ > 0 ? totalScore / numQ : 0)
+                        : (scoreField !== '' && scoreField !== '차등' ? (parseFloat(scoreField) || 0) : (numQ > 0 ? Math.round((totalScore / numQ) * 100) / 100 : 0));
 
                     const subj = {
                         code, name, numChoices, numQuestions: numQ,
@@ -489,7 +575,8 @@ const SubjectManager = {
                         scorePerQuestion: baseScore,
                         totalScore,
                         useCustomScore: isCustomScore, scoreMap,
-                        answers: answers.join(',')
+                        answers: answers.join(','),
+                        _source: 'csv',
                     };
 
                     // 중복 체크: 코드가 있으면 코드로, 없으면 이름으로
@@ -503,6 +590,10 @@ const SubjectManager = {
 
                 this.saveToStorage();
                 this.renderList();
+                // Electron: 세션 파일에 즉시 저장 (localStorage만으론 불안정)
+                if (typeof SessionManager !== 'undefined' && SessionManager.saveCurrentSession) {
+                    SessionManager.saveCurrentSession();
+                }
                 Toast.success(`CSV에서 ${imported}개 과목 불러옴`);
             } catch (err) {
                 console.error('CSV 파싱 오류:', err);
@@ -565,7 +656,9 @@ const SubjectManager = {
         const footer = document.getElementById('sm-footer');
         if (!footer) return;
 
-        const csvNotice = `<div style="font-size:11px; color:var(--text-muted); padding:6px 2px 4px; width:100%;">ℹ Excel로 편집 시 반드시 '데이터 &gt; 가져오기 &gt; 텍스트/CSV' 메뉴 사용</div>`;
+        const csvNotice = `<div style="padding:8px 12px; margin-bottom:6px; background:#fef3c7; border:2px solid #f59e0b; border-radius:6px; width:100%;">
+            <span style="font-size:13px; font-weight:700; color:#d97706;">⚠ Excel로 편집 시 반드시 '데이터 &gt; 가져오기 &gt; 텍스트/CSV' 메뉴로 열고, 인코딩을 UTF-8로 지정하세요</span>
+        </div>`;
 
         if (tab === 'subjects') {
             footer.innerHTML = `
@@ -575,14 +668,17 @@ const SubjectManager = {
                     <button class="btn btn-sm" onclick="SubjectManager.downloadCSVTemplate()">CSV 양식</button>
                     <button class="btn btn-sm" onclick="SubjectManager.exportSubjectsCSV()">현재 내용 CSV 다운로드</button>
                     <div style="flex:1;"></div>
-                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn" onclick="SubjectManager._onCloseModal()">닫기</button>
                     <button class="btn btn-primary" id="sm-save">저장</button>
                 </div>
                 ${csvNotice}
             `;
             document.getElementById('sm-add').addEventListener('click', () => this.addRow());
             document.getElementById('sm-save').addEventListener('click', () => this.save(overlay));
-            document.getElementById('sm-csv').addEventListener('change', (e) => this.importCSV(e.target.files[0]));
+            document.getElementById('sm-csv').addEventListener('change', (e) => {
+                this.importCSV(e.target.files[0]);
+                e.target.value = ''; // 같은 파일 재선택 가능하도록 초기화
+            });
         } else {
             footer.innerHTML = `
                 <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; width:100%;">
@@ -591,13 +687,16 @@ const SubjectManager = {
                     <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
                     <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
                     <div style="flex:1;"></div>
-                    <button class="btn" onclick="document.getElementById('subject-modal').remove()">닫기</button>
+                    <button class="btn" onclick="SubjectManager._onCloseModal()">닫기</button>
                     <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
                 </div>
                 ${csvNotice}
             `;
             const csvInput = document.getElementById('sm-student-csv');
-            if (csvInput) csvInput.addEventListener('change', (e) => this.importStudentCSV(e.target.files[0]));
+            if (csvInput) csvInput.addEventListener('change', (e) => {
+                this.importStudentCSV(e.target.files[0]);
+                e.target.value = ''; // 같은 파일 재선택 가능하도록 초기화
+            });
         }
         // 모달 푸터 내부에서 버튼 행 + 안내 행이 세로로 쌓이도록
         footer.style.flexDirection = 'column';
@@ -648,8 +747,9 @@ const SubjectManager = {
             lines.push(fields.join(','));
         });
 
-        const date = new Date().toISOString().slice(0, 10);
-        this._downloadFile(lines.join('\n'), `과목_현재내용_${date}.csv`);
+        const sessionName = (typeof SessionManager !== 'undefined' && SessionManager.currentExamName) || 'OMR';
+        const examDate = (typeof SessionManager !== 'undefined' && SessionManager.currentExamDate) || new Date().toISOString().slice(0, 10);
+        this._downloadFile(lines.join('\n'), `${sessionName}_과목및정답_${examDate}.csv`);
         Toast.success(`${subjects.length}개 과목 다운로드 완료`);
     },
 
@@ -688,7 +788,9 @@ const SubjectManager = {
         });
 
         const date = new Date().toISOString().slice(0, 10);
-        this._downloadFile(lines.join('\n'), `시험인원_현재내용_${date}.csv`);
+        const sessionName = (typeof SessionManager !== 'undefined' && SessionManager.currentExamName) || 'OMR';
+        const examDate = (typeof SessionManager !== 'undefined' && SessionManager.currentExamDate) || date;
+        this._downloadFile(lines.join('\n'), `${sessionName}_시험인원_${examDate}.csv`);
         Toast.success(`${students.length}명 다운로드 완료`);
     },
 
@@ -715,10 +817,11 @@ const SubjectManager = {
             '[차등배점 예시] 정답 뒤에 배점이 이어짐',
             '03 / 수학 / 5 / 차등 / 100 / 1 / 2 / ... / 5 / 8 / ... / 12',
         ];
-        // 19행(index 18)에 안내, 총 20행 보장
-        while (lines.length < 18) lines.push('');
-        lines[18] = '21행부터 입력하세요'; // 19행
-        while (lines.length < 20) lines.push('');
+        // 18행: 안내, 19행: 구분선, 20행: 헤더 → 21행부터 데이터
+        while (lines.length < 17) lines.push('');
+        lines[17] = '21행부터 입력하세요';
+        lines[18] = 'ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ';
+        lines[19] = '과목코드,과목명,선택지수,배점,총점,1번답,2번답,3번답,...';
         lines.length = 20;
         this._downloadFile(lines.join('\n'), '과목_CSV_양식.csv');
     },
@@ -732,6 +835,20 @@ const SubjectManager = {
     },
 
     // 매칭에 사용할 필드 (사용자 선택)
+    _onCloseModal() {
+        // 매칭 검증: 매칭 불필요가 아니면 최소 1개 필드 선택 필수
+        const mf = this.getMatchFields();
+        const students = this.getStudents();
+        if (students.length > 0 && !mf._noMatch && !mf.birth && !mf.examNo && !mf.phone) {
+            Toast.error('매칭 기준을 선택하세요 (생년월일/수험번호/핸드폰 중 최소 1개, 또는 매칭 불필요)');
+            return; // 닫기 차단
+        }
+        document.getElementById('subject-modal').remove();
+        if (typeof SessionManager !== 'undefined' && SessionManager._hasUnsavedChanges && SessionManager.saveCurrentSession) {
+            SessionManager.saveCurrentSession();
+        }
+    },
+
     getMatchFields() {
         if (!App.state.matchFields) App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
         return App.state.matchFields;
@@ -743,14 +860,25 @@ const SubjectManager = {
         const students = this.getStudents();
         const mf = this.getMatchFields();
 
-        // 매칭 필드 선택 UI
-        let matchHtml = `<div style="padding:6px 8px; margin-bottom:8px; background:var(--bg-input); border-radius:6px;">
-            <span style="font-size:11px; font-weight:600;">OMR 매칭 기준 (체크한 항목으로 학생 식별)</span>
-            <div style="display:flex; gap:12px; margin-top:4px;">
-                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="name" ${mf.name ? 'checked' : ''}> 이름</label>
-                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="birth" ${mf.birth ? 'checked' : ''}> 생년월일</label>
-                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="examNo" ${mf.examNo ? 'checked' : ''}> 수험번호</label>
-                <label style="font-size:11px; cursor:pointer;"><input type="checkbox" class="mf-check" data-field="phone" ${mf.phone ? 'checked' : ''}> 핸드폰</label>
+        // 매칭 필드 선택 UI — 뱃지 형태
+        const noMatch = !!mf._noMatch; // 매칭 불필요 플래그
+        const badgeStyle = (field, label, active) =>
+            `<button class="mf-badge" data-field="${field}" style="
+                padding:8px 16px; font-size:13px; font-weight:700; border-radius:6px; cursor:pointer;
+                border:2px solid ${active ? '#22c55e' : 'var(--border)'};
+                background:${active ? '#dcfce7' : 'var(--bg-input)'};
+                color:${active ? '#16a34a' : 'var(--text-muted)'};
+                transition:all 0.15s;
+            ">${active ? '✓ ' : ''}${label}</button>`;
+
+        let matchHtml = `<div style="padding:10px 12px; margin-bottom:10px; background:var(--bg-input); border-radius:8px;">
+            <div style="font-size:12px; font-weight:700; margin-bottom:8px;">OMR 매칭 기준 — 학생 식별에 사용할 항목을 선택하세요</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;" id="mf-badges">
+                ${badgeStyle('birth', '생년월일', mf.birth && !noMatch)}
+                ${badgeStyle('examNo', '수험번호', mf.examNo && !noMatch)}
+                ${badgeStyle('phone', '핸드폰', mf.phone && !noMatch)}
+                <span style="border-left:2px solid var(--border); margin:0 4px;"></span>
+                ${badgeStyle('_noMatch', '매칭 불필요', noMatch)}
             </div>
         </div>`;
 
@@ -772,9 +900,10 @@ const SubjectManager = {
             </tr></thead><tbody>`;
 
         students.forEach((st, idx) => {
-            html += `<tr style="border-bottom:1px solid var(--border-light);">
-                <td style="padding:3px 6px; text-align:center; color:var(--text-muted);">${idx + 1}</td>
-                <td><input type="text" class="st-name" value="${st.name || ''}" style="width:100%; border:none; padding:3px; font-size:12px;"></td>
+            const stColor = st._source === 'csv' ? '#dbeafe' : (st._source === 'manual' ? '#fef3c7' : '');
+            html += `<tr style="border-bottom:1px solid var(--border-light);${stColor ? ' background:' + stColor + ';' : ''}">
+                <td style="padding:3px 6px; text-align:center; color:var(--text-muted); font-size:11px;">${idx + 1}</td>
+                <td><input type="text" class="st-name" value="${st.name || ''}" style="width:100%; border:none; padding:3px; font-size:12px; background:transparent;"></td>
                 <td><input type="text" class="st-birth" value="${this.formatBirth(st.birth)}" placeholder="YY-MM-DD" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
                 <td><input type="text" class="st-examno" value="${st.examNo || ''}" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
                 <td><input type="text" class="st-phone" value="${st.phone || ''}" placeholder="01012345678" style="width:100%; border:none; padding:3px; font-size:12px; font-family:monospace;"></td>
@@ -787,17 +916,28 @@ const SubjectManager = {
         list.innerHTML = matchHtml + html;
 
         // 매칭 필드 체크박스 이벤트
-        list.querySelectorAll('.mf-check').forEach(cb => {
-            cb.addEventListener('change', () => {
+        list.querySelectorAll('.mf-badge').forEach(btn => {
+            btn.addEventListener('click', () => {
                 const mf = this.getMatchFields();
-                mf[cb.dataset.field] = cb.checked;
+                const field = btn.dataset.field;
+
+                if (field === '_noMatch') {
+                    // 매칭 불필요 토글
+                    mf._noMatch = !mf._noMatch;
+                    if (mf._noMatch) { mf.birth = false; mf.examNo = false; mf.phone = false; }
+                } else {
+                    // 개별 필드 토글
+                    mf[field] = !mf[field];
+                    mf._noMatch = false; // 개별 선택하면 매칭 불필요 해제
+                }
+                this.renderStudentList(); // 뱃지 상태 리렌더
             });
         });
     },
 
     addStudent() {
         this._saveStudentsFromDOM();
-        this.getStudents().push({ name: '', birth: '', examNo: '', phone: '' });
+        this.getStudents().push({ name: '', birth: '', examNo: '', phone: '', _source: 'manual' });
         this.renderStudentList();
     },
 
@@ -809,13 +949,15 @@ const SubjectManager = {
 
     _saveStudentsFromDOM() {
         const rows = document.querySelectorAll('#student-list tbody tr');
+        const oldStudents = App.state.students || [];
         const students = [];
-        rows.forEach(row => {
+        rows.forEach((row, i) => {
             students.push({
                 name: (row.querySelector('.st-name') || {}).value || '',
                 birth: ((row.querySelector('.st-birth') || {}).value || '').replace(/[^0-9]/g, ''),
                 examNo: (row.querySelector('.st-examno') || {}).value || '',
                 phone: (row.querySelector('.st-phone') || {}).value || '',
+                _source: (oldStudents[i] && oldStudents[i]._source) || 'manual', // 기존 소스 보존
             });
         });
         App.state.students = students;
@@ -890,10 +1032,11 @@ const SubjectManager = {
             '김철수 / 020202 / (빈칸) / 01098765432',
             '이영희 / 030303 / 20260003 / (빈칸)',
         ];
-        // 19행에 안내, 총 20행 보장
-        while (lines.length < 18) lines.push('');
-        lines[18] = '21행부터 입력하세요'; // 19행 (index 18)
-        while (lines.length < 20) lines.push('');
+        // 18행: 안내, 19행: 구분선, 20행: 헤더 → 21행부터 데이터
+        while (lines.length < 17) lines.push('');
+        lines[17] = '21행부터 입력하세요';
+        lines[18] = 'ㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡㅡ';
+        lines[19] = '이름,생년월일,수험번호,핸드폰번호';
         lines.length = 20;
         this._downloadFile(lines.join('\n'), '시험인원_CSV_양식.csv');
     },
@@ -901,7 +1044,7 @@ const SubjectManager = {
     // 시험 인원 CSV 불러오기
     importStudentCSV(file) {
         if (!file) return;
-        this._readFileWithEncoding(file, (text) => {
+        this._readFileWithEncoding(file, async (text) => {
             try {
                 const delimiter = this._detectDelimiter(text);
                 const allLines = text.split('\n').map(l => l.trim());
@@ -927,18 +1070,29 @@ const SubjectManager = {
                 if (/^이름|^생년월일|^수험번호|^핸드폰/.test(dataLines[0].split(delimiter)[0].trim())) dataLines.shift();
 
                 const students = this.getStudents();
+
+                // CSV 항목만 삭제 (수기 추가 항목 보존)
+                for (let i = students.length - 1; i >= 0; i--) {
+                    if (students[i]._source === 'csv') students.splice(i, 1);
+                }
+
                 let imported = 0;
                 dataLines.forEach(line => {
                     const cells = this._parseCSVLine(line, delimiter);
+                    if (cells.length < 1 || !cells[0].trim()) return;
+                    // 구버전 CSV 호환: 첫 열이 'CSV'/'수기' 구분값이면 건너뜀
+                    if (cells[0].trim() === 'CSV' || cells[0].trim() === '수기') cells.shift();
                     if (cells.length < 1 || !cells[0].trim()) return;
                     students.push({
                         name: (cells[0] || '').trim(),
                         birth: this._normalizeField(cells[1], 'birth'),
                         examNo: this._normalizeField(cells[2], 'examNo'),
                         phone: this._normalizeField(cells[3], 'phone'),
+                        _source: 'csv',
                     });
                     imported++;
                 });
+                if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
                 this.renderStudentList();
                 Toast.success(`CSV에서 ${imported}명 불러옴`);
             } catch (err) {

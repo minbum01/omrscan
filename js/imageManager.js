@@ -53,6 +53,7 @@ const ImageManager = {
                                 gradeResult: null,
                                 periodId: App.state.currentPeriodId || 'p1',
                             });
+                            if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
                             processFile(index + 1);
                         });
@@ -216,14 +217,12 @@ const ImageManager = {
                 hasCorrected = imgObj.results.some(res => res.rows.some(r => r._userCorrected));
             }
 
-            // 상태 태그 (파일명 앞에 붙임)
+            // 상태 태그 (파일명 앞에 붙임) — 점수는 표시하지 않음
             let tag = '';
             if (hasCorrected && imgObj._correctionConfirmed) {
                 tag = `<span class="image-tag" style="background:#166534;color:#4ade80;">확정</span>`;
-                if (imgObj.gradeResult) tag += `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
             } else if (hasCorrected) {
                 tag = `<span class="image-tag tag-corrected">교정됨</span>`;
-                if (imgObj.gradeResult) tag += `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
             } else if (hasIssue) {
                 let parts = [];
                 if (hasWarning) {
@@ -239,9 +238,6 @@ const ImageManager = {
                     parts.push(`미기입${bc}`);
                 }
                 tag = `<span class="image-tag tag-error">${parts.join('·')}</span>`;
-                if (imgObj.gradeResult) tag += `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
-            } else if (imgObj.gradeResult) {
-                tag = `<span class="image-tag tag-score">${imgObj.gradeResult.score}점</span>`;
             } else if (imgObj.results) {
                 tag = `<span class="image-tag tag-ok">분석됨</span>`;
             }
@@ -344,6 +340,7 @@ const ImageManager = {
             App.state.currentIndex--;
         }
 
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.updateList();
         App.updateStatusBar();
         Toast.info('이미지가 삭제 목록으로 이동됨');
@@ -354,8 +351,10 @@ const ImageManager = {
     applyPhonePrefix(imgObj) {
         if (!imgObj || !imgObj.results || !imgObj.rois) return;
 
-        // 원본 파일명 보존 (최초 1회)
+        // 순수 원본 파일명 (_pristineName > _originalName > name, 최초 1회 확보)
+        if (!imgObj._pristineName) imgObj._pristineName = imgObj._originalName || imgObj.name;
         if (!imgObj._originalName) imgObj._originalName = imgObj.name;
+        const baseName = imgObj._pristineName;
 
         // 각 타입별 감지값 추출
         let detectedName = '', detectedExamNo = '', detectedPhone = '';
@@ -396,14 +395,15 @@ const ImageManager = {
             if (matched && matched.name) detectedName = matched.name;
         }
 
-        // 파일명 생성: 이름_식별번호_원본파일명
+        // 파일명 생성: (이름)홍길동_(수험)12345_원본파일명 (항상 _pristineName 기준으로 재조합)
         const idPart = detectedExamNo || detectedPhone || '';
         if (!idPart && !detectedName) return; // 식별 정보 없으면 변경 안 함
 
         const parts = [];
-        if (detectedName) parts.push(detectedName);
-        if (idPart) parts.push(idPart);
-        parts.push(imgObj._originalName);
+        if (detectedName) parts.push(`(이름)${detectedName}`);
+        if (detectedExamNo) parts.push(`(수험)${detectedExamNo}`);
+        else if (detectedPhone) parts.push(`(전화)${detectedPhone}`);
+        parts.push(baseName);
         imgObj.name = parts.join('_');
     },
 

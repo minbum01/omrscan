@@ -40,15 +40,26 @@
             <button id="btn-generate" style="display:none;"></button>
             <button id="btn-answer-key" style="display:none;"></button>
 
+            <!-- 새로 만들기 드롭다운 -->
+            <div class="dropdown">
+                <button class="btn btn-sm dropdown-toggle">새로 만들기 ▾</button>
+                <div class="dropdown-menu">
+                    <button class="dropdown-item" onclick="SessionManager.showStartScreen()">🗂 시작 화면 열기</button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item" onclick="SessionManager.showStartScreen(); setTimeout(()=>SessionManager.createNewSession(),50)">+ 새 시험(세션) 만들기</button>
+                    <button class="dropdown-item" onclick="SessionManager.showStartScreen(); setTimeout(()=>SessionManager.createNewTemplate(),50)">+ 양식 만들기</button>
+                </div>
+            </div>
+
             <!-- 저장 드롭다운 -->
             <div class="dropdown">
                 <button class="btn btn-sm dropdown-toggle">저장 ▾</button>
                 <div class="dropdown-menu">
-                    <button id="btn-save-session" class="dropdown-item">세션 저장 (전체)</button>
-                    <button id="btn-save-template" class="dropdown-item">양식 저장 (ROI만)</button>
+                    <button id="btn-save-session" class="dropdown-item">💾 시험(세션) 저장</button>
+                    <button id="btn-save-session-as" class="dropdown-item" style="padding-left:28px; font-size:12px; color:var(--text-secondary);">다른이름으로 시험(세션) 저장</button>
                     <div class="dropdown-divider"></div>
-                    <button id="btn-export-csv" class="dropdown-item">CSV 다운로드</button>
-                    <button id="btn-export-excel" class="dropdown-item">Excel 다운로드</button>
+                    <button id="btn-save-template" class="dropdown-item">💾 양식 저장</button>
+                    <button id="btn-save-template-as" class="dropdown-item" style="padding-left:28px; font-size:12px; color:var(--text-secondary);">다른이름으로 양식 저장</button>
                 </div>
             </div>
 
@@ -56,7 +67,7 @@
             <div class="dropdown">
                 <button class="btn btn-sm dropdown-toggle">불러오기 ▾</button>
                 <div class="dropdown-menu">
-                    <button id="btn-load-session" class="dropdown-item">세션 불러오기</button>
+                    <button id="btn-load-session" class="dropdown-item">시험(세션) 불러오기</button>
                     <button id="btn-load-template" class="dropdown-item">양식 불러오기</button>
                 </div>
             </div>
@@ -72,6 +83,7 @@
         <span id="exam-info-name" style="font-size:14px; font-weight:700; color:var(--text);"></span>
         <span id="exam-info-sep" style="font-size:12px; color:var(--text-muted); margin:0 8px;"></span>
         <span id="exam-info-date" style="font-size:12px; color:var(--text-muted);"></span>
+        <span id="exam-info-dirty" style="display:none; margin-left:10px; padding:2px 8px; background:#f59e0b; color:#fff; border-radius:8px; font-size:10px; font-weight:700; vertical-align:middle;">저장 필요</span>
     </div>
 
     <!-- 메인 탭 전환 -->
@@ -81,7 +93,7 @@
         <button class="main-tab" id="tab-correction" onclick="switchMainTab('correction')"
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">교정 <span id="tab-correction-badge" style="display:none; margin-left:4px; padding:1px 6px; background:#f59e0b; color:#fff; border-radius:8px; font-size:10px;">0</span></button>
         <button class="main-tab" id="tab-scoring" onclick="switchMainTab('scoring')"
-            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점</button>
+            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점및결과</button>
     </div>
 
     <!-- 교시(Period) 탭 바 — 분석/채점 탭 아래, 이미지 목록 위 -->
@@ -119,27 +131,42 @@
                     <span class="kbd" style="background:rgba(255,255,255,0.2);">Enter</span>
                 </button>
                 <div class="dropdown" style="margin-left:4px;">
-                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">채점 ▾</button>
+                    <button id="btn-batch-grade" class="btn btn-sm dropdown-toggle">전체이미지 인식 ▾</button>
                     <div class="dropdown-menu">
-                        <button id="batch-item-1" class="dropdown-item" onclick="BatchProcess.run(false)">현재 교시 개별수정 후 전체채점</button>
-                        <button id="batch-item-2" class="dropdown-item" onclick="BatchProcess.run(true)">현재 교시 현재 설정으로 전체채점</button>
+                        <button id="batch-item-1" class="dropdown-item" onclick="BatchProcess.runCurrentOnly()">현재 이미지만 분석 (개별 조정 유지)</button>
+                        <button id="batch-item-2" class="dropdown-item" onclick="BatchProcess.run(true)">현재 설정을 전체 이미지에 적용해 분석</button>
                     </div>
                 </div>
             </div>
 
             <div class="image-adjust-bar" id="image-adjust-bar" style="display:none; flex-wrap:wrap; gap:4px;">
                 <!-- 진하기 영역 -->
-                <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
+                <div style="display:flex; align-items:center; gap:6px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px; position:relative;">
+                    <button id="intensity-example-trigger" type="button"
+                        onmouseenter="document.getElementById('intensity-example-popup').style.display='block'"
+                        onmouseleave="if(!window._intensityExamplePinned) document.getElementById('intensity-example-popup').style.display='none'"
+                        onclick="window._intensityExamplePinned=!window._intensityExamplePinned; this.style.background=window._intensityExamplePinned?'var(--blue-light)':''; document.getElementById('intensity-example-popup').style.display=window._intensityExamplePinned?'block':'none'"
+                        style="font-size:10px; padding:3px 6px; border:1px solid var(--border); background:#fff; border-radius:4px; cursor:pointer; font-weight:600;"
+                        title="진하기 최소 기준 예시 (클릭으로 상시 표시)">
+                        📏 예시
+                    </button>
+                    <div id="intensity-example-popup"
+                        style="display:none; position:absolute; top:calc(100% + 6px); left:0; z-index:1000;
+                               background:#fff; border:1px solid var(--border); border-radius:6px; padding:6px;
+                               box-shadow:0 4px 16px rgba(0,0,0,0.18);">
+                        <div style="font-size:10px; color:var(--text-muted); margin-bottom:4px;">최소 이 정도 진하기는 되어야 인식됩니다</div>
+                        <img src="진하기예시.png" alt="진하기 예시" style="max-height:200px; display:block;">
+                    </div>
                     <span style="font-size:11px; font-weight:600;">진하기</span>
-                    <input type="range" id="adj-intensity" min="0" max="350" value="115" step="5" style="width:80px;">
+                    <input type="range" id="adj-intensity" min="0" max="500" value="115" step="5" style="width:100px;">
                     <span id="adj-intensity-val" style="font-size:11px; min-width:30px;">115</span>%
                     <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-intensity-all" checked> 전체</label>
                 </div>
                 <!-- 회전 영역 -->
                 <div style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid var(--border-light); border-radius:6px;">
                     <span style="font-size:11px; font-weight:600;">회전</span>
-                    <button id="adj-rotate-left" class="tool-btn" style="font-size:12px;" title="왼쪽 90도">↺</button>
-                    <button id="adj-rotate-right" class="tool-btn" style="font-size:12px;" title="오른쪽 90도">↻</button>
+                    <button id="adj-rotate-left" class="tool-btn" style="font-size:14px; font-weight:700;" title="왼쪽 90도">⟲ 90°</button>
+                    <button id="adj-rotate-right" class="tool-btn" style="font-size:14px; font-weight:700;" title="오른쪽 90도">90° ⟳</button>
                     <label style="font-size:10px;cursor:pointer;"><input type="checkbox" id="adj-rotate-all" checked> 전체</label>
                 </div>
                 <!-- 미세 기울기 영역 -->
@@ -278,6 +305,7 @@
     <!-- SheetJS (xlsx 생성) -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="js/toast.js"></script>
+    <script src="js/uiDialog.js"></script>
     <script src="js/app.js"></script>
     <script src="js/omrEngine.js"></script>
     <script src="js/ui.js"></script>
@@ -285,14 +313,15 @@
     <script src="js/canvas.js"></script>
     <script src="js/grading.js"></script>
     <script src="js/batch.js"></script>
-    <script src="js/export.js"></script>
     <script src="js/shortcuts.js"></script>
     <script src="js/testGenerator.js"></script>
     <script src="js/template.js"></script>
+    <script src="js/fileBrowser.js"></script>
     <script src="js/session.js"></script>
     <script src="js/periodManager.js"></script>
     <script src="js/subjectManager.js"></script>
     <script src="js/scoring.js"></script>
+    <script src="js/export.js"></script>
     <script src="js/correction.js"></script>
 </body>
 </html>

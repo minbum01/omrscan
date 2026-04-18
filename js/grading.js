@@ -154,6 +154,7 @@ const Grading = {
         CanvasManager.render();
         App.updateStatusBar();
         UI.updateRightPanel();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         Toast.success(`정답 ${numQ}문항 저장 완료`);
         overlay.remove();
     },
@@ -200,28 +201,47 @@ const Grading = {
             return this.parseAnswerString(s.answerKey, s.numChoices || 5, s.choiceLabels);
         }
 
-        if (s.answerSource && s.answerSource.startsWith('code_')) {
-            // 과목코드 연동
-            const codeRoiIdx = parseInt(s.answerSource.split('_')[1]);
-            const codeRoi = imgObj.rois[codeRoiIdx];
-            if (!codeRoi || !codeRoi.settings || codeRoi.settings.type !== 'subject_code') return null;
+        // 과목코드 연동 — 다자리 배열(linkedCodeRoiIds) 우선, 단일(linkedCodeRoiId), 레거시(code_N) 하위호환
+        const codeIds = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : null);
+        const legacyCode = !codeIds && s.answerSource && s.answerSource.startsWith('code_');
+        if (codeIds || legacyCode) {
+            let detectedCode = '';
 
-            // 과목코드 영역에서 감지된 코드
-            const codeRes = imgObj.results ? imgObj.results[codeRoiIdx] : null;
-            if (!codeRes || !codeRes.rows) return null;
-
-            const detectedCode = codeRes.rows.map(r => {
-                if (r.markedAnswer !== null) {
-                    const labels = codeRoi.settings.choiceLabels;
-                    return labels && labels[r.markedAnswer - 1] ? labels[r.markedAnswer - 1] : `${r.markedAnswer}`;
+            if (codeIds) {
+                // 다자리: 각 코드 ROI에서 1자리씩 읽어서 합침
+                for (const id of codeIds) {
+                    const ci = imgObj.rois.findIndex(r => r._id === id);
+                    if (ci < 0) { detectedCode += '?'; continue; }
+                    const cRoi = imgObj.rois[ci];
+                    if (!cRoi || !cRoi.settings || cRoi.settings.type !== 'subject_code') { detectedCode += '?'; continue; }
+                    const cRes = imgObj.results ? imgObj.results[ci] : null;
+                    if (!cRes || !cRes.rows || cRes.rows.length === 0) { detectedCode += '?'; continue; }
+                    cRes.rows.forEach(r => {
+                        if (r.markedAnswer !== null) {
+                            const labels = cRoi.settings.choiceLabels;
+                            detectedCode += labels && labels[r.markedAnswer - 1] ? labels[r.markedAnswer - 1] : `${r.markedAnswer}`;
+                        } else { detectedCode += '?'; }
+                    });
                 }
-                return '?';
-            }).join('');
+            } else {
+                // 레거시: 단일 인덱스 기반
+                const codeRoiIdx = parseInt(s.answerSource.split('_')[1]);
+                if (codeRoiIdx < 0 || codeRoiIdx >= imgObj.rois.length) return null;
+                const codeRoi = imgObj.rois[codeRoiIdx];
+                if (!codeRoi || !codeRoi.settings || codeRoi.settings.type !== 'subject_code') return null;
+                const codeRes = imgObj.results ? imgObj.results[codeRoiIdx] : null;
+                if (!codeRes || !codeRes.rows) return null;
+                detectedCode = codeRes.rows.map(r => {
+                    if (r.markedAnswer !== null) {
+                        const labels = codeRoi.settings.choiceLabels;
+                        return labels && labels[r.markedAnswer - 1] ? labels[r.markedAnswer - 1] : `${r.markedAnswer}`;
+                    }
+                    return '?';
+                }).join('');
+            }
 
-            // 코드 목록에서 매칭 (영역의 codeList 또는 전역 subjects)
-            const codeList = (codeRoi.settings.codeList && codeRoi.settings.codeList.length > 0)
-                ? codeRoi.settings.codeList
-                : (App.state.subjects || []);
+            if (detectedCode.includes('?')) return null; // 감지 실패
+            const codeList = App.state.subjects || [];
             const matched = codeList.find(c => c.code === detectedCode);
             if (!matched || !matched.answers) return null;
             return this.parseAnswerString(matched.answers, s.numChoices || 5, s.choiceLabels);
@@ -255,7 +275,7 @@ const Grading = {
 
             // 과목관리에서 배점 정보 가져오기
             const roiName = (roi.settings.name || '').trim();
-            const subj = (typeof SubjectManager !== 'undefined' && roiName) ? SubjectManager.findByName(roiName) : null;
+            const subj = (typeof SubjectManager !== 'undefined' && roiName) ? SubjectManager.findByRoiName(roiName) : null;
             const roiScorePerQ = (subj && subj.scorePerQuestion) || scorePerQ;
             const hasCustomScore = subj && subj.useCustomScore && Array.isArray(subj.scoreMap) && subj.scoreMap.length > 0;
 
@@ -293,6 +313,7 @@ const Grading = {
                     markedAnswer: row.markedAnswer,
                     isCorrect,
                     score: qScore,
+                    maxScore: thisScore,
                     undetected: !!row.undetected
                 });
             });

@@ -50,8 +50,6 @@ const App = {
             zoomLevel: document.getElementById('zoom-level'),
             btnAnswerKey: document.getElementById('btn-answer-key'),
             btnBatchGrade: document.getElementById('btn-batch-grade'),
-            btnExportCsv: document.getElementById('btn-export-csv'),
-            btnExportExcel: document.getElementById('btn-export-excel'),
             btnGenerate: document.getElementById('btn-generate'),
             rightPanel: document.getElementById('right-panel-content'),
             rightPanelTitle: document.getElementById('right-panel-title'),
@@ -68,7 +66,6 @@ const App = {
         CanvasManager.init();
         Grading.init();
         BatchProcess.init();
-        ExportManager.init();
         Shortcuts.init();
         TestGenerator.init();
         TemplateManager.init();

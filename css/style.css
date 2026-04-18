@@ -1637,7 +1637,7 @@ body {
 /* ---- 토스트 알림 ---- */
 .toast-container {
     position: fixed;
-    top: 68px;
+    bottom: 40px;
     right: 16px;
     z-index: 100;
     display: flex;
@@ -1666,6 +1666,10 @@ body {
 @keyframes toast-in {
     from { opacity: 0; transform: translateX(20px); }
     to { opacity: 1; transform: translateX(0); }
+}
+@keyframes toast-guide-in {
+    from { opacity: 0; transform: translateY(-10px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ---- 모달 ---- */
@@ -2019,4 +2023,62 @@ body {
     border-color: var(--blue);
     color: #fff;
     background: var(--blue);
+}
+
+
+/* FileBrowser hover 효과 */
+.fb-row:hover {
+    background: #f0fdf4 !important;
+    border-color: #86efac !important;
+}
+.fb-row[data-type="folder"]:hover {
+    background: #f7fee7 !important;
+    border-color: #bef264 !important;
+}
+.fb-row .btn:hover {
+    background: #22c55e !important;
+    color: #fff !important;
+    border-color: #22c55e !important;
+}
+.fb-row .roi-delete-btn:hover {
+    background: #ef4444 !important;
+    color: #fff !important;
+}
+
+/* 전역 버튼 hover 효과 — 연두색 계열 */
+.btn:hover {
+    background: #22c55e !important;
+    color: #fff !important;
+    border-color: #22c55e !important;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-primary:hover {
+    background: #16a34a !important;
+    border-color: #16a34a !important;
+}
+.btn-danger:hover {
+    background: #ef4444 !important;
+    border-color: #ef4444 !important;
+    color: #fff !important;
+}
+.tool-btn:hover {
+    background: #dcfce7 !important;
+    color: #16a34a !important;
+    border-color: #86efac !important;
+}
+.dropdown-item:hover {
+    background: #f0fdf4 !important;
+    color: #16a34a !important;
+}
+.roi-delete-btn:hover {
+    background: #ef4444 !important;
+    color: #fff !important;
+}
+.main-tab:hover {
+    background: #dcfce7 !important;
+    color: #16a34a !important;
+}
+.image-list-item:hover {
+    background: #f0fdf4 !important;
+    border-color: #86efac !important;
 }

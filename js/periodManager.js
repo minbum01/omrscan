@@ -192,7 +192,7 @@ const PeriodManager = {
     // ─────────────────────────────────────────
     // 교시 삭제
     // ─────────────────────────────────────────
-    deletePeriod(periodId) {
+    async deletePeriod(periodId) {
         const periods = App.state.periods || [];
         if (periods.length <= 1) {
             Toast.error('교시가 1개 이하일 때는 삭제할 수 없습니다.');
@@ -207,7 +207,8 @@ const PeriodManager = {
             ? `"${p.name}"을 삭제하시겠습니까?\n\n이미지 ${imgCount}장은 삭제 목록으로 이동되어 채점에서 제외됩니다.`
             : `"${p.name}"을 삭제하시겠습니까?`;
 
-        if (!confirm(msg)) return;
+        const ok = await UIDialog.confirm(msg, { danger: true, okLabel: '삭제' });
+        if (!ok) return;
 
         // 이미지 → 미할당 처리 (periodId = null, deletedImages로 이동)
         if (p.images && p.images.length > 0) {

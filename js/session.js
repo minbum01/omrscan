@@ -41,21 +41,115 @@ const SessionManager = {
     init() {
         // 기존 버튼 이벤트 (있으면)
         const btnSave = document.getElementById('btn-save-session');
+        const btnSaveAs = document.getElementById('btn-save-session-as');
         const btnLoad = document.getElementById('btn-load-session');
         if (btnSave) btnSave.addEventListener('click', () => this.saveCurrentSession());
-        if (btnLoad) btnLoad.addEventListener('click', () => this.showStartScreen());
+        if (btnSaveAs) btnSaveAs.addEventListener('click', () => this.saveCurrentSessionAs());
+        if (btnLoad) btnLoad.addEventListener('click', () => this.openLoadBrowser());
+
+        // 양식 다른이름 저장
+        const btnTplAs = document.getElementById('btn-save-template-as');
+        if (btnTplAs) btnTplAs.addEventListener('click', () => {
+            if (typeof TemplateManager !== 'undefined') TemplateManager.saveAs();
+        });
+
+        // Electron: 창 닫기 전 저장 확인 리스너
+        if (this.isElectron && window.electronAPI.onBeforeClose) {
+            window.electronAPI.onBeforeClose(async () => {
+                const canClose = await this.checkUnsavedBeforeClose();
+                if (canClose) {
+                    window.electronAPI.confirmClose();
+                } else {
+                    window.electronAPI.cancelClose();
+                }
+            });
+        }
+
+        // 웹: 브라우저 탭 닫기 전 경고
+        if (!this.isElectron) {
+            window.addEventListener('beforeunload', (e) => {
+                if (this._hasUnsavedChanges) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
+        }
+
+        // Electron 모드: 웹 폴백용 localStorage 세션 키 정리 (중복/혼동 방지)
+        if (this.isElectron) {
+            try {
+                const keys = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && (k.startsWith(this.STORAGE_PREFIX) || k === this.LIST_KEY || k === this.CURRENT_KEY)) {
+                        keys.push(k);
+                    }
+                }
+                keys.forEach(k => localStorage.removeItem(k));
+            } catch (_) {}
+        }
 
         // 프로그램 시작 시 세션 선택 화면
         this.showStartScreen();
     },
 
-    markDirty() { this._hasUnsavedChanges = true; },
+    // Electron: FileBrowser로 시험(세션) 불러오기 · fromStart=true면 뒤로가기 활성화
+    openLoadBrowser(fromStart) {
+        if (this.isElectron && typeof FileBrowser !== 'undefined') {
+            FileBrowser.open({
+                kind: 'session',
+                title: '시험(세션) 불러오기',
+                onPick: (relPath) => this.loadSession(relPath),
+                onBack: fromStart ? () => this.showStartScreen() : null,
+            });
+        } else {
+            this.showStartScreen();
+        }
+    },
+
+    // Electron: 양식 불러오기 (편집 모드 — 참조 이미지까지 복원)
+    openLoadTemplateBrowser(fromStart) {
+        if (!(this.isElectron && typeof FileBrowser !== 'undefined')) {
+            this.showStartScreen();
+            return;
+        }
+        FileBrowser.open({
+            kind: 'template',
+            title: '양식 불러오기 (수정 모드)',
+            onPick: async (relPath) => {
+                const res = await window.electronAPI.loadTemplate(relPath);
+                if (!res.success) { Toast.error('불러오기 실패: ' + (res.error || '')); return; }
+                if (typeof TemplateManager !== 'undefined') {
+                    TemplateManager._applyTemplateForEdit(res.data, relPath);
+                }
+            },
+            onBack: fromStart ? () => this.showStartScreen() : null,
+        });
+    },
+
+    markDirty() {
+        this._hasUnsavedChanges = true;
+        this._updateHeader();
+    },
+
+    // 프로그램 종료 전 저장 확인 — true면 종료 진행, false면 취소
+    async checkUnsavedBeforeClose() {
+        if (!this._hasUnsavedChanges) return true;
+        const choice = await UIDialog.confirmSave('저장하지 않은 변경사항이 있습니다.\n프로그램을 종료하기 전에 저장하시겠습니까?');
+        if (choice === 'cancel') return false;
+        if (choice === 'save') {
+            await this.saveCurrentSession();
+        }
+        return true;
+    },
 
     // ==========================================
     // 시작 화면
     // ==========================================
     async showStartScreen() {
-        const sessions = await this._getSessionList();
+        const allSessions = await this._getSessionList();
+        // 양식은 제외 (양식은 양식끼리만 관리)
+        const sessions = allSessions.filter(s => !s.isTemplateMode && !(s.name && s.name.startsWith('[양식]')));
 
         const overlay = document.createElement('div');
         overlay.id = 'session-start-screen';
@@ -65,14 +159,25 @@ const SessionManager = {
             <div class="modal" style="width:480px;">
                 <div class="modal-header">
                     <h2>OMR 채점 시스템</h2>
-                    <p>시험 세션을 선택하거나 새로 만드세요.</p>
+                    <p>시험(세션)을 선택하거나 새로 만드세요.</p>
                 </div>
                 <div class="modal-body" style="max-height:50vh; overflow-y:auto;">
-                    <div style="margin-bottom:12px;">
-                        <button class="btn btn-primary" style="width:100%; padding:10px; font-size:14px;"
-                            onclick="SessionManager.createNewSession()">+ 새 세션 만들기</button>
+                    <div id="session-action-buttons" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
+                        <button class="btn btn-primary" style="padding:10px; font-size:14px;"
+                            onclick="SessionManager.createNewSession()">+ 새 시험(세션) 만들기</button>
+                        <button class="btn btn-primary" style="padding:10px; font-size:14px;"
+                            onclick="SessionManager.createNewTemplate()">+ 양식 만들기</button>
+                        <button class="btn" style="padding:9px; font-size:13px;"
+                            onclick="SessionManager._closeStartScreen(); SessionManager.openLoadBrowser(true);">
+                            📘 시험(세션) 불러오기
+                        </button>
+                        <button class="btn" style="padding:9px; font-size:13px;"
+                            onclick="SessionManager._closeStartScreen(); SessionManager.openLoadTemplateBrowser(true);">
+                            📄 양식 불러오기
+                        </button>
                     </div>
-                    ${sessions.length > 0 ? sessions.map(s => `
+                    ${sessions.length > 0 ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">최근 세션</div>` : ''}
+                    ${sessions.length > 0 ? sessions.slice(0, 3).map(s => `
                         <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:4px; cursor:pointer;"
                             onclick="SessionManager.loadSession('${s.name.replace(/'/g, "\\'")}')">
                             <div style="flex:1;">
@@ -94,23 +199,134 @@ const SessionManager = {
     },
 
     // ==========================================
-    // 세션 생성
+    // 시험(세션) 생성
     // ==========================================
-    createNewSession() {
-        // Electron에서 prompt() 안 되므로 커스텀 입력
-        const startScreen = document.getElementById('session-start-screen');
-        const modalBody = startScreen ? startScreen.querySelector('.modal-body') : null;
-        if (!modalBody) return;
+    // 시작 화면의 액션 버튼 행을 입력 영역으로 교체 (취소 시 복원)
+    _replaceActionButtons(inputHtml, onEnter) {
+        const row = document.getElementById('session-action-buttons');
+        if (!row) return null;
+        const originalHtml = row.innerHTML;
+        const originalStyle = row.getAttribute('style') || '';
+        row.setAttribute('data-original-html', originalHtml);
+        row.setAttribute('data-original-style', originalStyle);
+        row.style.cssText = 'padding:12px; border:2px solid var(--blue); border-radius:8px; margin-bottom:12px; background:var(--blue-light);';
+        row.innerHTML = inputHtml;
 
-        // 입력 UI 삽입
-        const existing = document.getElementById('new-session-input-area');
-        if (existing) { existing.querySelector('input').focus(); return; }
+        const firstInput = row.querySelector('input[type="text"]');
+        if (firstInput) {
+            firstInput.focus();
+            firstInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && typeof onEnter === 'function') onEnter();
+                if (e.key === 'Escape') SessionManager._restoreActionButtons();
+            });
+        }
+        return row;
+    },
+
+    _restoreActionButtons() {
+        const row = document.getElementById('session-action-buttons');
+        if (!row) return;
+        const html = row.getAttribute('data-original-html');
+        const style = row.getAttribute('data-original-style') || '';
+        if (html !== null) {
+            row.innerHTML = html;
+            row.setAttribute('style', style);
+            row.removeAttribute('data-original-html');
+            row.removeAttribute('data-original-style');
+        }
+    },
+
+    async createNewSession() {
+        // 저장하지 않은 변경사항 확인
+        if (this._hasUnsavedChanges) {
+            const choice = await UIDialog.confirmSave('저장하지 않은 변경사항이 있습니다.\n새 세션을 만들기 전에 현재 세션을 저장하시겠습니까?');
+            if (choice === 'cancel') return;
+            if (choice === 'save') {
+                await this.saveCurrentSession();
+            }
+        }
 
         const today = this._todayStr();
-        const div = document.createElement('div');
-        div.id = 'new-session-input-area';
-        div.style.cssText = 'padding:12px; border:2px solid var(--blue); border-radius:8px; margin-bottom:12px; background:var(--blue-light);';
-        div.innerHTML = `
+
+        // Electron: FileBrowser 저장 모드로 경로 선택 + 이름 입력 동시 처리
+        if (this.isElectron && typeof FileBrowser !== 'undefined') {
+            this._closeStartScreen();
+            const nameInputHtml = `
+                <div style="margin:12px 16px; padding:14px 16px; display:flex; gap:8px; align-items:flex-end; background:var(--blue-light); border:2px solid var(--blue); border-radius:8px;">
+                    <div style="flex:1;">
+                        <div style="font-size:10px; font-weight:700; color:var(--text-muted); margin-bottom:3px;">세션명</div>
+                        <input type="text" id="fb-session-name" placeholder="예: 2026년 1회 모의고사"
+                            style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <div style="font-size:10px; font-weight:700; color:var(--text-muted); margin-bottom:3px;">시험일자</div>
+                        <input type="date" id="fb-session-date" value="${today}"
+                            style="padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
+                    </div>
+                    <div>
+                        <div style="font-size:10px; font-weight:700; color:var(--text-muted); margin-bottom:3px;">생성일자</div>
+                        <input type="date" value="${today}" disabled
+                            style="padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; background:var(--bg-input); color:var(--text-muted);">
+                    </div>
+                    <div style="align-self:flex-end;">
+                        <button class="btn btn-primary" onclick="FileBrowser._onSaveClick()" style="padding:7px 16px; font-size:14px; font-weight:700;">저장</button>
+                    </div>
+                </div>`;
+            FileBrowser.openSave({
+                kind: 'session',
+                title: '새 시험(세션) 만들기 — 저장 위치 선택',
+                defaultName: '',
+                keepOpenAfterSave: true, // 저장 후 닫지 않음
+                onSave: async (relPath) => {
+                    const nameEl = document.getElementById('fb-session-name');
+                    const dateEl = document.getElementById('fb-session-date');
+                    const examName = (nameEl && nameEl.value.trim()) || relPath.split('/').pop().replace(/\.json$/i, '');
+                    const examDate = (dateEl && dateEl.value) || today;
+                    this._doCreateSession(examName, examDate, relPath);
+
+                    // 파란 입력칸 → 생성 완료 + 시험관리 유도로 교체
+                    const extraTop = document.querySelector('#fb-modal .fb-extra-top');
+                    if (extraTop) {
+                        extraTop.innerHTML = `
+                            <div style="margin:12px 16px; padding:14px 16px; background:#f0fdf4; border:2px solid #22c55e; border-radius:8px; display:flex; align-items:center; gap:12px;">
+                                <span style="font-size:24px;">✅</span>
+                                <div style="flex:1;">
+                                    <div style="font-size:14px; font-weight:700; color:#16a34a;">세션 "${examName}" 생성 완료</div>
+                                    <div style="font-size:11px; color:var(--text-muted);">시험관리에서 과목/정답/시험인원을 설정하세요.</div>
+                                </div>
+                                <button class="btn btn-primary" style="padding:8px 16px; font-size:13px; font-weight:700;"
+                                    onclick="FileBrowser.close(); setTimeout(()=>{ if(typeof SubjectManager!=='undefined') SubjectManager.openModal(); }, 200);">
+                                    📋 시험관리 열기
+                                </button>
+                                <button class="btn btn-sm" style="padding:8px 12px; font-size:12px;"
+                                    onclick="FileBrowser.close();">
+                                    나중에 하기
+                                </button>
+                            </div>
+                        `;
+                    }
+                    // 폴더 목록 새로고침 (방금 만든 세션 표시)
+                    if (typeof FileBrowser !== 'undefined' && FileBrowser._state) {
+                        FileBrowser._state._tree = null;
+                        FileBrowser._loadTree().then(() => {
+                            const node = FileBrowser._getNodeAt(FileBrowser._state._tree, FileBrowser._state.currentPath);
+                            FileBrowser._renderList(FileBrowser._sortItems((node && node.children) || []));
+                        });
+                    }
+                },
+                onBack: () => this.showStartScreen(),
+                backLabel: '← 시작 화면',
+                extraTopHtml: nameInputHtml,
+            });
+            setTimeout(() => {
+                const nameInput = document.getElementById('fb-session-name');
+                if (nameInput) nameInput.focus();
+            }, 100);
+            return;
+        }
+
+        // 웹 폴백: 기존 인라인 입력
+        const html = `
             <div style="font-size:12px; font-weight:600; margin-bottom:6px;">시험 이름 · 시험 일자 입력</div>
             <div style="display:flex; gap:6px; align-items:center;">
                 <input type="text" id="new-session-name" placeholder="예: 2026년 1회 모의고사"
@@ -118,16 +334,128 @@ const SessionManager = {
                 <input type="date" id="new-session-date" value="${today}"
                     style="padding:8px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
                 <button class="btn btn-primary btn-sm" onclick="SessionManager._confirmNewSession()">생성</button>
-                <button class="btn btn-sm" onclick="document.getElementById('new-session-input-area').remove()">취소</button>
+                <button class="btn btn-sm" onclick="SessionManager._restoreActionButtons()">취소</button>
             </div>
         `;
-        modalBody.insertBefore(div, modalBody.firstChild.nextSibling);
+        this._replaceActionButtons(html, () => SessionManager._confirmNewSession());
+    },
 
-        const input = document.getElementById('new-session-name');
-        input.focus();
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') SessionManager._confirmNewSession();
-            if (e.key === 'Escape') div.remove();
+    createNewTemplate() {
+        // Electron: FileBrowser 저장 모드로 경로 선택 + 이름 입력 동시 처리
+        if (this.isElectron && typeof FileBrowser !== 'undefined') {
+            this._closeStartScreen();
+            const nameInputHtml = `
+                <div style="margin:12px 16px; padding:14px 16px; display:flex; gap:8px; align-items:flex-end; background:var(--blue-light); border:2px solid var(--blue); border-radius:8px;">
+                    <div style="flex:1;">
+                        <div style="font-size:10px; font-weight:700; color:var(--text-muted); margin-bottom:3px;">양식명</div>
+                        <input type="text" id="fb-template-name" placeholder="예: 20문항 5지선다"
+                            style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; box-sizing:border-box;">
+                    </div>
+                    <div style="align-self:flex-end;">
+                        <button class="btn btn-primary" onclick="FileBrowser._onSaveClick()" style="padding:7px 16px; font-size:14px; font-weight:700;">저장</button>
+                    </div>
+                </div>`;
+            FileBrowser.openSave({
+                kind: 'template',
+                title: '양식 만들기 — 저장 위치 선택',
+                defaultName: '',
+                keepOpenAfterSave: true,
+                onSave: async (relPath) => {
+                    const nameEl = document.getElementById('fb-template-name');
+                    const tplName = (nameEl && nameEl.value.trim()) || relPath.split('/').pop().replace(/\.json$/i, '');
+                    if (typeof TemplateManager !== 'undefined') TemplateManager._lastSavePath = relPath;
+                    this._doCreateTemplate(tplName);
+
+                    // 입력칸 → 생성 완료 메시지로 교체
+                    const extraTop = document.querySelector('#fb-modal .fb-extra-top');
+                    if (extraTop) {
+                        extraTop.innerHTML = `
+                            <div style="margin:12px 16px; padding:14px 16px; background:#f0fdf4; border:2px solid #22c55e; border-radius:8px; display:flex; align-items:center; gap:12px;">
+                                <span style="font-size:24px;">✅</span>
+                                <div style="flex:1;">
+                                    <div style="font-size:14px; font-weight:700; color:#16a34a;">양식 "${tplName}" 생성 완료</div>
+                                    <div style="font-size:11px; color:var(--text-muted);">이미지 업로드 후 영역을 설정하고 "양식 저장"을 누르세요.</div>
+                                </div>
+                                <button class="btn btn-primary" style="padding:8px 16px; font-size:13px; font-weight:700;"
+                                    onclick="FileBrowser.close();">
+                                    시작하기
+                                </button>
+                            </div>
+                        `;
+                    }
+                    // 목록 새로고침
+                    if (typeof FileBrowser !== 'undefined' && FileBrowser._state) {
+                        FileBrowser._state._tree = null;
+                        FileBrowser._loadTree().then(() => {
+                            const node = FileBrowser._getNodeAt(FileBrowser._state._tree, FileBrowser._state.currentPath);
+                            FileBrowser._renderList(FileBrowser._sortItems((node && node.children) || []));
+                        });
+                    }
+                },
+                onBack: () => this.showStartScreen(),
+                backLabel: '← 시작 화면',
+                extraTopHtml: nameInputHtml,
+            });
+            setTimeout(() => {
+                const nameInput = document.getElementById('fb-template-name');
+                if (nameInput) nameInput.focus();
+            }, 100);
+            return;
+        }
+
+        // 웹 폴백: 기존 인라인 입력
+        const html = `
+            <div style="font-size:12px; font-weight:600; margin-bottom:6px;">양식 이름 입력</div>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input type="text" id="new-template-name" placeholder="예: 20문항 5지선다"
+                    style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px; font-size:14px;">
+                <button class="btn btn-primary btn-sm" onclick="SessionManager._confirmNewTemplate()">생성</button>
+                <button class="btn btn-sm" onclick="SessionManager._restoreActionButtons()">취소</button>
+            </div>
+        `;
+        this._replaceActionButtons(html, () => SessionManager._confirmNewTemplate());
+    },
+
+    _confirmNewTemplate() {
+        const input = document.getElementById('new-template-name');
+        if (!input) return;
+        const tplName = input.value.trim();
+        if (!tplName) { Toast.error('양식 이름을 입력하세요'); input.focus(); return; }
+        this._closeStartScreen();
+        this._doCreateTemplate(tplName);
+    },
+
+    _doCreateTemplate(tplName) {
+        if (!tplName) { Toast.error('양식 이름이 비어있습니다'); return; }
+        const today = this._todayStr();
+        const name = `[양식]${tplName}_${today}`;
+
+        this.currentSessionName = name;
+        this.currentExamName = `[양식] ${tplName}`;
+        this.currentExamDate = today;
+        this.isTemplateMode = true;
+        this._hasUnsavedChanges = false;
+
+        App.state.subjects = [];
+        App.state.students = [];
+        App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
+        App.state.images = [];
+        App.state.deletedImages = [];
+        App.state.currentIndex = -1;
+        App.state.answerKey = null;
+
+        if (typeof App._initPeriods === 'function') App._initPeriods();
+        else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
+
+        this._updateHeader();
+        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof UI !== 'undefined') UI.updateRightPanel();
+
+        // 즉시 빈 세션 파일 저장
+        this.saveCurrentSession().then(() => {
+            Toast.success(`양식 "${tplName}" 생성 및 저장됨`);
+        }).catch(() => {
+            Toast.success(`양식 "${tplName}" 생성됨`);
         });
     },
 
@@ -138,16 +466,21 @@ const SessionManager = {
         const examName = input.value.trim();
         const examDate = (dateInput && dateInput.value) || this._todayStr();
         if (!examName) { Toast.error('시험 이름을 입력하세요'); input.focus(); return; }
-
-        const name = `${examName}_${examDate}`;
-
         this._closeStartScreen();
+        this._doCreateSession(examName, examDate);
+    },
+
+    _doCreateSession(examName, examDate, relPath) {
+        if (!examName) { Toast.error('시험 이름이 비어있습니다'); return; }
+        if (!examDate) examDate = this._todayStr();
+        const name = relPath || `${examName}_${examDate}`;
+
         this.currentSessionName = name;
         this.currentExamName = examName;
         this.currentExamDate = examDate;
+        this.isTemplateMode = false;
         this._hasUnsavedChanges = false;
 
-        // 상태 초기화
         App.state.subjects = [];
         App.state.students = [];
         App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
@@ -156,7 +489,6 @@ const SessionManager = {
         App.state.currentIndex = -1;
         App.state.answerKey = null;
 
-        // 교시 초기화 — 반드시 App.state.images = [] 직후에 호출
         if (typeof App._initPeriods === 'function') App._initPeriods();
         else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
 
@@ -171,7 +503,13 @@ const SessionManager = {
         this._updateHeader();
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
         if (typeof UI !== 'undefined') UI.updateRightPanel();
-        Toast.success(`세션 "${name}" 생성됨`);
+
+        // 즉시 빈 세션 파일 저장 (폴더 안에 실제 파일 생성)
+        this.saveCurrentSession().then(() => {
+            Toast.success(`세션 "${examName}" 생성 및 저장됨`);
+        }).catch(() => {
+            Toast.success(`세션 "${examName}" 생성됨`);
+        });
     },
 
     // ==========================================
@@ -179,7 +517,11 @@ const SessionManager = {
     // ==========================================
     async loadSession(name) {
         if (this._hasUnsavedChanges) {
-            if (!confirm('저장하지 않은 변경사항이 있습니다.\n세션을 전환하시겠습니까?')) return;
+            const choice = await UIDialog.confirmSave('저장하지 않은 변경사항이 있습니다.\n다른 세션을 불러오기 전에 현재 세션을 저장하시겠습니까?');
+            if (choice === 'cancel') return;
+            if (choice === 'save') {
+                await this.saveCurrentSession();
+            }
         }
         this._closeStartScreen();
 
@@ -223,10 +565,14 @@ const SessionManager = {
             if (typeof App._initPeriods === 'function') App._initPeriods(data.periods || null);
             else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
 
+            // 마지막 사용 교시 복원
+            if (data.currentPeriodId) App.state.currentPeriodId = data.currentPeriodId;
+
             this.currentSessionName = name;
             // 시험 이름/일자 복원 (없으면 세션 키에서 파싱 시도)
             this.currentExamName = data.examName || this._parseExamName(name);
             this.currentExamDate = data.examDate || this._parseExamDate(name);
+            this.isTemplateMode = !!(data.isTemplateMode || (name && name.startsWith('[양식]')));
             this._hasUnsavedChanges = false;
             this._updateHeader();
 
@@ -262,8 +608,14 @@ const SessionManager = {
                             imgElement:    img,
                             thumb,
                             periodId,
+                            intensity: savedResult && savedResult.intensity != null ? savedResult.intensity : undefined,
                             rois: savedResult
-                                ? savedResult.rois.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings ? { ...r.settings } : null }))
+                                ? savedResult.rois.map(r => ({
+                                    x: r.x, y: r.y, w: r.w, h: r.h,
+                                    _id: r._id || ('roi_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7)),
+                                    settings: r.settings ? { ...r.settings } : null,
+                                    blobPattern: r.blobPattern || null,
+                                }))
                                 : [],
                             results:     savedResult && savedResult.results ? savedResult.results : null,
                             gradeResult: savedResult ? savedResult.gradeResult : null,
@@ -328,8 +680,27 @@ const SessionManager = {
     },
 
     // ==========================================
-    // 세션 저장
+    // 시험(세션) 저장
     // ==========================================
+    // 다른이름으로 시험(세션) 저장 — FileBrowser로 경로 선택
+    saveCurrentSessionAs() {
+        if (this.isElectron && typeof FileBrowser !== 'undefined') {
+            FileBrowser.openSave({
+                kind: 'session',
+                title: '다른이름으로 시험(세션) 저장',
+                defaultName: this.currentSessionName || 'session',
+                onSave: async (relPath) => {
+                    const prevName = this.currentSessionName;
+                    this.currentSessionName = relPath;
+                    await this.saveCurrentSession();
+                    Toast.success(`시험(세션) 저장됨: ${relPath}`);
+                },
+            });
+        } else {
+            this.saveCurrentSession(); // 웹 폴백: 일반 저장
+        }
+    },
+
     async saveCurrentSession() {
         if (!this.currentSessionName) {
             Toast.error('세션을 먼저 생성하세요');
@@ -379,10 +750,10 @@ const SessionManager = {
             const r = rowByRef.get(`${periodId}:${localIdx}`);
             if (!r || r._noOmr) return periodPrefix + pristine;
             const parts = [];
-            if (r.name)     parts.push(sanitize(r.name));
-            if (r.phone)    parts.push(sanitize(r.phone));
-            if (r.examNo)   parts.push(sanitize(r.examNo));
-            if (r.birthday) parts.push(sanitize(r.birthday));
+            if (r.name)     parts.push(`(이름)${sanitize(r.name)}`);
+            if (r.examNo)   parts.push(`(수험)${sanitize(r.examNo)}`);
+            if (r.phone)    parts.push(`(전화)${sanitize(r.phone)}`);
+            if (r.birthday) parts.push(`(생년)${sanitize(r.birthday)}`);
             const prefix = parts.filter(Boolean).join('_');
             return periodPrefix + (prefix ? `${prefix}_${pristine}` : pristine);
         };
@@ -392,8 +763,14 @@ const SessionManager = {
             filename:        overrideFilename || getPristine(img),
             pristineFilename: getPristine(img),
             periodId:        periodId || img.periodId || 'p1',  // 교시 분배용
+            intensity:       img.intensity != null ? img.intensity : (typeof CanvasManager !== 'undefined' ? CanvasManager.intensity : 100),
             _correctionConfirmed: img._correctionConfirmed || false,
-            rois: (img.rois || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, settings: r.settings })),
+            rois: (img.rois || []).map(r => ({
+                x: r.x, y: r.y, w: r.w, h: r.h,
+                _id: r._id || null,
+                settings: r.settings,
+                blobPattern: r.blobPattern || null,
+            })),
             gradeResult: img.gradeResult || null,
             results: (img.results || []).map(res => ({
                 roiIndex:     res.roiIndex,
@@ -405,13 +782,22 @@ const SessionManager = {
                     markedIndices:  row.markedIndices,
                     multiMarked:    row.multiMarked,
                     numChoices:     row.numChoices,
-                    corrected:      row.corrected      || false,
-                    _userCorrected: row._userCorrected || false,
-                    undetected:     row.undetected     || false,
+                    corrected:           row.corrected           || false,
+                    _userCorrected:      row._userCorrected      || false,
+                    _xvAutoCorrected:    row._xvAutoCorrected    || false,
+                    _correctionInitial:  row._correctionInitial  || undefined,
+                    _multiGap:           row._multiGap           || undefined,
+                    _multiFormula:       row._multiFormula       || undefined,
+                    _multiAllScores:     row._multiAllScores     || undefined,
+                    undetected:          row.undetected          || false,
                     // 오버레이 렌더링용 blob 위치 저장
                     blobs: (row.blobs || []).map(b => ({
-                        cx: b.cx, cy: b.cy, w: b.w, h: b.h,
+                        x: b.x, y: b.y, cx: b.cx, cy: b.cy, w: b.w, h: b.h,
+                        r: b.r || 0,
                         isMarked: b.isMarked || false,
+                        centerFillRatio: b.centerFillRatio || 0,
+                        erodedFill: b.erodedFill || 0,
+                        erodedQuadrants: b.erodedQuadrants || null,
                     })),
                 })),
             })),
@@ -439,6 +825,7 @@ const SessionManager = {
             sessionName: name,
             examName:    this.currentExamName || null,
             examDate:    this.currentExamDate || null,
+            isTemplateMode: !!this.isTemplateMode,
             version: 1,
             savedAt: new Date().toISOString(),
             subjects:    App.state.subjects  || [],
@@ -495,7 +882,7 @@ const SessionManager = {
             this._updateHeader();
             Toast.success(`세션 "${name}" 저장 완료`);
         } catch (e) {
-            Toast.error('세션 저장 실패: ' + e.message);
+            Toast.error('시험(세션) 저장 실패: ' + e.message);
         }
     },
 
@@ -503,7 +890,8 @@ const SessionManager = {
     // 세션 삭제 (소프트 — 목록에서만 숨김, 데이터 보존)
     // ==========================================
     async deleteSession(name) {
-        if (!confirm(`"${name}" 세션을 삭제하시겠습니까?`)) return;
+        const ok = await UIDialog.confirm(`"${name}" 세션을 삭제하시겠습니까?`, { danger: true, okLabel: '삭제' });
+        if (!ok) return;
 
         if (this.isElectron) {
             await window.electronAPI.deleteSession(name);
@@ -561,14 +949,16 @@ const SessionManager = {
         const nameEl = document.getElementById('exam-info-name');
         const sepEl = document.getElementById('exam-info-sep');
         const dateEl = document.getElementById('exam-info-date');
+        const dirtyEl = document.getElementById('exam-info-dirty');
         if (bar && nameEl && dateEl) {
             if (this.currentExamName || this.currentSessionName) {
                 const displayName = this.currentExamName || this.currentSessionName;
                 const displayDate = this.currentExamDate || '';
-                nameEl.textContent = displayName + (this._hasUnsavedChanges ? ' *' : '');
+                nameEl.textContent = displayName;
                 dateEl.textContent = displayDate;
                 sepEl.textContent = displayDate ? '·' : '';
                 bar.style.display = '';
+                if (dirtyEl) dirtyEl.style.display = this._hasUnsavedChanges ? 'inline' : 'none';
             } else {
                 bar.style.display = 'none';
             }
@@ -583,13 +973,13 @@ const SessionManager = {
     },
 
     // 시험 정보 편집 (헤더 클릭 시 호출)
-    editExamInfo() {
+    async editExamInfo() {
         if (!this.currentSessionName) return;
         const curName = this.currentExamName || this.currentSessionName;
         const curDate = this.currentExamDate || this._todayStr();
-        const newName = prompt('시험 이름', curName);
+        const newName = await UIDialog.prompt('시험 이름', curName);
         if (newName === null) return;
-        const newDate = prompt('시험 일자 (YYYY-MM-DD)', curDate);
+        const newDate = await UIDialog.prompt('시험 일자 (YYYY-MM-DD)', curDate);
         if (newDate === null) return;
         const trimmedName = newName.trim();
         if (!trimmedName) { Toast.error('시험 이름을 입력하세요'); return; }

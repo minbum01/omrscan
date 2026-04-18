@@ -1,13 +1,15 @@
 // ============================================
-// correction.js - 교정 탭 (4칼럼)
-// 1,2칼럼: null (수정중 / 이력)
-// 3,4칼럼: 1.5배 자동교정 (수정중 / 이력)
+// correction.js - 교정 탭 (6칼럼)
+// 1,2: null 수정중/이력
+// 3,4: 1.5배 수정중/이력
+// 5,6: 중복의심/이력
 // ============================================
 
 const Correction = {
     collect() {
         const nullPending = [], nullHistory = [];
         const autoPending = [], autoHistory = [];
+        const multiPending = [], multiHistory = [];
 
         (App.state.images || []).forEach((img, imgIdx) => {
             if (!img.results) return;
@@ -16,9 +18,9 @@ const Correction = {
                 if (!roi || !roi.settings) return;
 
                 res.rows.forEach(row => {
-                    // 최초 상태 기록 (한 번만) — 교정 이력 추적용
                     if (row._correctionInitial === undefined) {
-                        if (row.markedAnswer === null) row._correctionInitial = 'null';
+                        if (row.multiMarked) row._correctionInitial = 'multi';
+                        else if (row.markedAnswer === null) row._correctionInitial = 'null';
                         else if (row._xvAutoCorrected) row._correctionInitial = 'auto';
                         else row._correctionInitial = 'normal';
                     }
@@ -33,8 +35,11 @@ const Correction = {
                         choiceLabels: roi.settings.choiceLabels || null,
                     };
 
-                    if (initial === 'null') {
-                        if (row.markedAnswer === null) nullPending.push(entry);
+                    if (initial === 'multi') {
+                        if (row.multiMarked) multiPending.push(entry);
+                        else multiHistory.push(entry);
+                    } else if (initial === 'null') {
+                        if (row.markedAnswer === null && !row.corrected) nullPending.push(entry);
                         else nullHistory.push(entry);
                     } else if (initial === 'auto') {
                         if (row._xvAutoCorrected) autoPending.push(entry);
@@ -44,82 +49,87 @@ const Correction = {
             });
         });
 
-        return { nullPending, nullHistory, autoPending, autoHistory };
+        return { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory };
+    },
+
+    updateBadge() {
+        const { nullPending, autoPending, multiPending } = this.collect();
+        const badge = document.getElementById('tab-correction-badge');
+        const pending = nullPending.length + autoPending.length + multiPending.length;
+        if (!badge) return;
+        if (pending > 0) { badge.style.display = ''; badge.textContent = pending; }
+        else { badge.style.display = 'none'; }
     },
 
     render(container) {
-        const { nullPending, nullHistory, autoPending, autoHistory } = this.collect();
+        const { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory } = this.collect();
+        this.updateBadge();
 
-        const badge = document.getElementById('tab-correction-badge');
-        const pending = nullPending.length + autoPending.length;
-        if (badge) {
-            if (pending > 0) { badge.style.display = ''; badge.textContent = pending; }
-            else { badge.style.display = 'none'; }
+        const anyConfirmed = (App.state.images || []).some(img => img._correctionConfirmed);
+        const hasPending = nullPending.length + autoPending.length + multiPending.length > 0;
+        const hasAny = nullHistory.length + autoHistory.length + multiHistory.length + nullPending.length + autoPending.length + multiPending.length > 0;
+
+        let statusHtml = '';
+        if (anyConfirmed) {
+            statusHtml = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#f0fdf4;border:2px solid #22c55e;border-radius:6px;">
+                <span style="font-size:16px;">✅</span>
+                <div style="flex:1;font-size:12px;"><strong style="color:#16a34a;">교정 확정 완료</strong><br><span style="color:var(--text-muted);font-size:10px;">수험번호/이름 매칭 및 채점 반영됨</span></div>
+                <button class="btn btn-sm" onclick="UI.toggleConfirmCorrection()" style="padding:4px 10px;font-size:11px;">확정 해제</button>
+            </div>`;
+        } else if (hasAny) {
+            statusHtml = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#fef3c7;border:2px solid #f59e0b;border-radius:6px;">
+                <span style="font-size:16px;">⚠</span>
+                <div style="flex:1;font-size:12px;"><strong style="color:#d97706;">교정 확정 전</strong><br><span style="color:var(--text-muted);font-size:10px;">교정 확정을 눌러야 채점에 반영됩니다</span></div>
+                <button class="btn btn-primary" onclick="UI.toggleConfirmCorrection()" style="padding:5px 12px;font-size:12px;font-weight:700;">교정 확정</button>
+            </div>`;
         }
 
+        const colHdr = (label, count, color, btnHtml) => {
+            const badge = `<span style="background:${color};color:#fff;padding:0 5px;border-radius:6px;font-size:9px;margin-left:3px;">${count}</span>`;
+            return `<div style="font-size:11px;font-weight:700;color:${color};margin-bottom:6px;padding-bottom:3px;border-bottom:2px solid ${color};display:flex;align-items:center;justify-content:space-between;white-space:nowrap;">
+                <span>${label}${badge}</span>${btnHtml || ''}
+            </div>`;
+        };
+        const histHdr = (label, count) => colHdr(label, count, '#94a3b8');
+
         let html = `
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-                <h1 style="font-size:20px; font-weight:700; color:var(--text);">교정</h1>
-                <button class="btn btn-primary" onclick="UI.toggleConfirmCorrection()" style="padding:8px 16px;">
-                    교정 확정 (전체 이미지)
-                </button>
+            <div style="display:flex;align-items:center;margin-bottom:6px;">
+                <h1 style="font-size:18px;font-weight:700;color:var(--text);margin:0;">교정</h1>
             </div>
-            <div style="padding:8px 12px; margin-bottom:16px; background:rgba(59,130,246,0.08); border-left:3px solid #3b82f6; border-radius:4px; font-size:12px; color:var(--text-secondary);">
-                <strong style="color:#3b82f6;">⌨ 키패드 워크플로우:</strong>
-                숫자 입력 <kbd style="padding:1px 4px; background:#fff; border:1px solid #ccc; border-radius:3px; font-size:11px;">1~9</kbd>
-                → <kbd style="padding:1px 4px; background:#fff; border:1px solid #ccc; border-radius:3px; font-size:11px;">Enter</kbd>
-                로 저장, 다음으로 이동. 프리필된 값은 그대로 Enter로 확정.
-                <strong style="color:#dc2626;">빈칸은 <kbd style="padding:1px 4px; background:#fff; border:1px solid #dc2626; border-radius:3px; font-size:11px;">-</kbd> + Enter</strong>
-                (0은 선택지일 수 있음).
+            ${statusHtml}
+            <div style="padding:6px 10px;margin-bottom:10px;background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:4px;font-size:10px;color:var(--text-secondary);">
+                <strong style="color:#3b82f6;">⌨</strong>
+                숫자 → <kbd style="padding:0 3px;background:#fff;border:1px solid #ccc;border-radius:2px;font-size:9px;">Enter</kbd> 저장+다음 |
+                빈칸: <kbd style="padding:0 3px;background:#fff;border:1px solid #dc2626;border-radius:2px;font-size:9px;">-</kbd>+Enter
             </div>
 
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px;">
-                <!-- 1칼럼: null 수정중 -->
-                <div>
-                    <h2 style="font-size:13px; font-weight:700; color:#d97706; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #f59e0b;">
-                        null 수정중 <span style="background:#f59e0b; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${nullPending.length}</span>
-                    </h2>
-                    <div id="col-null-pending" style="display:flex; flex-direction:column; gap:8px;"></div>
-                </div>
-
-                <!-- 2칼럼: null 이력 -->
-                <div>
-                    <h2 style="font-size:13px; font-weight:700; color:#94a3b8; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #cbd5e1;">
-                        null 이력 <span style="background:#94a3b8; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${nullHistory.length}</span>
-                    </h2>
-                    <div id="col-null-history" style="display:flex; flex-direction:column; gap:8px;"></div>
-                </div>
-
-                <!-- 3칼럼: 1.5배 수정중 -->
-                <div>
-                    <h2 style="font-size:13px; font-weight:700; color:#16a34a; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #22c55e; display:flex; align-items:center; justify-content:space-between; gap:6px;">
-                        <span>1.5배 수정중 <span style="background:#22c55e; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${autoPending.length}</span></span>
-                        ${autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:3px 8px; font-size:11px; background:#22c55e; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:700;">✓ 전체 확인</button>` : ''}
-                    </h2>
-                    <div id="col-auto-pending" style="display:flex; flex-direction:column; gap:8px;"></div>
-                </div>
-
-                <!-- 4칼럼: 1.5배 이력 -->
-                <div>
-                    <h2 style="font-size:13px; font-weight:700; color:#94a3b8; margin-bottom:8px; padding-bottom:4px; border-bottom:2px solid #cbd5e1;">
-                        1.5배 이력 <span style="background:#94a3b8; color:#fff; padding:1px 6px; border-radius:8px; font-size:10px; margin-left:4px;">${autoHistory.length}</span>
-                    </h2>
-                    <div id="col-auto-history" style="display:flex; flex-direction:column; gap:8px;"></div>
-                </div>
+            <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;">
+                <div>${colHdr('null 수정중', nullPending.length, '#d97706')}<div id="col-null-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${histHdr('null 이력', nullHistory.length)}<div id="col-null-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${colHdr('1.5배 수정중', autoPending.length, '#16a34a',
+                    autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:1px 5px;font-size:9px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">전체확인</button>` : ''
+                )}<div id="col-auto-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${histHdr('1.5배 이력', autoHistory.length)}<div id="col-auto-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${colHdr('중복의심', multiPending.length, '#dc2626',
+                    multiPending.length > 0 ? `<button onclick="Correction.confirmAllMultiPending()" style="padding:1px 5px;font-size:9px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">전체확인</button>` : ''
+                )}<div id="col-multi-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${histHdr('중복이력', multiHistory.length)}<div id="col-multi-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
             </div>
         `;
         container.innerHTML = html;
 
         const slots = {
-            'col-null-pending':  { items: nullPending,  type: 'null-pending'  },
-            'col-null-history':  { items: nullHistory,  type: 'null-history'  },
-            'col-auto-pending':  { items: autoPending,  type: 'auto-pending'  },
-            'col-auto-history':  { items: autoHistory,  type: 'auto-history'  },
+            'col-null-pending':   { items: nullPending,   type: 'null-pending'   },
+            'col-null-history':   { items: nullHistory,   type: 'null-history'   },
+            'col-auto-pending':   { items: autoPending,   type: 'auto-pending'   },
+            'col-auto-history':   { items: autoHistory,   type: 'auto-history'   },
+            'col-multi-pending':  { items: multiPending,  type: 'multi-pending'  },
+            'col-multi-history':  { items: multiHistory,  type: 'multi-history'  },
         };
         Object.entries(slots).forEach(([id, { items, type }]) => {
             const el = document.getElementById(id);
             if (items.length === 0) {
-                el.innerHTML = `<div style="padding:12px; background:var(--bg-card); border-radius:6px; color:var(--text-muted); font-size:11px; text-align:center;">없음</div>`;
+                el.innerHTML = `<div style="padding:8px;background:var(--bg-card);border-radius:4px;color:var(--text-muted);font-size:10px;text-align:center;">없음</div>`;
             } else {
                 items.forEach(e => el.appendChild(this._renderItem(e, type)));
             }
@@ -131,119 +141,118 @@ const Correction = {
     _renderItem(e, type) {
         const isHistory = type.endsWith('-history');
         const isNull = type.startsWith('null');
+        const isMulti = type.startsWith('multi');
 
-        // 이력: 이미지만 보이는 컴팩트 카드 → 클릭 시 팝업
         if (isHistory) {
             const wrap = document.createElement('div');
-            wrap.style.cssText = `cursor:pointer; background:var(--bg-card); border:1px solid var(--border); border-radius:4px; padding:4px; transition:transform 0.1s;`;
-            wrap.onmouseenter = () => { wrap.style.transform = 'scale(1.03)'; wrap.style.borderColor = '#3b82f6'; };
+            wrap.style.cssText = 'cursor:pointer;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:3px;transition:transform 0.1s;';
+            wrap.onmouseenter = () => { wrap.style.transform = 'scale(1.02)'; wrap.style.borderColor = '#3b82f6'; };
             wrap.onmouseleave = () => { wrap.style.transform = ''; wrap.style.borderColor = 'var(--border)'; };
             wrap.onclick = () => this._openEditPopup(e, type);
 
-            const zoomEl = this._makeZoomCanvas(e, true); // 이력: 작게 + 교정된 블롭 강조
+            const zoomEl = this._makeZoomCanvas(e, true);
             if (zoomEl) wrap.appendChild(zoomEl);
 
-            // 작은 라벨 (문항번호 + 교정값)
             const curVal = e.row.markedAnswer
                 ? (e.choiceLabels && e.choiceLabels[e.row.markedAnswer - 1] ? e.choiceLabels[e.row.markedAnswer - 1] : String(e.row.markedAnswer))
                 : '─';
+            const lblColor = isMulti ? '#dc2626' : isNull ? '#d97706' : '#16a34a';
             const lbl = document.createElement('div');
-            lbl.style.cssText = 'font-size:10px; color:var(--text-muted); text-align:center; margin-top:2px;';
-            lbl.innerHTML = `Q${e.qNum}: <strong style="color:${isNull ? '#d97706' : '#16a34a'};">${curVal}</strong>`;
+            lbl.style.cssText = 'font-size:9px;color:var(--text-muted);text-align:center;margin-top:1px;';
+            lbl.innerHTML = `Q${e.qNum}:<strong style="color:${lblColor};">${curVal}</strong>`;
             wrap.appendChild(lbl);
-
             return wrap;
         }
 
-        // 수정중: 2×2 그리드 — 왼쪽(큰 썸네일, 2행 병합) + 오른쪽(1행: 입력칸, 2행: 분석탭)
+        // 수정중 카드 — 컴팩트
         const wrap = document.createElement('div');
-        wrap.style.cssText = `padding:6px; background:var(--bg-card); border:1px solid var(--border); border-radius:6px;
-            display:grid; grid-template-columns:auto 1fr; grid-template-rows:auto auto; gap:6px; align-items:center;`;
+        wrap.style.cssText = 'padding:4px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;';
 
-        // 왼쪽 (2행 병합): 썸네일
-        const imgBox = document.createElement('div');
-        imgBox.style.cssText = 'grid-row:1 / span 2; grid-column:1;';
+        // 썸네일 (5열 그리드)
         const zoomEl = this._makeZoomCanvas(e, false);
-        if (zoomEl) imgBox.appendChild(zoomEl);
-        wrap.appendChild(imgBox);
+        if (zoomEl) wrap.appendChild(zoomEl);
 
-        // 오른쪽 1행: 입력칸
+        // 입력행: Q번호 + input + 분석탭
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:3px;margin-top:3px;';
+
+        const qLabel = document.createElement('span');
+        qLabel.style.cssText = 'font-size:9px;font-weight:700;color:var(--text-muted);white-space:nowrap;';
+        qLabel.textContent = `Q${e.qNum}`;
+        row.appendChild(qLabel);
+
         const curAnswer = e.row.markedAnswer;
         const preVal = curAnswer
             ? (e.choiceLabels && e.choiceLabels[curAnswer - 1] ? e.choiceLabels[curAnswer - 1] : String(curAnswer))
             : '';
+        let placeholder = preVal ? '' : '-';
+        if (isMulti && e.row.multiMarked && e.row.markedIndices && e.row.markedIndices.length > 1) {
+            placeholder = e.row.markedIndices.map(i => e.choiceLabels && e.choiceLabels[i - 1] ? e.choiceLabels[i - 1] : String(i)).join(',');
+        }
 
+        const borderColor = isMulti ? '#ef4444' : isNull ? '#f59e0b' : '#22c55e';
         const textInput = document.createElement('input');
         textInput.type = 'text';
         textInput.maxLength = 3;
         textInput.value = preVal;
-        textInput.placeholder = preVal ? '' : '숫자/Enter';
+        textInput.placeholder = placeholder;
         textInput.className = `correction-input correction-input-${type}`;
         textInput.dataset.imgIdx = e.imgIdx;
         textInput.dataset.roiIdx = e.roiIdx;
         textInput.dataset.qNum = e.qNum;
         textInput.dataset.columnType = type;
-        const borderColor = isNull ? '#f59e0b' : '#22c55e';
-        textInput.style.cssText = `grid-row:1; grid-column:2;
-            padding:4px 8px; border:2px solid ${borderColor}; border-radius:4px;
-            font-size:14px; font-weight:700; width:100%; text-align:center; box-sizing:border-box;`;
+        textInput.style.cssText = `flex:1;min-width:0;padding:2px 4px;border:2px solid ${borderColor};border-radius:3px;font-size:12px;font-weight:700;text-align:center;box-sizing:border-box;`;
         textInput.onkeydown = (ev) => this._onInputKey(ev, textInput, e);
+        textInput.onmousedown = () => { Correction._skipScrollOnce = true; };
         textInput.onfocus = () => {
-            wrap.style.outline = '3px solid #3b82f6';
+            wrap.style.outline = '2px solid #3b82f6';
             wrap.style.outlineOffset = '-1px';
-            wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (Correction._skipScrollOnce) { Correction._skipScrollOnce = false; }
+            else { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
             setTimeout(() => textInput.select(), 0);
         };
         textInput.onblur = () => { wrap.style.outline = ''; };
-        wrap.appendChild(textInput);
+        row.appendChild(textInput);
 
-        // 오른쪽 2행: 분석 탭 이동 버튼
         const gotoBtn = document.createElement('button');
-        gotoBtn.textContent = '→ 분석 탭';
-        gotoBtn.style.cssText = `grid-row:2; grid-column:2;
-            padding:4px 8px; font-size:11px; background:var(--bg-input); border:1px solid var(--border); border-radius:3px; cursor:pointer; width:100%;`;
+        gotoBtn.textContent = '→';
+        gotoBtn.title = '분석 탭에서 보기';
+        gotoBtn.style.cssText = 'padding:2px 5px;font-size:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:3px;cursor:pointer;flex-shrink:0;';
         gotoBtn.onclick = () => this.goTo(e.imgIdx, e.roiIdx, e.qNum);
-        wrap.appendChild(gotoBtn);
+        row.appendChild(gotoBtn);
 
+        wrap.appendChild(row);
         return wrap;
     },
 
-    // 이력 항목 클릭 시 수정 팝업
     _openEditPopup(e, type) {
-        // 기존 팝업 제거
         const existing = document.getElementById('correction-edit-popup');
         if (existing) existing.remove();
 
         const overlay = document.createElement('div');
         overlay.id = 'correction-edit-popup';
-        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
         overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
 
         const modal = document.createElement('div');
-        modal.style.cssText = 'background:var(--bg-card); border-radius:8px; padding:20px; min-width:400px; max-width:90vw; box-shadow:0 10px 40px rgba(0,0,0,0.4);';
+        modal.style.cssText = 'background:var(--bg-card);border-radius:8px;padding:16px;min-width:320px;max-width:90vw;box-shadow:0 10px 40px rgba(0,0,0,0.4);';
 
         const regionName = e.roi.settings.name || `영역${e.roiIdx + 1}`;
         const title = document.createElement('h3');
-        title.style.cssText = 'margin:0 0 12px 0; font-size:16px; color:var(--text);';
+        title.style.cssText = 'margin:0 0 8px 0;font-size:14px;color:var(--text);';
         title.textContent = `Q${e.qNum} · ${regionName} 수정`;
         modal.appendChild(title);
 
         const fileInfo = document.createElement('div');
-        fileInfo.style.cssText = 'font-size:11px; color:var(--text-muted); margin-bottom:12px;';
+        fileInfo.style.cssText = 'font-size:10px;color:var(--text-muted);margin-bottom:10px;';
         fileInfo.textContent = e.img.name;
         modal.appendChild(fileInfo);
 
-        // 팝업용 큰 줌 이미지 — 썸네일 클릭으로 답 선택
-        // _makeZoomCanvas(e, false, 60)은 클릭 핸들러 포함됨
-        const zoomWrap = document.createElement('div');
-        zoomWrap.style.cssText = 'margin-bottom:16px;';
-        // 팝업에서 썸네일 클릭 시 답 설정 후 팝업 닫기
         const popupClick = (idx) => { this.setAnswer(e.imgIdx, e.roiIdx, e.qNum, idx); overlay.remove(); };
-
-        // 썸네일 생성 후 click을 팝업 전용으로 override
-        const zoomEl = this._makeZoomCanvas(e, false, 60);
+        const zoomWrap = document.createElement('div');
+        zoomWrap.style.cssText = 'margin-bottom:12px;';
+        const zoomEl = this._makeZoomCanvas(e, false, 50);
         if (zoomEl) {
-            // 각 canvas 클릭 → popupClick로 대체
             Array.from(zoomEl.querySelectorAll('canvas')).forEach((cv, idx) => {
                 cv.onclick = () => popupClick(idx + 1);
             });
@@ -251,29 +260,25 @@ const Correction = {
         }
         modal.appendChild(zoomWrap);
 
-        // 빈칸 버튼만 제공 (숫자는 썸네일 클릭으로)
         const clearRow = document.createElement('div');
-        clearRow.style.cssText = 'display:flex; gap:4px; margin-bottom:12px; justify-content:center;';
+        clearRow.style.cssText = 'display:flex;gap:4px;margin-bottom:10px;justify-content:center;';
         const clearBtn = document.createElement('button');
-        clearBtn.textContent = '─ 빈칸 처리';
-        clearBtn.style.cssText = `padding:8px 16px; border-radius:4px; cursor:pointer;
-            font-size:13px; border:2px solid #94a3b8; background:var(--bg-input); color:#64748b;`;
+        clearBtn.textContent = '─ 빈칸';
+        clearBtn.style.cssText = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;border:2px solid #94a3b8;background:var(--bg-input);color:#64748b;';
         clearBtn.onclick = () => { this.setAnswer(e.imgIdx, e.roiIdx, e.qNum, null); overlay.remove(); };
         clearRow.appendChild(clearBtn);
         modal.appendChild(clearRow);
 
-        // 하단 버튼
         const footer = document.createElement('div');
-        footer.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
+        footer.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;';
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '닫기';
-        closeBtn.style.cssText = 'padding:6px 14px; font-size:12px; border:1px solid var(--border); background:var(--bg-input); border-radius:4px; cursor:pointer;';
+        closeBtn.style.cssText = 'padding:4px 10px;font-size:11px;border:1px solid var(--border);background:var(--bg-input);border-radius:4px;cursor:pointer;';
         closeBtn.onclick = () => overlay.remove();
         footer.appendChild(closeBtn);
-
         const gotoBtn = document.createElement('button');
-        gotoBtn.textContent = '→ 분석 탭에서 보기';
-        gotoBtn.style.cssText = 'padding:6px 14px; font-size:12px; border:1px solid #3b82f6; background:var(--blue); color:#fff; border-radius:4px; cursor:pointer;';
+        gotoBtn.textContent = '→ 분석탭';
+        gotoBtn.style.cssText = 'padding:4px 10px;font-size:11px;border:1px solid #3b82f6;background:var(--blue);color:#fff;border-radius:4px;cursor:pointer;';
         gotoBtn.onclick = () => { overlay.remove(); this.goTo(e.imgIdx, e.roiIdx, e.qNum); };
         footer.appendChild(gotoBtn);
         modal.appendChild(footer);
@@ -282,14 +287,12 @@ const Correction = {
         document.body.appendChild(overlay);
     },
 
-    // 각 버블을 개별 썸네일로 잘라 가로로 나열 (진하기 적용, 클릭 가능)
-    // isSmall: 이력용 작은 크기  |  thumbOverride: 팝업용 큰 크기
+    // 썸네일 그리드 — 가로 최대 5열, 세로는 필요한 만큼
     _makeZoomCanvas(e, isSmall, thumbOverride) {
         const img = e.img;
         const row = e.row;
         if (!img || !img.imgElement || !row.blobs || row.blobs.length === 0) return null;
 
-        // 진하기 적용된 이미지 소스
         let sourceImg = img.imgElement;
         if (typeof CanvasManager !== 'undefined') {
             const prevIntensity = CanvasManager.intensity;
@@ -300,20 +303,21 @@ const Correction = {
             if (intensified) sourceImg = intensified;
         }
 
-        const THUMB_SIZE = thumbOverride || (isSmall ? 28 : 36);
+        const THUMB_SIZE = thumbOverride || (isSmall ? 22 : 28);
         const PAD = 3;
-        const GAP = isSmall ? 2 : 3;
+        const GAP = isSmall ? 1 : 2;
+        const MAX_COLS = 5;
 
         const container = document.createElement('div');
-        container.style.cssText = `display:flex; flex-direction:row; gap:${GAP}px; padding:3px; background:#fff; border:1px solid var(--border); border-radius:4px;`;
+        container.style.cssText = `display:grid;grid-template-columns:repeat(${Math.min(row.blobs.length, MAX_COLS)},auto);gap:${GAP}px;padding:2px;background:#fff;border:1px solid var(--border);border-radius:3px;justify-content:start;`;
 
         row.blobs.forEach((b, idx) => {
             const cellWrap = document.createElement('div');
-            cellWrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:1px;';
+            cellWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:0px;';
 
             const cx = b.cx !== undefined ? b.cx : (b.x + b.w / 2);
             const cy = b.cy !== undefined ? b.cy : (b.y + b.h / 2);
-            const cropSize = Math.max(b.w, b.h) + PAD * 2;
+            const cropSize = Math.max(b.w || 10, b.h || 10) + PAD * 2;
             const sx = Math.max(0, Math.round(cx - cropSize / 2));
             const sy = Math.max(0, Math.round(cy - cropSize / 2));
             const sw = Math.min(sourceImg.width - sx, cropSize);
@@ -323,30 +327,28 @@ const Correction = {
             cv.width = THUMB_SIZE;
             cv.height = THUMB_SIZE;
             const bgColor = b.isMarked ? '#dcfce7' : '#fff';
-            const borderColor = b.isMarked ? '#22c55e' : '#e4e4e7';
-            const borderWidth = b.isMarked ? 2 : 1;
-            cv.style.cssText = `border:${borderWidth}px solid ${borderColor}; border-radius:3px; background:${bgColor}; image-rendering:pixelated;`;
+            const bdrColor = b.isMarked ? '#22c55e' : '#e4e4e7';
+            const bdrW = b.isMarked ? 2 : 1;
+            cv.style.cssText = `border:${bdrW}px solid ${bdrColor};border-radius:2px;background:${bgColor};image-rendering:pixelated;`;
 
-            // 수정중 카드: 썸네일 클릭 → 답안 선택
             if (!isSmall) {
                 cv.style.cursor = 'pointer';
-                cv.title = `클릭 → ${(e.choiceLabels && e.choiceLabels[idx]) || (idx + 1)} 선택`;
-                cv.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, idx + 1);
+                cv.title = `${(e.choiceLabels && e.choiceLabels[idx]) || (idx + 1)}`;
+                cv.onmousedown = (ev) => ev.preventDefault();
+                cv.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, idx + 1, { fromThumbnail: true });
                 cv.onmouseenter = () => { cv.style.outline = '2px solid #3b82f6'; };
                 cv.onmouseleave = () => { cv.style.outline = ''; };
             }
 
             const cvctx = cv.getContext('2d');
             cvctx.imageSmoothingEnabled = false;
-            if (sw > 0 && sh > 0) {
-                cvctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
-            }
+            if (sw > 0 && sh > 0) cvctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
             cellWrap.appendChild(cv);
 
             const label = (e.choiceLabels && e.choiceLabels[idx]) || String(idx + 1);
             const lbl = document.createElement('div');
             const labelColor = b.isMarked ? '#16a34a' : '#64748b';
-            lbl.style.cssText = `font-size:${isSmall ? '9' : '10'}px; font-weight:${b.isMarked ? '800' : '600'}; color:${labelColor}; line-height:1;`;
+            lbl.style.cssText = `font-size:${isSmall ? '7' : '8'}px;font-weight:${b.isMarked ? '800' : '600'};color:${labelColor};line-height:1;`;
             lbl.textContent = label;
             cellWrap.appendChild(lbl);
 
@@ -362,17 +364,12 @@ const Correction = {
             const val = input.value.trim();
             let answer = null;
             if (val === '-') {
-                // 빈칸 처리 = '-'만 (0은 선택지 0번일 수 있음)
                 answer = null;
             } else if (val === '') {
-                // 공백 Enter → 현재값 그대로 유지 (프리필 시나리오)
                 answer = e.row.markedAnswer;
             } else if (e.choiceLabels && e.choiceLabels.indexOf(val) >= 0) {
                 answer = e.choiceLabels.indexOf(val) + 1;
             } else {
-                // 숫자 파싱: 0도 유효 선택지일 수 있음 (수험번호 0번 등)
-                // choiceLabels가 있고 '0'이 라벨에 있으면 이미 위에서 처리됨
-                // choiceLabels 없으면 1~numChoices 범위만 허용
                 const num = parseInt(val);
                 if (!isNaN(num) && num >= 1 && num <= e.numChoices) answer = num;
                 else { Toast.error(`1~${e.numChoices} 범위 숫자 또는 '-' (빈칸)`); return; }
@@ -389,7 +386,8 @@ const Correction = {
         }
     },
 
-    setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer) {
+    setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer, opts) {
+        const fromThumbnail = !!(opts && opts.fromThumbnail);
         const img = App.state.images[imgIdx];
         if (!img || !img.results || !img.results[roiIdx]) return;
         const row = img.results[roiIdx].rows.find(r => r.questionNumber === qNum);
@@ -414,97 +412,115 @@ const Correction = {
             img.gradeResult = Grading.grade(img.results, img);
         }
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
-        // 현재 input의 칼럼 타입 기억 (같은 칼럼에서만 다음으로 이동)
         const curEl = document.activeElement;
-        const curColumnType = curEl && curEl.dataset ? curEl.dataset.columnType : null;
-        const columnSelector = curColumnType
-            ? `.correction-input-${curColumnType}`
-            : '.correction-input';
+        const curIsInput = curEl && curEl.classList && curEl.classList.contains('correction-input');
+        const curColumnType = curIsInput ? curEl.dataset.columnType : null;
+        const columnSelector = curColumnType ? `.correction-input-${curColumnType}` : '.correction-input';
         const allInputs = Array.from(document.querySelectorAll(columnSelector));
-        const curIdx = allInputs.indexOf(curEl);
+        const curIdx = curIsInput ? allInputs.indexOf(curEl) : -1;
 
         this.render(document.getElementById('correction-content'));
 
-        // 리렌더 후 같은 칼럼의 다음 input으로 이동
         setTimeout(() => {
-            const newInputs = Array.from(document.querySelectorAll(columnSelector));
+            const colSel = curColumnType
+                ? `.correction-input-${curColumnType}`
+                : (document.querySelector('.correction-input-null-pending') ? '.correction-input-null-pending'
+                   : (document.querySelector('.correction-input-auto-pending') ? '.correction-input-auto-pending'
+                   : '.correction-input'));
+            const newInputs = Array.from(document.querySelectorAll(colSel));
             if (newInputs.length === 0) {
-                // 같은 칼럼은 비었음 → 다른 칼럼에 남은 항목 있는지 확인
-                const anyPending = document.querySelector('.correction-input-null-pending, .correction-input-auto-pending');
-                if (anyPending) {
-                    Toast.info(`${curColumnType === 'null-pending' ? 'null' : '1.5배'} 칼럼 완료. 다른 칼럼으로 이동하려면 클릭하세요.`);
-                } else {
-                    Toast.success('수정중인 항목을 모두 처리했습니다!');
-                }
+                const anyPending = document.querySelector('.correction-input-null-pending, .correction-input-auto-pending, .correction-input-multi-pending');
+                if (!anyPending) Toast.success('수정중인 항목을 모두 처리했습니다!');
                 return;
             }
-            const target = newInputs[Math.min(Math.max(0, curIdx), newInputs.length - 1)];
-            if (target) { target.focus(); target.select(); }
+            const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), newInputs.length - 1);
+            const target = newInputs[targetIdx];
+            if (target) {
+                if (fromThumbnail) Correction._skipScrollOnce = true;
+                target.focus();
+                target.select();
+            }
         }, 50);
     },
 
     _focusNextInput(input) {
-        // 같은 칼럼 내에서만 이동
         const columnType = input.dataset.columnType;
         const inputs = Array.from(document.querySelectorAll(`.correction-input-${columnType}`));
         const idx = inputs.indexOf(input);
-        if (idx >= 0 && idx < inputs.length - 1) {
-            inputs[idx + 1].focus();
-            inputs[idx + 1].select();
-        }
+        if (idx >= 0 && idx < inputs.length - 1) { inputs[idx + 1].focus(); inputs[idx + 1].select(); }
     },
     _focusPrevInput(input) {
         const columnType = input.dataset.columnType;
         const inputs = Array.from(document.querySelectorAll(`.correction-input-${columnType}`));
         const idx = inputs.indexOf(input);
-        if (idx > 0) {
-            inputs[idx - 1].focus();
-            inputs[idx - 1].select();
-        }
+        if (idx > 0) { inputs[idx - 1].focus(); inputs[idx - 1].select(); }
     },
 
     focusFirst() {
         setTimeout(() => {
-            // 우선순위: null-pending → auto-pending (수정중 먼저)
             const first = document.querySelector('.correction-input-null-pending')
                        || document.querySelector('.correction-input-auto-pending')
+                       || document.querySelector('.correction-input-multi-pending')
                        || document.querySelector('.correction-input');
             if (first) { first.focus(); first.select(); }
         }, 100);
     },
 
     setAnswer(imgIdx, roiIdx, qNum, newAnswer) {
-        this.setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer);
+        this.setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer, { fromThumbnail: true });
     },
 
-    // 1.5배 수정중 전체 일괄 확인 — 값은 그대로 유지, 확정 처리만
     confirmAllAutoPending() {
         const { autoPending } = this.collect();
         if (autoPending.length === 0) return;
-
         const count = autoPending.length;
         autoPending.forEach(e => {
             const row = e.row;
             row.corrected = true;
             row._userCorrected = true;
-            row._xvAutoCorrected = false; // 이력 칼럼으로 이동시킴
+            row._xvAutoCorrected = false;
             row.undetected = false;
-            // markedAnswer, markedIndices, blobs.isMarked 은 기존 값 그대로 유지
         });
-
-        // 영향받은 이미지들의 채점 재실행
         const affectedImgs = new Set(autoPending.map(e => e.imgIdx));
         affectedImgs.forEach(imgIdx => {
             const img = App.state.images[imgIdx];
-            if (img && img.results && typeof Grading !== 'undefined') {
-                img.gradeResult = Grading.grade(img.results, img);
+            if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
+        });
+        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+        this.render(document.getElementById('correction-content'));
+        Toast.success(`1.5배 수정중 ${count}개 전체 확인`);
+    },
+
+    confirmAllMultiPending() {
+        const { multiPending } = this.collect();
+        if (multiPending.length === 0) return;
+        const count = multiPending.length;
+        multiPending.forEach(e => {
+            const row = e.row;
+            const firstAnswer = row.markedIndices && row.markedIndices.length > 0 ? row.markedIndices[0] : null;
+            row.markedAnswer = firstAnswer;
+            row.multiMarked = false;
+            row.markedIndices = firstAnswer ? [firstAnswer] : [];
+            row.corrected = true;
+            row._userCorrected = true;
+            row.undetected = false;
+            if (row.blobs) {
+                row.blobs.forEach(b => b.isMarked = false);
+                if (firstAnswer && row.blobs[firstAnswer - 1]) row.blobs[firstAnswer - 1].isMarked = true;
             }
         });
-
+        const affectedImgs = new Set(multiPending.map(e => e.imgIdx));
+        affectedImgs.forEach(imgIdx => {
+            const img = App.state.images[imgIdx];
+            if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
+        });
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.render(document.getElementById('correction-content'));
-        Toast.success(`1.5배 수정중 ${count}개 전체 확인 → 이력으로 이동`);
+        Toast.success(`중복의심 ${count}개 전체 확인 (1등 값으로)`);
     },
 
     goTo(imgIdx, roiIdx, qNum) {
