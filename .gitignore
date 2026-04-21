@@ -1,6 +1,8 @@
 *.png
 *.jpg
 *.jpeg
+!진하기예시.png
+!icon.png
 !로스쿨샘풀/**/*.png
 !로스쿨샘풀/**/*.jpg
 !로스쿨샘풀/**/*.jpeg
