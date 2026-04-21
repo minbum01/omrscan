@@ -46,7 +46,7 @@ const BatchProcess = {
 
         let processed = 0;
 
-        const processNext = () => {
+        const processNext = async () => {
             if (processed >= images.length) {
                 this.finish(overlay, images.length);
                 return;
@@ -72,6 +72,15 @@ const BatchProcess = {
             // 일괄채점 = 강제 리셋 — 이전 결과/교정 모두 초기화
             imgObj.results = [];
             imgObj.validationErrors = [];
+
+            // Lazy Loading: 이미지가 해제된 상태면 복원
+            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                const loaded = await ImageManager.ensureLoaded(imgObj);
+                if (!loaded) {
+                    console.warn(`[Batch] 이미지 ${processed + 1}: 로드 실패 — 건너뜀`);
+                    throw new Error('이미지 로드 실패');
+                }
+            }
 
             // 이미지별 진하기 적용 + 캔버스 생성
             const imgIntensity = imgObj.intensity || CanvasManager.intensity || 100;

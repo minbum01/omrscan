@@ -589,24 +589,19 @@ const SessionManager = {
                 imageFiles.forEach((imgFile, idx) => {
                     const img = new Image();
                     img.onload = () => {
-                        const thumb = typeof ImageManager !== 'undefined' ? ImageManager.createThumbnail(img) : null;
-                        // 저장된 결과 복원 (파일명 매칭 → fallback: idx 기반)
                         const isDeleted = deletedMap.has(imgFile.filename);
                         const savedResult = isDeleted
                             ? deletedMap.get(imgFile.filename)
                             : (activeMap.get(imgFile.filename) || (data.imageResults && data.imageResults[idx]) || null);
 
-                        // 교시 분배: savedResult.periodId → 해당 period.images 에 push
                         const periodId = (savedResult && savedResult.periodId) || 'p1';
-
                         const pristine = (savedResult && savedResult.pristineFilename) || imgFile.filename;
                         const imgObj = {
-                            // 디스크 파일명(학생이름_수험번호_ 접두사 포함)을 표시명으로 사용
                             name:          imgFile.filename,
                             _originalName: imgFile.filename,
                             _pristineName: pristine,
                             imgElement:    img,
-                            thumb,
+                            _imgSrc:       imgFile.url, // Lazy Loading 복원용 file:// URL
                             periodId,
                             intensity: savedResult && savedResult.intensity != null ? savedResult.intensity : undefined,
                             rois: savedResult
@@ -742,10 +737,11 @@ const SessionManager = {
 
         const buildFilenameByRef = (img, periodId, localIdx) => {
             const pristine = getPristine(img);
-            // 다교시 세션에서 파일명 충돌 방지 — 항상 교시 번호 접두사 추가
+            // 다교시 세션에서 파일명 충돌 방지 — 교시 라벨 접두사
             const periods = App.state.periods || [];
-            const periodIdx = periods.findIndex(p => p.id === periodId);
-            const periodPrefix = periods.length > 1 ? `${periodIdx + 1}교시_` : '';
+            const labels = (typeof PeriodManager !== 'undefined') ? PeriodManager.getDisplayLabels() : {};
+            const periodLabel = labels[periodId] || `${periods.findIndex(p => p.id === periodId) + 1}교시`;
+            const periodPrefix = periods.length > 1 ? `${periodLabel}_` : '';
 
             const r = rowByRef.get(`${periodId}:${localIdx}`);
             if (!r || r._noOmr) return periodPrefix + pristine;

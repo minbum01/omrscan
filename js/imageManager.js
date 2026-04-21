@@ -4,7 +4,9 @@
 // ============================================
 
 const ImageManager = {
-    MAX_SIZE: 1600, // 가로 또는 세로 최대 px
+    MAX_SIZE: 2000, // 가로 또는 세로 최대 px
+    _loadedImgCache: new Map(), // imgIdx → true (현재 로드된 이미지 추적)
+    _MAX_LOADED: 3, // 동시에 메모리에 유지할 최대 이미지 수
 
     init() {
         App.els.fileUpload.addEventListener('change', (e) => this.handleUpload(e));
@@ -40,19 +42,22 @@ const ImageManager = {
 
                     setTimeout(() => {
                         this.processImage(originalImg, (resized) => {
-                            const thumb = this.createThumbnail(resized);
+                            // 리사이즈된 이미지의 data URL 저장 (Lazy Loading 복원용)
+                            const dataUrl = resized.src;
 
-                            App.state.images.push({
+                            const imgEntry = {
                                 name: file.name,
                                 _originalName: file.name,
                                 _pristineName: file.name,
                                 imgElement: resized,
-                                thumb,
+                                _imgSrc: dataUrl, // Lazy Loading 복원용 URL
+                                _id: (typeof UI !== 'undefined') ? UI._genRoiId() : ('img_' + Date.now().toString(36)),
                                 rois: [],
                                 results: null,
                                 gradeResult: null,
                                 periodId: App.state.currentPeriodId || 'p1',
-                            });
+                            };
+                            App.state.images.push(imgEntry);
                             if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
                             processFile(index + 1);
@@ -285,7 +290,9 @@ const ImageManager = {
         const imgObj = App.state.images[index];
         if (!imgObj) return;
 
-        // imgElement가 아직 로드 안 됐을 수 있으므로 확인
+        // 멀리 있는 이미지 메모리 해제 (Lazy Unload)
+        this._evictDistantImages(index);
+
         const setCanvas = () => {
             App.els.canvas.width = imgObj.imgElement.width;
             App.els.canvas.height = imgObj.imgElement.height;
@@ -293,7 +300,6 @@ const ImageManager = {
             App.els.canvas.style.display = 'block';
 
             this.updateList();
-            // 이미지별 진하기 복원
             const imgIntensity = imgObj.intensity || 115;
             CanvasManager.intensity = imgIntensity;
             const intInput = document.getElementById('adj-intensity');
@@ -301,6 +307,7 @@ const ImageManager = {
             if (intInput) { intInput.value = imgIntensity; }
             if (intVal) { intVal.textContent = imgIntensity; }
 
+            CanvasManager._intensityCache.clear();
             CanvasManager.zoomFit();
             CanvasManager.render();
             CanvasManager.setMode('draw');
@@ -315,11 +322,60 @@ const ImageManager = {
             }
         };
 
-        if (imgObj.imgElement.complete && imgObj.imgElement.width > 0) {
-            setCanvas();
+        // imgElement가 해제된 상태면 다시 로드
+        if (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0) {
+            const src = imgObj._imgSrc;
+            if (src) {
+                const newImg = new Image();
+                newImg.onload = () => {
+                    imgObj.imgElement = newImg;
+                    setCanvas();
+                };
+                newImg.src = src;
+            }
         } else {
-            imgObj.imgElement.onload = setCanvas;
+            setCanvas();
         }
+    },
+
+    // 이미지 로드 보장 (Lazy Loading 복원) — Promise 반환
+    ensureLoaded(imgObj) {
+        return new Promise((resolve) => {
+            if (imgObj.imgElement && imgObj.imgElement.complete && imgObj.imgElement.width > 0) {
+                resolve(imgObj.imgElement);
+                return;
+            }
+            const src = imgObj._imgSrc;
+            if (!src) { resolve(null); return; }
+            const newImg = new Image();
+            newImg.onload = () => { imgObj.imgElement = newImg; resolve(newImg); };
+            newImg.onerror = () => { resolve(null); };
+            newImg.src = src;
+        });
+    },
+
+    // 현재 선택 이미지에서 먼 이미지의 imgElement 해제 (메모리 절약)
+    _evictDistantImages(currentIdx) {
+        const images = App.state.images;
+        if (images.length <= this._MAX_LOADED) return;
+
+        const keep = new Set();
+        for (let d = 0; d < Math.ceil(this._MAX_LOADED / 2); d++) {
+            if (currentIdx - d >= 0) keep.add(currentIdx - d);
+            if (currentIdx + d < images.length) keep.add(currentIdx + d);
+        }
+
+        images.forEach((img, idx) => {
+            if (keep.has(idx)) return;
+            if (!img.imgElement || img.imgElement.width === 0) return;
+
+            // _imgSrc가 없으면 해제하지 않음 (복원 불가)
+            if (!img._imgSrc) return;
+
+            // 해제
+            img.imgElement.src = '';
+            img.imgElement = new Image(); // 빈 Image 객체로 교체
+        });
     },
 
     deleteImage(index) {

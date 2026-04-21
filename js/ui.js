@@ -272,41 +272,70 @@ const UI = {
 
                 html += `<div class="roi-card ${isSelected ? 'roi-card-selected' : ''}" data-roi-index="${idx}">`;
 
-                // 헤더: 순서 이동 + 이름 편집 (자동완성 datalist 연결)
+                // 헤더: 순서 이동 + 삭제
                 html += `<div class="roi-card-header">
                     <div class="roi-order-btns">
                         <button class="roi-order-btn" onclick="UI.moveRoi(${idx},-1)" ${idx === 0 ? 'disabled' : ''} title="위로">▲</button>
                         <button class="roi-order-btn" onclick="UI.moveRoi(${idx},1)" ${idx === imgObj.rois.length - 1 ? 'disabled' : ''} title="아래로">▼</button>
                     </div>
                     <div class="roi-card-num">${idx + 1}</div>
-                    <input class="roi-name-input" type="text" value="${this.esc(s.name)}"
-                        placeholder="과목/영역명" data-roi="${idx}" onchange="UI.onNameChange(this)"
-                        list="subject-name-list">
-                    <span class="roi-card-size">${Math.round(roi.w)}×${Math.round(roi.h)}</span>
+                    <span class="roi-card-size" style="margin-left:auto;">${Math.round(roi.w)}×${Math.round(roi.h)}</span>
                     ${s.bubbleSize ? `<span style="color:#22c55e;font-size:10px;font-weight:700;margin-left:4px;">버블${s.bubbleSize}px</span>` : ''}
                     <button class="roi-delete-btn" onclick="CanvasManager.deleteRoi(${idx}); UI.updateRightPanel();">✕</button>
                 </div>`;
 
-                // 과목코드 연동 표시 (합산)
+                // 과목 식별 영역: 과목명 직접입력 vs 과목코드 연동 (택1)
                 const _cIds = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
-                if (_cIds.length > 0) {
-                    let _codeStr = '';
-                    _cIds.forEach(id => {
-                        const ci = imgObj.rois.findIndex(r => r._id === id);
-                        if (ci >= 0 && hasResults && imgObj.results[ci] && imgObj.results[ci].rows) {
-                            imgObj.results[ci].rows.forEach(r => {
-                                if (r.markedAnswer != null) {
-                                    const cl = imgObj.rois[ci].settings.choiceLabels;
-                                    _codeStr += cl && cl[r.markedAnswer - 1] ? cl[r.markedAnswer - 1] : String(r.markedAnswer);
-                                } else { _codeStr += '?'; }
-                            });
-                        } else { _codeStr += '?'; }
-                    });
-                    const _gSubj = (App.state.subjects || []).find(sub => sub.code === _codeStr);
-                    html += `<div style="padding:4px 8px;margin:-2px 0 4px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:4px;display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:10px;color:#0369a1;font-weight:600;">과목코드</span>
-                        <span style="font-size:16px;font-weight:800;font-family:monospace;color:#1e3a5f;letter-spacing:2px;">${_codeStr}</span>
-                        ${_gSubj ? `<span style="font-size:12px;font-weight:700;color:#16a34a;">${_gSubj.name}</span>` : `<span style="font-size:10px;color:#dc2626;">미매칭</span>`}
+                const _hasCode = _cIds.length > 0;
+                if (s.type === 'subject_answer') {
+                    if (_hasCode) {
+                        // 코드 연동 모드 — 합산 코드 + 매칭 과목명 표시
+                        let _codeStr = '';
+                        _cIds.forEach(id => {
+                            const ci = imgObj.rois.findIndex(r => r._id === id);
+                            if (ci >= 0 && hasResults && imgObj.results[ci] && imgObj.results[ci].rows) {
+                                imgObj.results[ci].rows.forEach(r => {
+                                    if (r.markedAnswer != null) {
+                                        const cl = imgObj.rois[ci].settings.choiceLabels;
+                                        _codeStr += cl && cl[r.markedAnswer - 1] ? cl[r.markedAnswer - 1] : String(r.markedAnswer);
+                                    } else { _codeStr += '?'; }
+                                });
+                            } else { _codeStr += '?'; }
+                        });
+                        const _gSubj = (App.state.subjects || []).find(sub => sub.code === _codeStr);
+                        html += `<div style="padding:5px 8px;margin:0 0 4px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:5px;">
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span style="font-size:9px;color:#0369a1;font-weight:700;background:#dbeafe;padding:1px 5px;border-radius:3px;">코드연동</span>
+                                <span style="font-size:18px;font-weight:800;font-family:monospace;color:#1e3a5f;letter-spacing:3px;">${_codeStr}</span>
+                                ${_gSubj ? `<span style="font-size:13px;font-weight:700;color:#16a34a;">${_gSubj.name}</span>` : `<span style="font-size:10px;color:#dc2626;">미매칭</span>`}
+                                <button class="btn btn-sm" onclick="UI._unlinkCodeRoi(${idx})" style="font-size:9px;padding:1px 5px;color:#dc2626;margin-left:auto;" title="과목코드 연동 해제">해제</button>
+                            </div>
+                        </div>`;
+                    } else {
+                        // 직접입력 모드 — 과목명 + 코드연동 버튼
+                        html += `<div style="padding:4px 8px;margin:0 0 4px;background:var(--bg-input);border:1px solid var(--border);border-radius:5px;">
+                            <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;">
+                                <input class="roi-name-input" type="text" value="${this.esc(s.name)}"
+                                    placeholder="과목/영역명" data-roi="${idx}" onchange="UI.onNameChange(this)"
+                                    list="subject-name-list"
+                                    style="flex:1;min-width:0;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-weight:600;">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:4px;">
+                                <span style="font-size:9px;color:var(--text-muted);">또는</span>
+                                <label style="font-size:9px;color:var(--text-muted);display:flex;align-items:center;gap:2px;">
+                                    자리수 <input type="number" id="roi-code-digits-${idx}" value="2" min="1" max="5" style="width:30px;padding:1px 2px;font-size:10px;border:1px solid var(--border);border-radius:3px;text-align:center;">
+                                </label>
+                                <button class="btn btn-sm" onclick="UI._startCodeBoxDrawFromCard(${idx})" style="font-size:9px;padding:2px 6px;background:#0369a1;color:#fff;border:none;border-radius:3px;">과목코드 연동</button>
+                            </div>
+                        </div>`;
+                    }
+                } else {
+                    // 과목답안 외 타입은 기존 이름 input
+                    html += `<div style="padding:2px 8px;margin:0 0 4px;">
+                        <input class="roi-name-input" type="text" value="${this.esc(s.name)}"
+                            placeholder="영역명" data-roi="${idx}" onchange="UI.onNameChange(this)"
+                            list="subject-name-list"
+                            style="width:100%;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
                     </div>`;
                 }
 
@@ -1320,7 +1349,6 @@ const UI = {
                     ${(() => {
                         const hasCodeLink = !!(s.linkedCodeRoiIds && s.linkedCodeRoiIds.length > 0) || !!s.linkedCodeRoiId;
                         if (hasCodeLink) {
-                            // 과목코드 연동 시: 과목뱃지/과목명 숨김, hidden input으로 빈 이름 전달
                             return `<input type="hidden" id="rp-name" value="">`;
                         }
                         return `<div id="rp-subject-btns">${this._renderSubjectButtons(roiIdx, s.name, imgObj)}</div>
@@ -1333,6 +1361,44 @@ const UI = {
                         </datalist>
                     </div>`;
                     })()}
+                    <!-- 과목코드 연동 (타입→과목명 바로 아래, 코드박스 모드일 땐 숨김) -->
+                    <div id="rp-code-link-section" style="padding:6px 8px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:5px; margin-bottom:4px; ${_isCodeBoxMode ? 'display:none;' : ''}">
+                        <div style="font-size:10px; font-weight:700; color:#0369a1; margin-bottom:3px;">과목코드 연동</div>
+                        ${(() => {
+                            const ids = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
+                            if (ids.length > 0) {
+                                let codeDigits = '';
+                                const boxes = ids.map((id, di) => {
+                                    const ci = imgObj.rois.findIndex(r => r._id === id);
+                                    if (ci < 0) return `<span style="color:#dc2626;font-size:10px;">${di+1}자리: 삭제됨</span>`;
+                                    const cRes = imgObj.results && imgObj.results[ci];
+                                    let digit = '?';
+                                    if (cRes && cRes.rows && cRes.rows[0] && cRes.rows[0].markedAnswer != null) {
+                                        const cl = imgObj.rois[ci].settings.choiceLabels;
+                                        digit = cl && cl[cRes.rows[0].markedAnswer - 1] ? cl[cRes.rows[0].markedAnswer - 1] : String(cRes.rows[0].markedAnswer);
+                                    }
+                                    codeDigits += digit;
+                                    return `<span style="font-size:9px;color:#0369a1;">${di+1}자리:<strong>${digit}</strong></span>`;
+                                });
+                                const globalSubjects = App.state.subjects || [];
+                                const matchedSubj = globalSubjects.find(sub => sub.code === codeDigits);
+                                return `<div style="display:flex;align-items:center;gap:6px;">
+                                    <span style="font-size:14px;font-weight:800;font-family:monospace;color:#1e3a5f;letter-spacing:2px;">${codeDigits}</span>
+                                    ${matchedSubj ? `<span style="font-size:11px;font-weight:700;color:#16a34a;">${matchedSubj.name}</span>` : ''}
+                                    <button class="btn btn-sm" onclick="UI._unlinkCodeRoi(${roiIdx})" style="font-size:9px;padding:1px 4px;color:#dc2626;margin-left:auto;">해제</button>
+                                </div>
+                                <div style="font-size:8px;color:var(--text-muted);margin-top:2px;">${boxes.join(' · ')}</div>`;
+                            } else {
+                                return `<div style="display:flex;align-items:center;gap:6px;">
+                                    <span style="font-size:9px;color:var(--text-muted);">연결 없음</span>
+                                    <label style="font-size:9px;color:var(--text-muted);display:flex;align-items:center;gap:2px;">
+                                        자리수 <input type="number" id="rp-code-digits" value="2" min="1" max="5" style="width:32px;padding:1px;font-size:10px;border:1px solid var(--border);border-radius:3px;text-align:center;">
+                                    </label>
+                                    <button class="btn btn-sm btn-primary" onclick="UI._startCodeBoxDraw(${roiIdx})" style="font-size:9px;padding:2px 6px;">과목코드 박스 치기</button>
+                                </div>`;
+                            }
+                        })()}
+                    </div>
                     <div class="roi-popup-field">
                         <label>방향</label>
                         <div class="roi-popup-orient">
@@ -1369,47 +1435,6 @@ const UI = {
                                 ).join('')}
                             </div>
                         </div>
-                    </div>
-                    <!-- 과목코드 연동 (코드박스 모드일 땐 숨김) -->
-                    <div id="rp-code-link-section" style="margin-top:8px; padding:8px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; ${_isCodeBoxMode ? 'display:none;' : ''}">
-                        <div style="font-size:11px; font-weight:700; color:#0369a1; margin-bottom:4px;">과목코드 연동</div>
-                        ${(() => {
-                            const ids = s.linkedCodeRoiIds || (s.linkedCodeRoiId ? [s.linkedCodeRoiId] : []);
-                            if (ids.length > 0) {
-                                // 연결된 코드 박스 목록 + 감지된 코드 합산
-                                let codeDigits = '';
-                                const boxes = ids.map((id, di) => {
-                                    const ci = imgObj.rois.findIndex(r => r._id === id);
-                                    if (ci < 0) return `<span style="color:#dc2626;font-size:10px;">${di+1}자리: 삭제됨</span>`;
-                                    // 감지된 값
-                                    const cRes = imgObj.results && imgObj.results[ci];
-                                    let digit = '?';
-                                    if (cRes && cRes.rows && cRes.rows[0] && cRes.rows[0].markedAnswer != null) {
-                                        const cl = imgObj.rois[ci].settings.choiceLabels;
-                                        digit = cl && cl[cRes.rows[0].markedAnswer - 1] ? cl[cRes.rows[0].markedAnswer - 1] : String(cRes.rows[0].markedAnswer);
-                                    }
-                                    codeDigits += digit;
-                                    return `<span style="font-size:10px;color:#0369a1;">${di+1}자리: <strong>${digit}</strong></span>`;
-                                });
-                                const globalSubjects = App.state.subjects || [];
-                                const matchedSubj = globalSubjects.find(sub => sub.code === codeDigits);
-                                return `<div style="display:flex;flex-direction:column;gap:3px;">
-                                    <div style="display:flex;align-items:center;gap:8px;">
-                                        <span style="font-size:14px;font-weight:800;font-family:monospace;color:#0369a1;letter-spacing:2px;">${codeDigits}</span>
-                                        ${matchedSubj ? `<span style="font-size:12px;font-weight:700;color:#16a34a;">${matchedSubj.name}</span>` : ''}
-                                        <button class="btn btn-sm" onclick="UI._unlinkCodeRoi(${roiIdx})" style="font-size:9px;padding:1px 5px;color:#dc2626;margin-left:auto;">해제</button>
-                                    </div>
-                                    <div style="font-size:9px;color:var(--text-muted);">${boxes.join(' · ')}</div>
-                                </div>`;
-                            } else {
-                                return `<div style="display:flex;align-items:center;gap:6px;">
-                                    <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
-                                        자리수 <input type="number" id="rp-code-digits" value="2" min="1" max="5" style="width:40px;padding:2px 4px;font-size:11px;border:1px solid var(--border);border-radius:4px;text-align:center;">
-                                    </label>
-                                    <button class="btn btn-sm btn-primary" onclick="UI._startCodeBoxDraw(${roiIdx})" style="font-size:10px;padding:3px 8px;">과목코드 박스 치기</button>
-                                </div>`;
-                            }
-                        })()}
                     </div>
                     <!-- 버블 형태 선택 — 영역 설정과 분리된 단 -->
                     <div style="margin-top:8px; padding-top:8px; border-top:2px solid var(--border-light);">
@@ -1476,7 +1501,47 @@ const UI = {
     _pendingCodeTotalDigits: 0,
     _pendingCodeDrawnIds: [],
 
+    // 카드에서 직접 과목코드 연동 시작 (카드에는 팝업 input이 없으므로 저장 불필요)
+    _startCodeBoxDrawFromCard(answerRoiIdx) {
+        const digitsInput = document.getElementById(`roi-code-digits-${answerRoiIdx}`);
+        const totalDigits = digitsInput ? Math.max(1, Math.min(5, parseInt(digitsInput.value) || 2)) : 2;
+        const imgObj = App.getCurrentImage();
+
+        this._pendingCodeLinkRoiIdx = answerRoiIdx;
+        this._pendingCodeAnswerRoiId = imgObj && imgObj.rois[answerRoiIdx] ? imgObj.rois[answerRoiIdx]._id : null;
+        this._pendingCodeTotalDigits = totalDigits;
+        this._pendingCodeDrawnIds = [];
+
+        Toast.canvasGuide(`과목코드 ${totalDigits}자리 — 1자리째 영역을 드래그하세요`);
+        CanvasManager.setMode('draw');
+    },
+
+    // 팝업에서 코드박스 치기 시작 전 답안 ROI의 현재 팝업 값 임시 저장
+    _savePopupValuesToRoi(roiIdx) {
+        const imgObj = App.getCurrentImage();
+        if (!imgObj || !imgObj.rois[roiIdx]) return;
+        const s = imgObj.rois[roiIdx].settings;
+        const nq = document.getElementById('rp-numq');
+        const nc = document.getElementById('rp-numc');
+        const st = document.getElementById('rp-start');
+        const nm = document.getElementById('rp-name');
+        if (nq) s.numQuestions = parseInt(nq.value) || s.numQuestions;
+        if (nc) s.numChoices = parseInt(nc.value) || s.numChoices;
+        if (st) s.startNum = parseInt(st.value) || s.startNum;
+        if (nm) s.name = nm.value;
+        const vBtn = document.getElementById('rp-vert');
+        const hBtn = document.getElementById('rp-horiz');
+        if (vBtn && hBtn) s.orientation = vBtn.classList.contains('active') ? 'vertical' : 'horizontal';
+        const labelInputs = document.querySelectorAll('.rp-label-input');
+        if (labelInputs.length > 0) s.choiceLabels = Array.from(labelInputs).map(inp => inp.value);
+        const elongBtn = document.getElementById('rp-bubble-elongated');
+        if (elongBtn) s.elongatedMode = elongBtn.classList.contains('active');
+    },
+
     _startCodeBoxDraw(answerRoiIdx) {
+        // 답안 ROI의 현재 팝업 값 저장 (확인 안 누른 상태에서 이탈하므로)
+        this._savePopupValuesToRoi(answerRoiIdx);
+
         const digitsInput = document.getElementById('rp-code-digits');
         const totalDigits = digitsInput ? Math.max(1, Math.min(5, parseInt(digitsInput.value) || 2)) : 2;
         const imgObj = App.getCurrentImage();
@@ -1791,6 +1856,7 @@ const UI = {
             const codeRoi = imgObj.rois[roiIdx];
             if (codeRoi) {
                 codeRoi.settings.numQuestions = 1;
+                codeRoi.settings.orientation = 'horizontal'; // 과목코드는 항상 가로 판별
                 this._pendingCodeDrawnIds.push(codeRoi._id);
             }
 

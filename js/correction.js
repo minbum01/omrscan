@@ -6,6 +6,15 @@
 // ============================================
 
 const Correction = {
+    PAGE_SIZE: 30,
+    _pages: {}, // { 'col-null-pending': 0, 'col-null-history': 0, ... }
+
+    _getPage(colId) { return this._pages[colId] || 0; },
+    _setPage(colId, page) {
+        this._pages[colId] = page;
+        this.render(document.getElementById('correction-content'));
+    },
+
     collect() {
         const nullPending = [], nullHistory = [];
         const autoPending = [], autoHistory = [];
@@ -126,12 +135,33 @@ const Correction = {
             'col-multi-pending':  { items: multiPending,  type: 'multi-pending'  },
             'col-multi-history':  { items: multiHistory,  type: 'multi-history'  },
         };
+        const PS = this.PAGE_SIZE;
         Object.entries(slots).forEach(([id, { items, type }]) => {
             const el = document.getElementById(id);
             if (items.length === 0) {
                 el.innerHTML = `<div style="padding:8px;background:var(--bg-card);border-radius:4px;color:var(--text-muted);font-size:10px;text-align:center;">없음</div>`;
-            } else {
-                items.forEach(e => el.appendChild(this._renderItem(e, type)));
+                return;
+            }
+
+            const page = this._getPage(id);
+            const totalPages = Math.ceil(items.length / PS);
+            const start = page * PS;
+            const pageItems = items.slice(start, start + PS);
+
+            pageItems.forEach(e => el.appendChild(this._renderItem(e, type)));
+
+            // 페이지네이션 버튼 (2페이지 이상일 때)
+            if (totalPages > 1) {
+                const nav = document.createElement('div');
+                nav.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;margin-top:6px;padding:4px 0;';
+                nav.innerHTML = `
+                    <button onclick="Correction._setPage('${id}',${Math.max(0, page - 1)})" ${page === 0 ? 'disabled' : ''}
+                        style="padding:2px 6px;font-size:9px;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:var(--bg-input);">◀</button>
+                    <span style="font-size:9px;color:var(--text-muted);">${page + 1}/${totalPages}</span>
+                    <button onclick="Correction._setPage('${id}',${Math.min(totalPages - 1, page + 1)})" ${page >= totalPages - 1 ? 'disabled' : ''}
+                        style="padding:2px 6px;font-size:9px;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:var(--bg-input);">▶</button>
+                `;
+                el.appendChild(nav);
             }
         });
 
@@ -291,7 +321,22 @@ const Correction = {
     _makeZoomCanvas(e, isSmall, thumbOverride) {
         const img = e.img;
         const row = e.row;
-        if (!img || !img.imgElement || !row.blobs || row.blobs.length === 0) return null;
+        if (!img || !row.blobs || row.blobs.length === 0) return null;
+
+        // Lazy Loading: 이미지가 해제된 상태면 placeholder 표시
+        if (!img.imgElement || !img.imgElement.complete || img.imgElement.width === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.style.cssText = 'padding:8px;background:#f1f5f9;border-radius:4px;font-size:9px;color:var(--text-muted);text-align:center;';
+            placeholder.textContent = '이미지 미로드';
+            // 비동기로 로드 후 갱신
+            if (typeof ImageManager !== 'undefined' && img._imgSrc) {
+                ImageManager.ensureLoaded(img).then(() => {
+                    const container = document.getElementById('correction-content');
+                    if (container) this.render(container);
+                });
+            }
+            return placeholder;
+        }
 
         let sourceImg = img.imgElement;
         if (typeof CanvasManager !== 'undefined') {

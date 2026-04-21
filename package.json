@@ -25,24 +25,36 @@
       "!**/*.md",
       "!dist/**",
       "!.git/**",
-      "!*.md"
+      "!*.md",
+      "!_extracted_from_exe/**",
+      "!로스쿨샘플/**",
+      "!설치용파일/**",
+      "!*.csv",
+      "!*.png",
+      "!*.txt",
+      "!*.jpg"
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "nsis": {
       "oneClick": true,
-      "installerLanguages": ["ko"],
+      "installerLanguages": [
+        "ko"
+      ],
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
   },
   "devDependencies": {
-    "electron": "^41.2.0"
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1"
   }
 }

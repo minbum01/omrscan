@@ -1206,10 +1206,11 @@ const Scoring = {
 
     _periodDropdown() {
         const periods = App.state.periods || [];
-        if (periods.length <= 1) return ''; // 단일 교시는 드롭다운 불필요
+        if (periods.length <= 1) return '';
         const current = this._periodFilter || '';
+        const labels = (typeof PeriodManager !== 'undefined') ? PeriodManager.getDisplayLabels() : {};
         const opts = [`<option value="">전체</option>`,
-            ...periods.map(p => `<option value="${p.id}" ${p.id === current ? 'selected' : ''}>${p.name}</option>`)
+            ...periods.map(p => `<option value="${p.id}" ${p.id === current ? 'selected' : ''}>${labels[p.id] || p.name}</option>`)
         ].join('');
         return `<label style="font-size:11px; display:flex; align-items:center; gap:6px;">
             <span style="font-weight:600; color:var(--text-muted);">교시:</span>

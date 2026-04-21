@@ -64,19 +64,50 @@ const PeriodManager = {
         bar.appendChild(tabsWrap);
     },
 
+    // 같은 이름의 교시에 접미사(A, B, C...) 부여
+    getDisplayLabel(period) {
+        const periods = App.state.periods || [];
+        const sameName = periods.filter(p => p.name === period.name);
+        if (sameName.length <= 1) return period.name;
+        const idx = sameName.findIndex(p => p.id === period.id);
+        const suffix = String.fromCharCode(65 + idx); // A, B, C...
+        return `${period.name}(${suffix})`;
+    },
+
+    // 모든 교시의 표시 라벨 맵 반환 { periodId: displayLabel }
+    getDisplayLabels() {
+        const periods = App.state.periods || [];
+        const labels = {};
+        const nameCount = {};
+        periods.forEach(p => { nameCount[p.name] = (nameCount[p.name] || 0) + 1; });
+        const nameIdx = {};
+        periods.forEach(p => {
+            if (nameCount[p.name] > 1) {
+                nameIdx[p.name] = (nameIdx[p.name] || 0);
+                const suffix = String.fromCharCode(65 + nameIdx[p.name]);
+                labels[p.id] = `${p.name}(${suffix})`;
+                nameIdx[p.name]++;
+            } else {
+                labels[p.id] = p.name;
+            }
+        });
+        return labels;
+    },
+
     _createTab(period) {
         const isActive = period.id === App.state.currentPeriodId;
+        const displayLabel = this.getDisplayLabel(period);
 
         const tab = document.createElement('div');
         tab.className = 'period-tab' + (isActive ? ' active' : '');
         tab.dataset.periodId = period.id;
         tab.draggable = true;
-        tab.title = `${period.name} — 더블클릭으로 이름 변경`;
+        tab.title = `${displayLabel} — 더블클릭으로 이름 변경`;
 
         // 이름
         const nameSpan = document.createElement('span');
         nameSpan.className = 'period-tab-name';
-        nameSpan.textContent = period.name;
+        nameSpan.textContent = displayLabel;
         nameSpan.addEventListener('dblclick', (e) => {
             e.stopPropagation();
             this._startRename(tab, nameSpan, period.id);

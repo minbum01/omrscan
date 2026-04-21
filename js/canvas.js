@@ -421,10 +421,13 @@ const CanvasManager = {
 
             this.render();
             const newIdx = imgObj.rois.length - 1;
-            // 과목코드 박스 치기 모드면 코드 타입으로 세팅 후 팝업 열기
+            // 과목코드 박스 치기 모드면 코드 타입 + 가로 방향 강제
             if (typeof UI !== 'undefined' && UI._pendingCodeLinkRoiIdx != null) {
-                imgObj.rois[newIdx].settings.type = 'subject_code';
-                imgObj.rois[newIdx].settings.name = '';
+                const codeSettings = imgObj.rois[newIdx].settings;
+                codeSettings.type = 'subject_code';
+                codeSettings.name = '';
+                codeSettings.orientation = 'horizontal'; // 과목코드는 항상 가로
+                codeSettings.numQuestions = 1; // 1자리
                 imgObj.rois[newIdx]._isPendingCodeBox = true;
                 setTimeout(() => UI.openRoiSettingsPopup(newIdx), 100);
             } else {
@@ -764,9 +767,62 @@ const CanvasManager = {
         const images = applyAll ? App.state.images : [App.getCurrentImage()];
         if (!images || images.length === 0 || !images[0]) return;
 
-        let remaining = images.length;
+        const total = images.length;
+        let completed = 0;
+        const SHOW_LOADING = total >= 15;
 
-        images.forEach(imgObj => {
+        // 로딩 오버레이
+        let loadingEl = null;
+        if (SHOW_LOADING) {
+            loadingEl = document.createElement('div');
+            loadingEl.id = 'rotate-loading-overlay';
+            loadingEl.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10100;display:flex;align-items:center;justify-content:center;';
+            loadingEl.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px 40px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+                <div style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:8px;">이미지 회전 중...</div>
+                <div id="rotate-loading-progress" style="font-size:14px;color:#3b82f6;font-weight:600;">0 / ${total}</div>
+                <div style="margin-top:12px;width:240px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;">
+                    <div id="rotate-loading-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#3b82f6,#2563eb);border-radius:3px;transition:width 0.15s;"></div>
+                </div>
+            </div>`;
+            document.body.appendChild(loadingEl);
+        }
+
+        const updateProgress = () => {
+            if (!loadingEl) return;
+            const pct = Math.round((completed / total) * 100);
+            const prog = document.getElementById('rotate-loading-progress');
+            const bar = document.getElementById('rotate-loading-bar');
+            if (prog) prog.textContent = `${completed} / ${total}`;
+            if (bar) bar.style.width = pct + '%';
+        };
+
+        const finish = () => {
+            const cur = App.getCurrentImage();
+            if (cur) {
+                const { canvas } = App.els;
+                canvas.width = cur.imgElement.width;
+                canvas.height = cur.imgElement.height;
+                canvas.style.display = 'block';
+                document.getElementById('canvas-empty').style.display = 'none';
+                this.zoomFit();
+                this.render();
+            }
+            if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+            if (loadingEl) loadingEl.remove();
+        };
+
+        // 순차 처리 (한 번에 하나씩 → UI 블로킹 방지)
+        const processNext = async (idx) => {
+            if (idx >= total) { finish(); return; }
+            const imgObj = images[idx];
+            if (!imgObj) { completed++; updateProgress(); setTimeout(() => processNext(idx + 1), 0); return; }
+
+            // Lazy Loading: 이미지가 해제된 상태면 복원
+            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                await ImageManager.ensureLoaded(imgObj);
+            }
+            if (!imgObj.imgElement || imgObj.imgElement.width === 0) { completed++; updateProgress(); setTimeout(() => processNext(idx + 1), 0); return; }
+
             const img = imgObj.imgElement;
             const sw = img.naturalWidth || img.width;
             const sh = img.naturalHeight || img.height;
@@ -781,7 +837,6 @@ const CanvasManager = {
             offCtx.rotate(degrees * Math.PI / 180);
             offCtx.drawImage(img, -sw / 2, -sh / 2);
 
-            // toBlob → createObjectURL (toDataURL보다 안정적)
             off.toBlob(blob => {
                 const url = URL.createObjectURL(blob);
                 const newImg = new Image();
@@ -792,24 +847,18 @@ const CanvasManager = {
                     imgObj.results = null;
                     imgObj.gradeResult = null;
 
-                    remaining--;
-                    if (remaining === 0) {
-                        const cur = App.getCurrentImage();
-                        if (cur) {
-                            const { canvas } = App.els;
-                            canvas.width = cur.imgElement.width;
-                            canvas.height = cur.imgElement.height;
-                            canvas.style.display = 'block';
-                            document.getElementById('canvas-empty').style.display = 'none';
-                            this.zoomFit();
-                            this.render();
-                        }
-                        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
-                    }
+                    completed++;
+                    updateProgress();
+                    // setTimeout으로 UI 갱신 기회 부여
+                    setTimeout(() => processNext(idx + 1), 0);
                 };
                 newImg.src = url;
             }, 'image/png');
-        });
+        };
+
+        // 시작
+        if (SHOW_LOADING) setTimeout(() => processNext(0), 50);
+        else processNext(0);
     },
 
 
