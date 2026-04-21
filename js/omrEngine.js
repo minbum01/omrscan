@@ -371,24 +371,8 @@ const OmrEngine = {
     // Stage 3: 열 위치 일관성으로 노이즈 필터링
     // ==========================================
     _stage3_filterByColumnConsistency(rowGroups, numC, sortProp) {
-        const patternHintEarly = this._currentPatternHint;
-
-        // ── 양식 절대좌표가 있으면 항상 우선 사용 ──
-        // (감지가 불안정할 수 있으므로 양식의 검증된 좌표를 신뢰)
-        if (sortProp === 'cx'
-            && patternHintEarly
-            && Array.isArray(patternHintEarly.colXAbsolute)
-            && patternHintEarly.colXAbsolute.length === numC) {
-            const colAvgX = [...patternHintEarly.colXAbsolute];
-            const colGap = numC > 1 ? (colAvgX[numC - 1] - colAvgX[0]) / (numC - 1) : 20;
-            const tolerance = colGap * 0.4;
-            this._log(`[Stage3-양식] 양식 좌표 사용: [${colAvgX.map(Math.round).join(',')}]`);
-            const filtered = rowGroups.map(row => {
-                const sorted = [...row].sort((a, b) => a[sortProp] - b[sortProp]);
-                return sorted.filter(b => colAvgX.some(avg => Math.abs(b[sortProp] - avg) < tolerance));
-            }).filter(r => r.length > 0);
-            return { filtered, colAvg: colAvgX };
-        }
+        // 양식 좌표 우선 사용 로직 제거 — 양식은 Stage 1.5 gap-validation에서만 개입
+        // (자동 감지가 더 정확할 수 있으므로 양식은 누락/중복 판정의 기준으로만 활용)
 
         // 정상 행(numC개 블롭)에서 열 평균 계산
         const normalRows = rowGroups.filter(r => r.length === numC);
@@ -802,6 +786,64 @@ const OmrEngine = {
     // ==========================================
     // 축 기반 그룹핑 (공용)
     // ==========================================
+    // ==========================================
+    // 양식 기반 gap 검증 + 보간 (x축·y축 공통)
+    // positions: 감지된 위치 배열 (정렬 필수 아님 — 내부에서 정렬)
+    // expectedGap: 양식이 알려주는 기대 간격 (px)
+    // tolerance: 허용 편차 (0.15 = 15%)
+    // logTag: 디버그 로그 접두사
+    // return: 보정된 위치 배열 (오름차순 정렬됨)
+    // ==========================================
+    _validateAndFillGaps(positions, expectedGap, tolerance, logTag) {
+        if (!positions || positions.length < 2 || !expectedGap || expectedGap <= 0) return positions;
+
+        const sorted = [...positions].sort((a, b) => a - b);
+        const tol = expectedGap * tolerance; // 예: 40 * 0.15 = 6
+        const result = [sorted[0]];
+        let mergedCnt = 0, insertedCnt = 0, oddCnt = 0;
+
+        for (let i = 1; i < sorted.length; i++) {
+            const prev = result[result.length - 1];
+            const cur = sorted[i];
+            const gap = cur - prev;
+            const ratio = gap / expectedGap;
+
+            if (Math.abs(gap - expectedGap) <= tol) {
+                // 정상 간격
+                result.push(cur);
+            } else if (ratio < 0.5) {
+                // 중복 — 평균으로 병합
+                result[result.length - 1] = (prev + cur) / 2;
+                mergedCnt++;
+            } else if (ratio >= 1.5 && ratio < 2.5) {
+                // 1개 누락 → 중간 삽입
+                result.push(prev + gap / 2);
+                result.push(cur);
+                insertedCnt++;
+            } else if (ratio >= 2.5 && ratio < 3.5) {
+                // 2개 누락 → 1/3, 2/3 위치에 삽입
+                result.push(prev + gap / 3);
+                result.push(prev + (gap * 2) / 3);
+                result.push(cur);
+                insertedCnt += 2;
+            } else if (ratio >= 3.5 && ratio < 4.5) {
+                // 3개 누락 (드물지만 대비)
+                for (let k = 1; k <= 3; k++) result.push(prev + (gap * k) / 4);
+                result.push(cur);
+                insertedCnt += 3;
+            } else {
+                // 이상값 (0.5~1-tol 사이, 또는 4.5 이상 등) — 유지, 로그만
+                result.push(cur);
+                oddCnt++;
+            }
+        }
+
+        if (mergedCnt > 0 || insertedCnt > 0 || oddCnt > 0) {
+            this._log(`${logTag} 기대gap=${expectedGap.toFixed(1)}(±${(tolerance*100).toFixed(0)}%) | 병합=${mergedCnt} 삽입=${insertedCnt} 이상=${oddCnt} | [${sorted.map(Math.round).join(',')}] → [${result.map(Math.round).join(',')}]`);
+        }
+        return result;
+    },
+
     _groupByAxis(sorted, prop, threshold) {
         const raw = [];
         let cur = [sorted[0]], curVal = sorted[0][prop];
@@ -932,12 +974,86 @@ const OmrEngine = {
             }
         }
 
+        // Stage 1.5: 양식 기반 gap-validation (열)
+        // 감지된 열 간격을 양식의 expectedColGap과 비교하여:
+        //   - ±15% 이내: 정상
+        //   - × 0.5 미만: 중복 → 병합 (평균 위치)
+        //   - × 1.5~2.5 (≈2×): 1개 누락 → 중간에 삽입
+        //   - × 2.5~3.5 (≈3×): 2개 누락 → 균등 간격으로 2개 삽입
+        //   - 그 외: 이상값 → 유지 (로그만)
+        // 양식이 없거나 colAvgPositions가 부족하면 스킵 (자동 결과 유지)
+        if (colAvgPositions && colAvgPositions.length >= 2 && patternHint) {
+            const expectedGap = sortProp === 'cx' ? patternHint.expectedColGap : patternHint.expectedRowGap;
+            if (expectedGap > 0) {
+                colAvgPositions = this._validateAndFillGaps(
+                    colAvgPositions,
+                    expectedGap,
+                    0.15,
+                    '[Stage1.5-colGap]'
+                );
+            }
+        }
+
         // 평균 버블 크기
         const allFilteredBlobs = rowGroups.flat();
         const avgBlobW = allFilteredBlobs.length > 0 ? allFilteredBlobs.reduce((s, b) => s + b.w, 0) / allFilteredBlobs.length : 18;
         const avgBlobH = allFilteredBlobs.length > 0 ? allFilteredBlobs.reduce((s, b) => s + b.h, 0) / allFilteredBlobs.length : 18;
         const sw = sampleSize || avgBlobW * 0.9;
         const sh = sampleSize || avgBlobH * 0.9;
+
+        // ──────────────────────────────────────
+        // Stage 1.6: 양식 기반 gap-validation (행 y축)
+        // rowGroups의 대표 y를 추출 → 양식 expectedRowGap과 비교 → 보정
+        // 누락 행은 synthetic rowGroup(dummy blob 1개)으로 삽입
+        // ──────────────────────────────────────
+        if (rowGroups.length >= 2 && patternHint) {
+            const rowYProp = isVert ? 'cy' : 'cx';
+            const expectedRowGap = isVert ? patternHint.expectedRowGap : patternHint.expectedColGap;
+            if (expectedRowGap > 0) {
+                // 각 행의 대표 좌표 계산
+                const rowReps = rowGroups.map(g => ({
+                    y: g.reduce((s, b) => s + b[rowYProp], 0) / g.length,
+                    group: g,
+                })).sort((a, b) => a.y - b.y);
+                const originalYs = rowReps.map(r => r.y);
+                const validatedYs = this._validateAndFillGaps(
+                    originalYs,
+                    expectedRowGap,
+                    0.15,
+                    '[Stage1.6-rowGap]'
+                );
+
+                // validatedYs 기준으로 rowGroups 재구성
+                // 각 y에 대해 원본 rowReps에서 가장 가까운 항목 매칭 (tol 내)
+                const matchTol = expectedRowGap * 0.3;
+                const newRowGroups = [];
+                const usedReps = new Set();
+                validatedYs.forEach(y => {
+                    let bestIdx = -1, bestDist = Infinity;
+                    rowReps.forEach((r, i) => {
+                        if (usedReps.has(i)) return;
+                        const d = Math.abs(r.y - y);
+                        if (d < bestDist && d < matchTol) { bestDist = d; bestIdx = i; }
+                    });
+                    if (bestIdx >= 0) {
+                        usedReps.add(bestIdx);
+                        newRowGroups.push(rowReps[bestIdx].group);
+                    } else {
+                        // 삽입된 행 — synthetic rowGroup (dummy blob 1개)
+                        newRowGroups.push([{
+                            cx: isVert ? 0 : y,
+                            cy: isVert ? y : 0,
+                            w: avgBlobW, h: avgBlobH,
+                            _synthetic: true,
+                        }]);
+                    }
+                });
+                if (newRowGroups.length !== rowGroups.length) {
+                    this._log(`[Stage1.6] rowGroups ${rowGroups.length}행 → ${newRowGroups.length}행`);
+                }
+                rowGroups = newRowGroups;
+            }
+        }
 
         this._log(`[Stage1.5] 열평균=[${colAvgPositions.map(Math.round).join(',')}] sampleSize=${Math.round(sw)}x${Math.round(sh)}`);
 

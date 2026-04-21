@@ -6,6 +6,15 @@ const Scoring = {
     _activeTab: 'omr',
     _defaultMaxQ: 40,
     _showColumnSettings: false,
+    _cachedData: null, // collectData() 결과 캐시
+    _cacheDirty: true, // 상태 변경 시 true → 다음 collectData() 재계산
+
+    // 캐시 무효화 — 외부/내부 mutation 후 호출
+    invalidate() {
+        this._cacheDirty = true;
+        this._cachedData = null;
+    },
+
     _sortMode: 'student', // 'student' = 인원명단순, 'score_desc' = 총점 내림차순, 'subject_desc' = 과목별 내림차순
     _subjectSortName: null, // 'subject_desc' 시 정렬 기준 과목명
     _currentSubject: null,   // OMR 결과표: 선택된 과목 (null = 자동으로 첫 과목 사용)
@@ -155,6 +164,17 @@ const Scoring = {
     // 데이터 수집 (시험인원 등록 순서 기준)
     // ==========================================
     collectData() {
+        // 캐시 hit
+        if (!this._cacheDirty && this._cachedData) {
+            return this._cachedData;
+        }
+        const result = this._collectDataUncached();
+        this._cachedData = result;
+        this._cacheDirty = false;
+        return result;
+    },
+
+    _collectDataUncached() {
         // 다교시 모드: 모든 교시 이미지를 수험번호 기준으로 통합
         const allPeriods = App.state.periods || [];
 
@@ -863,7 +883,11 @@ const Scoring = {
     // rows + 선택 과목 → 2D 배열 (CSV/XLSX 공용) — 헤더 visible 상태 반영
     _buildOMRAoA(rows, subj) {
         const proj = subj
-            ? rows.filter(r => r._noOmr || (r.subjects && r.subjects[subj])).map(r => r._noOmr ? r : this._projectRow(r, subj))
+            ? rows.map(r => {
+                if (r._noOmr) return r;
+                if (!r.subjects || !r.subjects[subj]) return { ...r, _noSubject: true };
+                return this._projectRow(r, subj);
+            })
             : rows;
         const cols = this._getOMRColumns();
         const infoCols = cols.filter(c => c.type === 'info' && c.visible);
@@ -883,11 +907,12 @@ const Scoring = {
         const aoa = [header];
         proj.forEach(r => {
             const row = [];
+            const blank = r._noOmr || r._noSubject;
             infoCols.forEach(col => {
-                if (r._noOmr && col.type !== 'info') { row.push(''); return; }
+                if (blank && col.type !== 'info') { row.push(''); return; }
                 if (col.id === 'examNo') row.push(r.examNo || '');
                 else if (col.id === 'name') row.push(r.name || '');
-                else if (col.id === 'score') row.push(r._noOmr ? '' : this._fmtScore(r.score));
+                else if (col.id === 'score') row.push(blank ? '' : this._fmtScore(r.score));
                 else if (col.id === 'birthday') row.push(r.birthday || '');
                 else if (col.id === 'phone') row.push(r.phone || '');
                 else if (col.id === 'rank') row.push(r.rank != null ? r.rank : '');
@@ -897,14 +922,14 @@ const Scoring = {
             });
             if (showAnswers) {
                 qs.forEach(q => {
-                    if (r._noOmr) { row.push(''); return; }
+                    if (blank) { row.push(''); return; }
                     const a = (r.answers || []).find(x => x.q === q);
                     row.push(a ? (a.markedLabel || '') : '');
                 });
             }
             if (showOX) {
                 qs.forEach(q => {
-                    if (r._noOmr) { row.push(''); return; }
+                    if (blank) { row.push(''); return; }
                     const a = (r.answers || []).find(x => x.q === q);
                     row.push(a ? (a.isCorrect ? 'O' : 'X') : '');
                 });
@@ -1201,6 +1226,7 @@ const Scoring = {
         this._periodFilter = id || null;
         this._currentSubject = null; // 과목 리셋 (교시별 과목 다를 수 있음)
         this._itemSubject = null;
+        this.invalidate(); // collectData가 _periodFilter를 참조하므로 캐시 무효화
         this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
@@ -1259,11 +1285,14 @@ const Scoring = {
         const subjList = this.getSubjectList(rowsOrig);
         let subj = this._resolveSubject(rowsOrig, this._currentSubject);
         if (!subj && subjList.length > 0) subj = subjList[0];
-        // 선택 과목을 응시한 학생만 표시
-        const filteredOrig = subj
-            ? rowsOrig.filter(r => r._noOmr || (r.subjects && r.subjects[subj]))
-            : rowsOrig;
-        const rows = filteredOrig.map(r => r._noOmr ? r : this._projectRow(r, subj));
+        // 모든 학생 표시 — 현재 과목을 응시하지 않은 학생은 _noSubject 플래그로 blank 렌더
+        const rows = rowsOrig.map(r => {
+            if (r._noOmr) return r;
+            if (subj && (!r.subjects || !r.subjects[subj])) {
+                return { ...r, _noSubject: true };
+            }
+            return this._projectRow(r, subj);
+        });
 
         // 상단 도구
         let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
@@ -1330,12 +1359,14 @@ const Scoring = {
             let bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             if (r._sameName) bg = 'background:#fef9c3;'; // 동명이인 노란 별색
             const noOmr = r._noOmr;
+            const blankForSubject = r._noSubject; // 현재 과목 미응시 (info는 표시, 그 외는 blank)
+            const faded = noOmr || blankForSubject;
             const title = r._sameName ? ' title="동명이인 또는 체킹 오류 확인 필요"' : '';
-            html += `<tr style="${bg} ${noOmr ? 'opacity:0.5;' : ''}"${title}>`;
+            html += `<tr style="${bg} ${faded ? 'opacity:0.5;' : ''}"${title}>`;
             cols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
                 let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
-                if (noOmr && col.type !== 'info') { val = ''; html += `<td style="${style}">${val}</td>`; return; }
+                if ((noOmr || blankForSubject) && col.type !== 'info') { val = ''; html += `<td style="${style}">${val}</td>`; return; }
                 if (col.id === 'examNo') val = r.examNo;
                 else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
                 else if (col.id === 'score') { val = this._fmtScore(r.score); style += 'font-weight:700; color:var(--blue); font-size:12px;'; }

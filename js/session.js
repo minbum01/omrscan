@@ -130,6 +130,25 @@ const SessionManager = {
     markDirty() {
         this._hasUnsavedChanges = true;
         this._updateHeader();
+        // 데이터 mutation이 있었으므로 탭 렌더링 캐시 무효화
+        if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+    },
+
+    // 메타데이터만 저장 (이미지 base64 직렬화 생략) — CSV 불러오기 등 가벼운 변경용
+    // 내부적으로 saveCurrentSession({ metadataOnly: true })을 호출
+    async saveMetadataOnly() {
+        return this.saveCurrentSession({ metadataOnly: true });
+    },
+
+    // 디바운스 저장 — 짧은 시간에 여러 mutation이 겹쳐도 마지막 1번만 저장
+    _debouncedSaveTimer: null,
+    scheduleMetadataSave(delayMs = 1500) {
+        if (this._debouncedSaveTimer) clearTimeout(this._debouncedSaveTimer);
+        this._debouncedSaveTimer = setTimeout(() => {
+            this._debouncedSaveTimer = null;
+            this.saveMetadataOnly();
+        }, delayMs);
     },
 
     // 프로그램 종료 전 저장 확인 — true면 종료 진행, false면 취소
@@ -436,6 +455,10 @@ const SessionManager = {
         this.isTemplateMode = true;
         this._hasUnsavedChanges = false;
 
+        if (typeof ImageManager !== 'undefined') {
+            ImageManager.releaseImageResources(App.state.images);
+            ImageManager.releaseImageResources(App.state.deletedImages);
+        }
         App.state.subjects = [];
         App.state.students = [];
         App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
@@ -481,6 +504,10 @@ const SessionManager = {
         this.isTemplateMode = false;
         this._hasUnsavedChanges = false;
 
+        if (typeof ImageManager !== 'undefined') {
+            ImageManager.releaseImageResources(App.state.images);
+            ImageManager.releaseImageResources(App.state.deletedImages);
+        }
         App.state.subjects = [];
         App.state.students = [];
         App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
@@ -524,6 +551,7 @@ const SessionManager = {
             }
         }
         this._closeStartScreen();
+        this._showProgressOverlay(`세션 "${name}" 불러오는 중...`);
 
         try {
             let data = null;
@@ -541,6 +569,10 @@ const SessionManager = {
             }
 
             if (!data) {
+                if (typeof ImageManager !== 'undefined') {
+                    ImageManager.releaseImageResources(App.state.images);
+                    ImageManager.releaseImageResources(App.state.deletedImages);
+                }
                 this.currentSessionName = name;
                 App.state.subjects = [];
                 App.state.students = [];
@@ -548,10 +580,15 @@ const SessionManager = {
                 App.state.currentIndex = -1;
                 this._hasUnsavedChanges = false;
                 this._updateHeader();
+                this._hideProgressOverlay();
                 Toast.info(`세션 "${name}" (새 세션)`);
                 return;
             }
 
+            if (typeof ImageManager !== 'undefined') {
+                ImageManager.releaseImageResources(App.state.images);
+                ImageManager.releaseImageResources(App.state.deletedImages);
+            }
             App.state.subjects = data.subjects || [];
             App.state.students = data.students || [];
             App.state.matchFields = data.matchFields || { name: true, birth: false, examNo: false, phone: false };
@@ -584,7 +621,7 @@ const SessionManager = {
 
             // 이미지 자동 로드 (Electron)
             if (imageFiles.length > 0) {
-                Toast.info(`이미지 ${imageFiles.length}장 로딩 중...`);
+                this._updateProgressOverlay(`이미지 로드 중... (0/${imageFiles.length})`);
                 let loaded = 0;
                 imageFiles.forEach((imgFile, idx) => {
                     const img = new Image();
@@ -631,6 +668,7 @@ const SessionManager = {
                         }
 
                         loaded++;
+                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${imageFiles.length})`);
                         if (loaded === imageFiles.length) {
                             // 현재 교시의 images 를 App.state.images 로 동기화
                             const cp = App.getCurrentPeriod();
@@ -642,6 +680,9 @@ const SessionManager = {
                                 if (App.state.images.length > 0) ImageManager.select(0);
                             }
                             if (typeof UI !== 'undefined') UI.updateRightPanel();
+                            if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+                            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+                            this._hideProgressOverlay();
 
                             const totalActive  = (App.state.periods || []).reduce((s, p) => s + p.images.length, 0);
                             const deletedCount = App.state.deletedImages.length;
@@ -652,12 +693,14 @@ const SessionManager = {
                     };
                     img.onerror = () => {
                         loaded++;
+                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${imageFiles.length})`);
                         console.warn(`이미지 로드 실패: ${imgFile.filename}`);
                         if (loaded === imageFiles.length) {
                             const cp = App.getCurrentPeriod();
                             if (cp) App.state.images = cp.images;
                             if (typeof PeriodManager !== 'undefined') PeriodManager.render();
                             if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+                            this._hideProgressOverlay();
                         }
                     };
                     img.src = imgFile.url;
@@ -665,12 +708,14 @@ const SessionManager = {
             } else {
                 if (typeof ImageManager !== 'undefined') ImageManager.updateList();
                 if (typeof UI !== 'undefined') UI.updateRightPanel();
+                this._hideProgressOverlay();
                 const imgCount = data.imageCount || 0;
                 Toast.success(`세션 "${name}" 로드됨${imgCount > 0 ? ` (이미지 재업로드 필요)` : ''}`);
             }
         } catch (e) {
             console.error('세션 로드 실패:', e);
             Toast.error('세션 로드 실패: ' + e.message);
+            this._hideProgressOverlay();
         }
     },
 
@@ -696,7 +741,34 @@ const SessionManager = {
         }
     },
 
-    async saveCurrentSession() {
+    // 저장/불러오기 중 로딩 오버레이 제어
+    _showProgressOverlay(text) {
+        let overlay = document.getElementById('session-progress-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'session-progress-overlay';
+            overlay.className = 'loading-overlay';
+            overlay.innerHTML = `
+                <div class="loading-box">
+                    <div class="loading-spinner"></div>
+                    <p class="loading-text"></p>
+                </div>`;
+            document.body.appendChild(overlay);
+        }
+        overlay.querySelector('.loading-text').textContent = text;
+        overlay.style.display = 'flex';
+    },
+    _updateProgressOverlay(text) {
+        const overlay = document.getElementById('session-progress-overlay');
+        if (overlay) overlay.querySelector('.loading-text').textContent = text;
+    },
+    _hideProgressOverlay() {
+        const overlay = document.getElementById('session-progress-overlay');
+        if (overlay) overlay.style.display = 'none';
+    },
+
+    async saveCurrentSession(opts) {
+        const metadataOnly = !!(opts && opts.metadataOnly);
         if (!this.currentSessionName) {
             Toast.error('세션을 먼저 생성하세요');
             return;
@@ -842,34 +914,52 @@ const SessionManager = {
             currentPeriodId: App.state.currentPeriodId || 'p1',
         };
 
+        // metadataOnly가 아니면 로딩 오버레이 표시 (이미지 직렬화가 무거운 작업이므로)
+        if (!metadataOnly) {
+            this._showProgressOverlay(`세션 저장 중... (${allPeriodEntries.length}장 이미지)`);
+        }
+
         try {
             if (this.isElectron) {
-                // 이미지 → base64 변환 (Lazy Loading 복원 포함)
-                const imgToData = async (imgObj, filename) => {
-                    try {
-                        // Lazy Loading: 해제된 이미지 복원
-                        if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
-                            await ImageManager.ensureLoaded(imgObj);
-                        }
-                        if (!imgObj.imgElement || imgObj.imgElement.width === 0) return null;
-                        const c = document.createElement('canvas');
-                        c.width  = imgObj.imgElement.naturalWidth  || imgObj.imgElement.width;
-                        c.height = imgObj.imgElement.naturalHeight || imgObj.imgElement.height;
-                        c.getContext('2d').drawImage(imgObj.imgElement, 0, 0);
-                        return { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
-                    } catch (e) { return null; }
-                };
-                const activeArr = (await Promise.all(allPeriodEntries.map(({ img, periodId, localIdx }) =>
-                    imgToData(img, buildFilenameByRef(img, periodId, localIdx))
-                ))).filter(Boolean);
-                const deletedArr = (await Promise.all(deletedImages.map(img =>
-                    imgToData(img, getPristine(img))
-                ))).filter(Boolean);
-                const imageDataArr = [...activeArr, ...deletedArr];
+                let imageDataArr = null; // null이면 main.js IPC가 이미지 디렉터리를 건드리지 않음
+                if (!metadataOnly) {
+                    let processed = 0;
+                    // 이미지 → base64 변환 (Lazy Loading 복원 포함)
+                    const total = allPeriodEntries.length + deletedImages.length;
+                    const imgToData = async (imgObj, filename) => {
+                        try {
+                            // Lazy Loading: 해제된 이미지 복원
+                            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                                await ImageManager.ensureLoaded(imgObj);
+                            }
+                            if (!imgObj.imgElement || imgObj.imgElement.width === 0) { processed++; this._updateProgressOverlay(`세션 저장 중... (${processed}/${total})`); return null; }
+                            const c = document.createElement('canvas');
+                            c.width  = imgObj.imgElement.naturalWidth  || imgObj.imgElement.width;
+                            c.height = imgObj.imgElement.naturalHeight || imgObj.imgElement.height;
+                            c.getContext('2d').drawImage(imgObj.imgElement, 0, 0);
+                            const result = { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
+                            processed++;
+                            this._updateProgressOverlay(`세션 저장 중... (${processed}/${total})`);
+                            return result;
+                        } catch (e) { processed++; return null; }
+                    };
+                    const activeArr = (await Promise.all(allPeriodEntries.map(({ img, periodId, localIdx }) =>
+                        imgToData(img, buildFilenameByRef(img, periodId, localIdx))
+                    ))).filter(Boolean);
+                    const deletedArr = (await Promise.all(deletedImages.map(img =>
+                        imgToData(img, getPristine(img))
+                    ))).filter(Boolean);
+                    imageDataArr = [...activeArr, ...deletedArr];
+                    this._updateProgressOverlay(`디스크에 저장 중... (${imageDataArr.length}장)`);
+                }
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);
                 if (!result.success) throw new Error(result.error);
-                console.log(`[세션] 파일 저장: ${result.path} (이미지 ${imageDataArr.length}장)`);
+                if (metadataOnly) {
+                    console.log(`[세션] 메타만 저장: ${result.path}`);
+                } else {
+                    console.log(`[세션] 파일 저장: ${result.path} (이미지 ${imageDataArr.length}장)`);
+                }
             } else {
                 localStorage.setItem(this.STORAGE_PREFIX + name, JSON.stringify(data));
                 this._updateSessionMeta(name, {
@@ -881,9 +971,11 @@ const SessionManager = {
             }
             this._hasUnsavedChanges = false;
             this._updateHeader();
-            Toast.success(`세션 "${name}" 저장 완료`);
+            if (!metadataOnly) Toast.success(`세션 "${name}" 저장 완료`);
         } catch (e) {
             Toast.error('시험(세션) 저장 실패: ' + e.message);
+        } finally {
+            if (!metadataOnly) this._hideProgressOverlay();
         }
     },
 

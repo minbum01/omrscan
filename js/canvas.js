@@ -582,7 +582,11 @@ const CanvasManager = {
             this.render();
             ImageManager.updateList();
             UI.updateRightPanel();
-            if (typeof Correction !== 'undefined' && Correction.updateBadge) Correction.updateBadge();
+            if (typeof Correction !== 'undefined') {
+                Correction.invalidate && Correction.invalidate();
+                Correction.updateBadge && Correction.updateBadge();
+            }
+            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
             if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
           } catch (err) {
@@ -738,8 +742,10 @@ const CanvasManager = {
                 const url = URL.createObjectURL(blob);
                 const newImg = new Image();
                 newImg.onload = () => {
-                    URL.revokeObjectURL(url);
+                    // 이전 _imgSrc가 blob이면 해제, 보정된 blob URL을 재사용
+                    if (typeof ImageManager !== 'undefined') ImageManager._revokeBlobUrl(imgObj._imgSrc);
                     imgObj.imgElement = newImg;
+                    imgObj._imgSrc = url;
                     // ROI와 결과는 유지 (미세 보정이므로)
                     imgObj.results = null;
                     imgObj.gradeResult = null;
@@ -759,7 +765,7 @@ const CanvasManager = {
                     }
                 };
                 newImg.src = url;
-            }, 'image/png');
+            }, 'image/jpeg', 0.92);
         });
     },
 
@@ -842,10 +848,11 @@ const CanvasManager = {
                 const url = URL.createObjectURL(blob);
                 const newImg = new Image();
                 newImg.onload = () => {
-                    URL.revokeObjectURL(url);
+                    // 이전 _imgSrc가 blob이면 해제
+                    if (typeof ImageManager !== 'undefined') ImageManager._revokeBlobUrl(imgObj._imgSrc);
                     imgObj.imgElement = newImg;
-                    // 회전된 이미지로 _imgSrc 갱신 (Lazy Loading 복원 시 회전 상태 유지)
-                    imgObj._imgSrc = off.toDataURL('image/jpeg', 0.92);
+                    // 회전된 이미지의 blob URL을 그대로 _imgSrc로 사용 (Lazy Loading 복원 시 회전 상태 유지)
+                    imgObj._imgSrc = url;
                     imgObj.rois = [];
                     imgObj.results = null;
                     imgObj.gradeResult = null;
@@ -856,7 +863,7 @@ const CanvasManager = {
                     setTimeout(() => processNext(idx + 1), 0);
                 };
                 newImg.src = url;
-            }, 'image/png');
+            }, 'image/jpeg', 0.92);
         };
 
         // 시작

@@ -205,6 +205,11 @@ ipcMain.handle('session:save', async (event, sessionName, data, images) => {
         const filePath = path.join(sessionDir, baseName + '.json');
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 
+        // images === null 이면 이미지 파일 영역은 건드리지 않음 (메타만 저장)
+        if (images === null || images === undefined) {
+            return { success: true, path: filePath };
+        }
+
         // 이미지 저장
         if (images && images.length > 0) {
             const imgDir = path.join(sessionDir, 'images');

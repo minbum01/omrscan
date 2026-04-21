@@ -474,9 +474,9 @@ const SubjectManager = {
         ImageManager.updateList();
         CanvasManager.render();
         UI.updateRightPanel();
-        // Electron: 세션 파일에 즉시 저장
-        if (typeof SessionManager !== 'undefined' && SessionManager.saveCurrentSession) {
-            SessionManager.saveCurrentSession();
+        // 과목 저장은 메타만 변경 — 이미지 base64 직렬화 생략
+        if (typeof SessionManager !== 'undefined' && SessionManager.saveMetadataOnly) {
+            SessionManager.saveMetadataOnly();
         }
         Toast.success(`${subjects.length}개 과목 저장 완료`);
         // 모달은 닫지 않음 — 사용자가 계속 편집/매핑할 수 있게 유지
@@ -590,9 +590,9 @@ const SubjectManager = {
 
                 this.saveToStorage();
                 this.renderList();
-                // Electron: 세션 파일에 즉시 저장 (localStorage만으론 불안정)
-                if (typeof SessionManager !== 'undefined' && SessionManager.saveCurrentSession) {
-                    SessionManager.saveCurrentSession();
+                // 메타만 저장 (이미지 base64 변환 생략) — CSV 임포트는 과목 메타만 변경
+                if (typeof SessionManager !== 'undefined' && SessionManager.saveMetadataOnly) {
+                    SessionManager.saveMetadataOnly();
                 }
                 Toast.success(`CSV에서 ${imported}개 과목 불러옴`);
             } catch (err) {
@@ -844,8 +844,9 @@ const SubjectManager = {
             return; // 닫기 차단
         }
         document.getElementById('subject-modal').remove();
-        if (typeof SessionManager !== 'undefined' && SessionManager._hasUnsavedChanges && SessionManager.saveCurrentSession) {
-            SessionManager.saveCurrentSession();
+        // 모달 닫을 때 — 과목/인원만 변경됐으므로 메타만 저장
+        if (typeof SessionManager !== 'undefined' && SessionManager._hasUnsavedChanges && SessionManager.saveMetadataOnly) {
+            SessionManager.saveMetadataOnly();
         }
     },
 
@@ -1092,9 +1093,28 @@ const SubjectManager = {
                     });
                     imported++;
                 });
+                // CSV 내용 기반으로 매칭 필드 자동 활성화
+                // 사용자가 UI에서 매번 토글할 필요 없도록 데이터 존재하면 on
+                if (!App.state.matchFields) App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
+                const mf = App.state.matchFields;
+                let autoEnabled = [];
+                if (students.some(st => st.examNo && st.examNo.length > 0) && !mf.examNo) {
+                    mf.examNo = true; autoEnabled.push('수험번호');
+                }
+                if (students.some(st => st.phone && st.phone.length > 0) && !mf.phone) {
+                    mf.phone = true; autoEnabled.push('핸드폰');
+                }
+                if (students.some(st => st.birth && st.birth.length > 0) && !mf.birth) {
+                    mf.birth = true; autoEnabled.push('생년월일');
+                }
+                if (autoEnabled.length > 0) {
+                    try { localStorage.setItem('omr_match_fields_v1', JSON.stringify(mf)); } catch (_) {}
+                    console.log(`[CSV] 매칭 필드 자동 활성화: ${autoEnabled.join(', ')}`);
+                }
+
                 if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
                 this.renderStudentList();
-                Toast.success(`CSV에서 ${imported}명 불러옴`);
+                Toast.success(`CSV에서 ${imported}명 불러옴${autoEnabled.length ? ` (매칭: ${autoEnabled.join('·')} 자동 활성화)` : ''}`);
             } catch (err) {
                 Toast.error('CSV 파싱 실패: ' + err.message);
             }

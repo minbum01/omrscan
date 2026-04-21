@@ -163,6 +163,10 @@ const App = {
         this.state.images    = p.images;
         this.state.answerKey = p.answerKey || null;
         this.state.currentIndex = -1;
+
+        // 교시 전환으로 images 참조가 바뀜 → 캐시 무효화
+        if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
     },
 
     // App.state.answerKey 변경 시 현재 period 에 즉시 반영

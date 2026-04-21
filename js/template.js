@@ -284,6 +284,10 @@ const TemplateManager = {
         SessionManager.isTemplateMode = true;
         SessionManager._hasUnsavedChanges = false;
 
+        if (typeof ImageManager !== 'undefined') {
+            ImageManager.releaseImageResources(App.state.images);
+            ImageManager.releaseImageResources(App.state.deletedImages);
+        }
         App.state.subjects = [];
         App.state.students = [];
         App.state.matchFields = { name: true, birth: false, examNo: false, phone: false };
@@ -331,6 +335,9 @@ const TemplateManager = {
             if (typeof UI !== 'undefined') UI.updateRightPanel();
             CanvasManager.render();
             App.updateStep(App.STEPS.REGION);
+            // 새 세션 생성이지만 데이터 변경이 있으므로 캐시 초기화
+            if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
             Toast.success(`양식 편집 모드 — ROI ${template.rois.length}개 복원됨`);
         };
         img.onerror = () => Toast.error('참조 이미지 로드 실패');
@@ -366,6 +373,10 @@ const TemplateManager = {
             CanvasManager.render();
             App.updateStep(App.STEPS.REGION);
             ImageManager.updateList();
+            // 캐시 무효화 + dirty 플래그 — results/gradeResult/rois가 바뀌었음
+            if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+            if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
             const msg = `양식 불러오기 완료 (영역 ${template.rois.length}개${template.intensity ? `, 진하기 ${template.intensity}%` : ''})`;
             Toast.success(msg);
         } catch (err) {

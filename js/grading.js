@@ -154,6 +154,8 @@ const Grading = {
         CanvasManager.render();
         App.updateStatusBar();
         UI.updateRightPanel();
+        if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         Toast.success(`정답 ${numQ}문항 저장 완료`);
         overlay.remove();

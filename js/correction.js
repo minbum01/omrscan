@@ -8,6 +8,15 @@
 const Correction = {
     PAGE_SIZE: 30,
     _pages: {}, // { 'col-null-pending': 0, 'col-null-history': 0, ... }
+    _renderGen: 0, // 현재 render() 세대. 비동기 콜백의 stale 여부 판정
+    _cachedCollection: null, // collect() 결과 캐시
+    _cacheDirty: true, // 상태 변경 시 true로 설정 → 다음 collect() 재계산
+
+    // 캐시 무효화 — 외부/내부 mutation 후 호출
+    invalidate() {
+        this._cacheDirty = true;
+        this._cachedCollection = null;
+    },
 
     _getPage(colId) { return this._pages[colId] || 0; },
     _setPage(colId, page) {
@@ -15,7 +24,18 @@ const Correction = {
         this.render(document.getElementById('correction-content'));
     },
 
+    // 교정 탭이 현재 보이는지 여부
+    _isVisible() {
+        const view = document.getElementById('correction-view');
+        return !!(view && view.style.display !== 'none');
+    },
+
     collect() {
+        // 캐시 hit
+        if (!this._cacheDirty && this._cachedCollection) {
+            return this._cachedCollection;
+        }
+
         const nullPending = [], nullHistory = [];
         const autoPending = [], autoHistory = [];
         const multiPending = [], multiHistory = [];
@@ -58,21 +78,33 @@ const Correction = {
             });
         });
 
-        return { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory };
+        const result = { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory };
+        this._cachedCollection = result;
+        this._cacheDirty = false;
+        return result;
     },
 
-    updateBadge() {
-        const { nullPending, autoPending, multiPending } = this.collect();
+    _applyBadge(nullPendingLen, autoPendingLen, multiPendingLen) {
         const badge = document.getElementById('tab-correction-badge');
-        const pending = nullPending.length + autoPending.length + multiPending.length;
         if (!badge) return;
+        const pending = nullPendingLen + autoPendingLen + multiPendingLen;
         if (pending > 0) { badge.style.display = ''; badge.textContent = pending; }
         else { badge.style.display = 'none'; }
     },
 
+    updateBadge() {
+        const { nullPending, autoPending, multiPending } = this.collect();
+        this._applyBadge(nullPending.length, autoPending.length, multiPending.length);
+    },
+
     render(container) {
+        if (!container) return;
+        // 렌더 세대 증가 — 이전 pending 콜백은 모두 stale 처리
+        const myGen = ++this._renderGen;
+        this._activeRenderGen = myGen;
         const { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory } = this.collect();
-        this.updateBadge();
+        // collect() 결과를 재사용 — updateBadge()의 중복 순회 제거
+        this._applyBadge(nullPending.length, autoPending.length, multiPending.length);
 
         const anyConfirmed = (App.state.images || []).some(img => img._correctionConfirmed);
         const hasPending = nullPending.length + autoPending.length + multiPending.length > 0;
@@ -328,9 +360,13 @@ const Correction = {
             const placeholder = document.createElement('div');
             placeholder.style.cssText = 'padding:8px;background:#f1f5f9;border-radius:4px;font-size:9px;color:var(--text-muted);text-align:center;';
             placeholder.textContent = '이미지 미로드';
-            // 비동기로 로드 후 갱신
+            // 비동기로 로드 후 갱신 — 탭 전환/후속 render 시 stale 방지
             if (typeof ImageManager !== 'undefined' && img._imgSrc) {
+                const capturedGen = this._activeRenderGen;
                 ImageManager.ensureLoaded(img).then(() => {
+                    // 이미 새 render가 시작되었거나 탭이 닫혔으면 무시
+                    if (capturedGen !== this._activeRenderGen) return;
+                    if (!this._isVisible()) return;
                     const container = document.getElementById('correction-content');
                     if (container) this.render(container);
                 });
@@ -452,11 +488,17 @@ const Correction = {
         row._userCorrected = true;
         row._xvAutoCorrected = false;
         row.undetected = false;
+        this.invalidate();
 
         if (typeof Grading !== 'undefined') {
             img.gradeResult = Grading.grade(img.results, img);
         }
+        // 수험번호/전화번호 ROI를 교정했을 수 있으므로 이름 재매칭
+        if (typeof ImageManager !== 'undefined' && ImageManager.applyPhonePrefix) {
+            ImageManager.applyPhonePrefix(img);
+        }
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
         const curEl = document.activeElement;
@@ -528,12 +570,15 @@ const Correction = {
             row._xvAutoCorrected = false;
             row.undetected = false;
         });
+        this.invalidate();
         const affectedImgs = new Set(autoPending.map(e => e.imgIdx));
         affectedImgs.forEach(imgIdx => {
             const img = App.state.images[imgIdx];
             if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
+            if (img && typeof ImageManager !== 'undefined' && ImageManager.applyPhonePrefix) ImageManager.applyPhonePrefix(img);
         });
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.render(document.getElementById('correction-content'));
         Toast.success(`1.5배 수정중 ${count}개 전체 확인`);
@@ -557,12 +602,15 @@ const Correction = {
                 if (firstAnswer && row.blobs[firstAnswer - 1]) row.blobs[firstAnswer - 1].isMarked = true;
             }
         });
+        this.invalidate();
         const affectedImgs = new Set(multiPending.map(e => e.imgIdx));
         affectedImgs.forEach(imgIdx => {
             const img = App.state.images[imgIdx];
             if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
+            if (img && typeof ImageManager !== 'undefined' && ImageManager.applyPhonePrefix) ImageManager.applyPhonePrefix(img);
         });
         if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
         this.render(document.getElementById('correction-content'));
         Toast.success(`중복의심 ${count}개 전체 확인 (1등 값으로)`);

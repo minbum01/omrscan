@@ -7,6 +7,132 @@ const BatchProcess = {
         // 드롭다운 메뉴의 개별 항목에서 직접 호출하므로 별도 바인딩 불필요
     },
 
+    // 특정 이미지 배열에 대해서만 일괄 분석 (오류 탭 재분석용)
+    // 각 이미지의 현재 ROI 사용 — 양식 적용이 이미 호출부에서 끝난 상태 가정
+    runForImages(images) {
+        if (!images || images.length === 0) { Toast.error('재분석할 이미지가 없습니다'); return; }
+        const missingRoi = images.find(img => !img.rois || img.rois.length === 0);
+        if (missingRoi) { Toast.error(`박스(ROI)가 없는 이미지: ${missingRoi.name}`); return; }
+
+        const overlay = this.createModal(images.length);
+        document.body.appendChild(overlay);
+
+        let processed = 0;
+        const processNext = async () => {
+            if (processed >= images.length) {
+                this.finishPartial(overlay, images.length);
+                return;
+            }
+            const imgObj = images[processed];
+            try {
+                imgObj.results = [];
+                imgObj.validationErrors = [];
+
+                // Lazy Loading 복원
+                if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                    const loaded = await ImageManager.ensureLoaded(imgObj);
+                    if (!loaded) throw new Error('이미지 로드 실패');
+                }
+
+                const imgIntensity = imgObj.intensity || CanvasManager.intensity || 100;
+                let batchCanvas = null;
+                const imgEl = imgObj.imgElement;
+                const bw = imgEl.naturalWidth || imgEl.width;
+                const bh = imgEl.naturalHeight || imgEl.height;
+                if (!bw || !bh) throw new Error('이미지 크기 0');
+                if (imgIntensity !== 100) {
+                    const prev = CanvasManager.intensity;
+                    CanvasManager.intensity = imgIntensity;
+                    batchCanvas = CanvasManager._getIntensifiedImage(imgObj);
+                    CanvasManager.intensity = prev;
+                }
+                if (!batchCanvas) {
+                    batchCanvas = document.createElement('canvas');
+                    batchCanvas.width = bw; batchCanvas.height = bh;
+                    batchCanvas.getContext('2d', { willReadFrequently: true }).drawImage(imgEl, 0, 0);
+                }
+
+                imgObj.rois.forEach((roi, idx) => {
+                    const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h, batchCanvas);
+                    const s = roi.settings || UI.defaultSettings();
+                    const orientation = s.orientation || 'vertical';
+                    const numQ = s.numQuestions || 0;
+                    const numC = s.numChoices || 0;
+                    const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
+                    const elongatedMode = s.elongatedMode || false;
+                    const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
+                    const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
+
+                    const startNum = s.startNum || 1;
+                    const expectedQ = s.numQuestions || 20;
+                    const expectedC = s.numChoices || 5;
+                    const regionName = s.name || `영역 ${idx + 1}`;
+
+                    analysis.rows.forEach((row, i) => { row.questionNumber = startNum + i; });
+
+                    const detectedQ = analysis.rows.length;
+                    if (detectedQ < expectedQ) {
+                        for (let i = detectedQ; i < expectedQ; i++) {
+                            analysis.rows.push({
+                                questionNumber: startNum + i, numChoices: 0,
+                                markedAnswer: null, blobs: [], undetected: true,
+                            });
+                        }
+                        imgObj.validationErrors.push({
+                            roiIndex: idx + 1, regionName, type: 'missing_questions',
+                            expected: expectedQ, detected: detectedQ, missing: expectedQ - detectedQ,
+                        });
+                    }
+                    if (analysis.validation && analysis.validation.choiceMismatchRows && analysis.validation.choiceMismatchRows.length > 0) {
+                        imgObj.validationErrors.push({
+                            roiIndex: idx + 1, regionName, type: 'choice_mismatch',
+                            expected: expectedC, rows: analysis.validation.choiceMismatchRows,
+                        });
+                    }
+
+                    imgObj.results.push({
+                        roiIndex: idx + 1, numQuestions: analysis.rows.length,
+                        numChoices: analysis.maxCols, rows: analysis.rows,
+                        settings: s, validation: analysis.validation,
+                    });
+                });
+
+                ImageManager.applyPhonePrefix(imgObj);
+
+                const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
+                    imgObj.rois.some(r => r.settings && r.settings.answerKey);
+                if (hasAnswers || App.state.answerKey) {
+                    imgObj.rois.forEach(roi => {
+                        if (roi.settings && roi.settings.type === 'subject_answer') UI._loadAnswersFromSubject(roi);
+                    });
+                    imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
+                }
+            } catch (err) {
+                console.error(`[BatchPartial] 이미지 ${processed + 1}:`, err);
+                imgObj.validationErrors = imgObj.validationErrors || [];
+                imgObj.validationErrors.push({ type: 'process_error', message: err.message });
+            }
+            processed++;
+            this.updateProgress(processed, images.length);
+            setTimeout(processNext, 30);
+        };
+        setTimeout(processNext, 50);
+    },
+
+    finishPartial(overlay, count) {
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof CanvasManager !== 'undefined') CanvasManager.render();
+        if (typeof UI !== 'undefined') UI.updateRightPanel();
+        if (typeof Correction !== 'undefined') {
+            Correction.invalidate && Correction.invalidate();
+            Correction.updateBadge && Correction.updateBadge();
+        }
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+        Toast.success(`오류 이미지 ${count}장 재분석 완료`);
+    },
+
     // 현재 이미지만 분석 (기울기/진하기/박스 등 개별 조정 유지)
     runCurrentOnly() {
         const img = App.getCurrentImage();
@@ -519,7 +645,11 @@ const BatchProcess = {
             });
         }
 
-        if (typeof Correction !== 'undefined' && Correction.updateBadge) Correction.updateBadge();
+        if (typeof Correction !== 'undefined') {
+            Correction.invalidate && Correction.invalidate();
+            Correction.updateBadge && Correction.updateBadge();
+        }
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         Toast.success('일괄 처리 완료');
     }
 };
