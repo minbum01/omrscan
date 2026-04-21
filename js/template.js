@@ -9,10 +9,16 @@ const TemplateManager = {
         document.getElementById('template-file-input').addEventListener('change', (e) => this.load(e));
     },
 
-    save() {
+    async save() {
         const imgObj = App.getCurrentImage();
         if (!imgObj || imgObj.rois.length === 0) {
             Toast.error('저장할 영역이 없습니다. 먼저 ROI를 설정하세요.');
+            return;
+        }
+        // Lazy Loading 복원
+        if (typeof ImageManager !== 'undefined') await ImageManager.ensureLoaded(imgObj);
+        if (!imgObj.imgElement || imgObj.imgElement.width === 0) {
+            Toast.error('이미지를 로드할 수 없습니다.');
             return;
         }
 

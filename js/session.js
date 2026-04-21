@@ -844,22 +844,27 @@ const SessionManager = {
 
         try {
             if (this.isElectron) {
-                // 이미지 → base64 변환 (모든 교시 활성 + 삭제 모두 저장)
-                const imgToData = (img, filename) => {
+                // 이미지 → base64 변환 (Lazy Loading 복원 포함)
+                const imgToData = async (imgObj, filename) => {
                     try {
+                        // Lazy Loading: 해제된 이미지 복원
+                        if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                            await ImageManager.ensureLoaded(imgObj);
+                        }
+                        if (!imgObj.imgElement || imgObj.imgElement.width === 0) return null;
                         const c = document.createElement('canvas');
-                        c.width  = img.imgElement.naturalWidth  || img.imgElement.width;
-                        c.height = img.imgElement.naturalHeight || img.imgElement.height;
-                        c.getContext('2d').drawImage(img.imgElement, 0, 0);
+                        c.width  = imgObj.imgElement.naturalWidth  || imgObj.imgElement.width;
+                        c.height = imgObj.imgElement.naturalHeight || imgObj.imgElement.height;
+                        c.getContext('2d').drawImage(imgObj.imgElement, 0, 0);
                         return { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
                     } catch (e) { return null; }
                 };
-                const activeArr  = allPeriodEntries.map(({ img, periodId, localIdx }) =>
+                const activeArr = (await Promise.all(allPeriodEntries.map(({ img, periodId, localIdx }) =>
                     imgToData(img, buildFilenameByRef(img, periodId, localIdx))
-                ).filter(Boolean);
-                const deletedArr = deletedImages.map(img =>
+                ))).filter(Boolean);
+                const deletedArr = (await Promise.all(deletedImages.map(img =>
                     imgToData(img, getPristine(img))
-                ).filter(Boolean);
+                ))).filter(Boolean);
                 const imageDataArr = [...activeArr, ...deletedArr];
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);

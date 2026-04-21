@@ -238,7 +238,7 @@ const BatchProcess = {
         const savedAnswerKey = App.state.answerKey;
         const savedSubjects  = App.state.subjects;
 
-        const processNext = () => {
+        const processNext = async () => {
             if (processed >= tasks.length) {
                 // 원래 교시 복원
                 App.state.currentPeriodId = savedPeriodId;
@@ -289,6 +289,12 @@ const BatchProcess = {
 
             imgObj.results = [];
             imgObj.validationErrors = [];
+
+            // Lazy Loading: 이미지 로드 보장
+            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                const loaded = await ImageManager.ensureLoaded(imgObj);
+                if (!loaded) { processed++; setTimeout(processNext, 0); return; }
+            }
 
             // 캔버스
             const imgIntensity = imgObj.intensity || CanvasManager.intensity || 100;

@@ -454,6 +454,7 @@ const CanvasManager = {
 
         setTimeout(() => {
           try {
+            if (!imgObj.imgElement || imgObj.imgElement.width === 0) { Toast.error('이미지 로드 안 됨'); return; }
             const ctx = App.els.ctx;
             ctx.clearRect(0, 0, App.els.canvas.width, App.els.canvas.height);
             ctx.drawImage(imgObj.imgElement, 0, 0);
@@ -721,7 +722,7 @@ const CanvasManager = {
         let remaining = images.length;
 
         images.forEach(imgObj => {
-            if (!imgObj) { remaining--; return; }
+            if (!imgObj || !imgObj.imgElement || imgObj.imgElement.width === 0) { remaining--; return; }
             const img = imgObj.imgElement;
             const w = img.naturalWidth || img.width;
             const h = img.naturalHeight || img.height;
@@ -843,6 +844,8 @@ const CanvasManager = {
                 newImg.onload = () => {
                     URL.revokeObjectURL(url);
                     imgObj.imgElement = newImg;
+                    // 회전된 이미지로 _imgSrc 갱신 (Lazy Loading 복원 시 회전 상태 유지)
+                    imgObj._imgSrc = off.toDataURL('image/jpeg', 0.92);
                     imgObj.rois = [];
                     imgObj.results = null;
                     imgObj.gradeResult = null;

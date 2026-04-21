@@ -958,6 +958,7 @@ const UI = {
     addRegionManually() {
         const imgObj = App.getCurrentImage();
         if (!imgObj) { Toast.error('먼저 이미지를 선택하세요'); return; }
+        if (!imgObj.imgElement || imgObj.imgElement.width === 0) { Toast.error('이미지 로드 중...'); return; }
         const w = Math.min(400, imgObj.imgElement.width * 0.8);
         const h = Math.min(600, imgObj.imgElement.height * 0.8);
         const x = (imgObj.imgElement.width - w) / 2;
@@ -1961,6 +1962,7 @@ const UI = {
 
         const imgObj = App.getCurrentImage();
         if (!imgObj || !imgObj.results) return;
+        if (!imgObj.imgElement || imgObj.imgElement.width === 0) return;
 
         const roiIdx = parseInt(cell.dataset.roi);
         const qNum = parseInt(cell.dataset.q);
