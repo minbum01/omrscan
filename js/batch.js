@@ -861,6 +861,8 @@ const BatchProcess = {
                     solved = true;
                     newAllResults.forEach(({ ri, roiResult }) => { imgObj.results[ri] = roiResult; });
                     imgObj.validationErrors = [];
+                    // 진하기 갱신 (슬라이더 반영)
+                    imgObj.intensity = tryIntensity;
 
                     ImageManager.applyPhonePrefix(imgObj);
                     const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
@@ -1009,6 +1011,8 @@ const BatchProcess = {
 
             if (thisImproved) {
                 improved++;
+                // 진하기도 +100%로 갱신 (슬라이더 반영)
+                imgObj.intensity = tryIntensity;
                 // 재채점
                 ImageManager.applyPhonePrefix(imgObj);
                 const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
