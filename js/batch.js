@@ -178,9 +178,11 @@ const BatchProcess = {
 
         const processNext = async () => {
             if (processed >= images.length) {
-                // 1차 분석 완료 → 실패 이미지 자동 재시도
+                // 1차 분석 완료 → 실패 이미지 자동 재시도 → 1.5배 재분석
                 this._retryFailedImages(images, overlay, () => {
-                    this.finish(overlay, images.length);
+                    this._retryXvImages(images, overlay, () => {
+                        this.finish(overlay, images.length);
+                    });
                 });
                 return;
             }
@@ -899,6 +901,148 @@ const BatchProcess = {
         setTimeout(processNextRetry, 50);
     },
 
+    // ─────────────────────────────────────────
+    // 1.5배 자동교정 이미지 재분석 (진하기 +100%)
+    // retry 완료 후 실행. _xvAutoCorrected가 있는 ROI만 대상.
+    // ─────────────────────────────────────────
+    _retryXvImages(images, overlay, onComplete) {
+        // 1.5배 자동교정 항목이 있는 이미지 수집
+        const xvImages = [];
+        images.forEach((imgObj, imgIdx) => {
+            if (!imgObj.results) return;
+            const hasXv = imgObj.results.some(res =>
+                res.rows.some(r => r._xvAutoCorrected)
+            );
+            if (hasXv) xvImages.push({ imgObj, imgIdx });
+        });
+
+        if (xvImages.length === 0) { onComplete(); return; }
+
+        const progressText = document.getElementById('batch-text');
+        const bar = document.getElementById('batch-bar');
+        if (progressText) progressText.textContent = `1.5배 항목 재검증중... (0/${xvImages.length})`;
+        if (bar) bar.style.width = '0%';
+
+        const baseIntensity = CanvasManager.intensity || 115;
+        const xvStartTime = Date.now();
+        let xvIdx = 0;
+        let improved = 0;
+
+        const processNextXv = async () => {
+            if (xvIdx >= xvImages.length) {
+                if (improved > 0 && typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+                onComplete();
+                return;
+            }
+
+            const { imgObj } = xvImages[xvIdx];
+            const imgIntensity = imgObj.intensity || baseIntensity;
+            const tryIntensity = imgIntensity + 100; // +100%
+
+            // Lazy Loading
+            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                await ImageManager.ensureLoaded(imgObj);
+            }
+            if (!imgObj.imgElement || imgObj.imgElement.width === 0) {
+                xvIdx++;
+                setTimeout(processNextXv, 0);
+                return;
+            }
+
+            const imgEl = imgObj.imgElement;
+            const bw = imgEl.naturalWidth || imgEl.width;
+            const bh = imgEl.naturalHeight || imgEl.height;
+
+            // 진하기 +100% 캔버스
+            const prevI = CanvasManager.intensity;
+            CanvasManager.intensity = tryIntensity;
+            let srcCanvas = CanvasManager._getIntensifiedImage(imgObj);
+            CanvasManager.intensity = prevI;
+
+            if (!srcCanvas) {
+                srcCanvas = document.createElement('canvas');
+                srcCanvas.width = bw; srcCanvas.height = bh;
+                srcCanvas.getContext('2d', { willReadFrequently: true }).drawImage(imgEl, 0, 0);
+            }
+
+            // 1.5배 자동교정이 있는 ROI만 재분석
+            let thisImproved = false;
+            imgObj.results.forEach((res, ri) => {
+                const hasXvRows = res.rows.some(r => r._xvAutoCorrected);
+                if (!hasXvRows) return;
+
+                const roi = imgObj.rois[ri];
+                if (!roi || !roi.settings) return;
+                const s = roi.settings;
+
+                const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h, srcCanvas);
+                const orientation = s.orientation || 'vertical';
+                const numQ = s.numQuestions || 0;
+                const numC = s.numChoices || 0;
+                const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
+                const elongatedMode = s.elongatedMode || false;
+                const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
+
+                const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
+
+                const startNum = s.startNum || 1;
+                analysis.rows.forEach((row, i) => { row.questionNumber = startNum + i; });
+
+                // 비교: 이전 1.5배 자동교정 수 vs 새 결과
+                const prevXvCount = res.rows.filter(r => r._xvAutoCorrected).length;
+                const newXvCount = analysis.rows.filter(r => r._xvAutoCorrected).length;
+
+                if (analysis.rows.length >= numQ && newXvCount < prevXvCount) {
+                    // 개선됨 → 채택
+                    imgObj.results[ri] = {
+                        roiIndex: ri + 1,
+                        numQuestions: analysis.rows.length,
+                        numChoices: analysis.maxCols,
+                        rows: analysis.rows,
+                        settings: s,
+                        validation: analysis.validation,
+                        _retryInfo: { intensityOffset: 100, rotation: 0, type: 'xv_retry' },
+                    };
+                    thisImproved = true;
+                }
+            });
+
+            if (thisImproved) {
+                improved++;
+                // 재채점
+                ImageManager.applyPhonePrefix(imgObj);
+                const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
+                    imgObj.rois.some(r => r.settings && r.settings.answerKey);
+                if (hasAnswers || App.state.answerKey) {
+                    imgObj.rois.forEach(roi => {
+                        if (roi.settings && roi.settings.type === 'subject_answer') UI._loadAnswersFromSubject(roi);
+                    });
+                    imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
+                }
+            }
+
+            xvIdx++;
+            // 진행률 + 남은 시간
+            let timeInfo = '';
+            if (xvIdx > 1) {
+                const elapsed = (Date.now() - xvStartTime) / 1000;
+                const remaining = (elapsed / xvIdx) * (xvImages.length - xvIdx);
+                if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+            }
+            if (progressText) progressText.textContent = `1.5배 항목 재검증중... (${xvIdx}/${xvImages.length})${timeInfo}`;
+            if (bar) bar.style.width = Math.round((xvIdx / xvImages.length) * 100) + '%';
+
+            if (xvIdx % 5 === 0 || xvIdx >= xvImages.length) {
+                setTimeout(processNextXv, 0);
+            } else {
+                processNextXv();
+            }
+        };
+
+        setTimeout(processNextXv, 50);
+    },
+
     // BUG9 fix: 변수명 충돌 해결
     finish(overlay, total) {
         const progressText = document.getElementById('batch-text');
@@ -924,9 +1068,13 @@ const BatchProcess = {
             }
 
             // 재시도로 해결된 이미지 수
-            const retried = App.state.images.filter(i => i.results && i.results.some(r => r._retryInfo));
+            const retried = App.state.images.filter(i => i.results && i.results.some(r => r._retryInfo && r._retryInfo.type !== 'xv_retry'));
+            const xvRetried = App.state.images.filter(i => i.results && i.results.some(r => r._retryInfo && r._retryInfo.type === 'xv_retry'));
             if (retried.length > 0) {
                 summaryText += `\n✓ 추가 검증으로 ${retried.length}장 복구됨`;
+            }
+            if (xvRetried.length > 0) {
+                summaryText += `\n✓ 1.5배 재검증으로 ${xvRetried.length}장 개선됨`;
             }
             if (warnings.length > 0) {
                 summaryText += `\n⚠ 검증 경고 ${warnings.length}장`;

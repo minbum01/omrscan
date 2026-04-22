@@ -103,7 +103,20 @@ const Correction = {
         const myGen = ++this._renderGen;
         this._activeRenderGen = myGen;
         const { nullPending, nullHistory, autoPending, autoHistory, multiPending, multiHistory } = this.collect();
-        // collect() 결과를 재사용 — updateBadge()의 중복 순회 제거
+
+        // 정렬: null이력 — 값 있는 것(특이사항) 상단, 빈칸 하단
+        nullHistory.sort((a, b) => {
+            const aHasVal = a.row.markedAnswer !== null ? 0 : 1;
+            const bHasVal = b.row.markedAnswer !== null ? 0 : 1;
+            return aHasVal - bHasVal;
+        });
+        // 정렬: 1.5배 수정중 — 값 없는 것(null) 상단, 값 있는 것 하단
+        autoPending.sort((a, b) => {
+            const aNull = a.row.markedAnswer === null ? 0 : 1;
+            const bNull = b.row.markedAnswer === null ? 0 : 1;
+            return aNull - bNull;
+        });
+
         this._applyBadge(nullPending.length, autoPending.length, multiPending.length);
 
         const anyConfirmed = (App.state.images || []).some(img => img._correctionConfirmed);
