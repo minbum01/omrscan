@@ -438,24 +438,23 @@ const Correction = {
             container.appendChild(cellWrap);
         });
 
-        // 빈칸 버튼 (수정중 카드에만)
+        // 빈칸 버튼 (수정중 카드에만) — grid 밖에서 flex로 나란히
         if (!isSmall && !thumbOverride) {
-            const blankWrap = document.createElement('div');
-            blankWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:0px;';
+            const outer = document.createElement('div');
+            outer.style.cssText = 'display:flex;align-items:start;gap:3px;';
+            outer.appendChild(container);
+
             const blankBtn = document.createElement('div');
-            blankBtn.style.cssText = `width:${THUMB_SIZE}px;height:${THUMB_SIZE}px;border:2px dashed #94a3b8;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;color:#94a3b8;font-weight:700;`;
+            blankBtn.style.cssText = `width:${THUMB_SIZE}px;height:${THUMB_SIZE}px;border:2px dashed #94a3b8;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;color:#94a3b8;font-weight:700;flex-shrink:0;`;
             blankBtn.textContent = '─';
             blankBtn.title = '빈칸 처리';
             blankBtn.onmousedown = (ev) => ev.preventDefault();
             blankBtn.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, null, { fromThumbnail: true });
             blankBtn.onmouseenter = () => { blankBtn.style.borderColor = '#dc2626'; blankBtn.style.color = '#dc2626'; };
             blankBtn.onmouseleave = () => { blankBtn.style.borderColor = '#94a3b8'; blankBtn.style.color = '#94a3b8'; };
-            blankWrap.appendChild(blankBtn);
-            const blankLbl = document.createElement('div');
-            blankLbl.style.cssText = 'font-size:7px;color:#94a3b8;line-height:1;';
-            blankLbl.textContent = '빈칸';
-            blankWrap.appendChild(blankLbl);
-            container.appendChild(blankWrap);
+            outer.appendChild(blankBtn);
+
+            return outer;
         }
 
         return container;
@@ -554,9 +553,10 @@ const Correction = {
             const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), newInputs.length - 1);
             const target = newInputs[targetIdx];
             if (target) {
-                if (fromThumbnail) Correction._skipScrollOnce = true;
-                target.focus();
+                target.focus({ preventScroll: true });
                 target.select();
+                // 스크롤 위치 재복원 (focus가 스크롤 이동시킬 수 있음)
+                if (scrollParent) scrollParent.scrollTop = savedScroll;
             }
         }, 50);
     },
