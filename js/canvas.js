@@ -823,7 +823,9 @@ const CanvasManager = {
                 this.zoomFit();
                 this.render();
             }
-            if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+            if (typeof ImageManager !== 'undefined') { ImageManager.invalidateStatus(); ImageManager.updateList(); }
+            if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
             if (loadingEl) loadingEl.remove();
         };
 

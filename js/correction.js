@@ -362,11 +362,11 @@ const Correction = {
             const placeholder = document.createElement('div');
             placeholder.style.cssText = 'padding:8px;background:#f1f5f9;border-radius:4px;font-size:9px;color:var(--text-muted);text-align:center;';
             placeholder.textContent = '이미지 미로드';
-            // 비동기로 로드 후 갱신 — 탭 전환/후속 render 시 stale 방지
-            if (typeof ImageManager !== 'undefined' && img._imgSrc) {
+            // 비동기로 로드 후 갱신 — results가 null이면 시도 안 함 (회전 후 등)
+            if (typeof ImageManager !== 'undefined' && img._imgSrc && img.results) {
                 const capturedGen = this._activeRenderGen;
-                ImageManager.ensureLoaded(img).then(() => {
-                    // 이미 새 render가 시작되었거나 탭이 닫혔으면 무시
+                ImageManager.ensureLoaded(img).then((loaded) => {
+                    if (!loaded) return; // 로드 실패 시 재시도 안 함
                     if (capturedGen !== this._activeRenderGen) return;
                     if (!this._isVisible()) return;
                     const container = document.getElementById('correction-content');
