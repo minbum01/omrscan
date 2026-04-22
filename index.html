@@ -44,7 +44,7 @@
             <div class="dropdown">
                 <button class="btn btn-sm dropdown-toggle">새로 만들기 ▾</button>
                 <div class="dropdown-menu">
-                    <button class="dropdown-item" onclick="SessionManager.showStartScreen()">🗂 시작 화면 열기</button>
+                    <button class="dropdown-item" onclick="location.reload()">🗂 시작 화면 열기</button>
                     <div class="dropdown-divider"></div>
                     <button class="dropdown-item" onclick="SessionManager.showStartScreen(); setTimeout(()=>SessionManager.createNewSession(),50)">+ 새 시험(세션) 만들기</button>
                     <button class="dropdown-item" onclick="SessionManager.showStartScreen(); setTimeout(()=>SessionManager.createNewTemplate(),50)">+ 양식 만들기</button>

@@ -206,7 +206,10 @@ const TemplateManager = {
         if (isElectron && this._lastSavePath) {
             (async () => {
                 const res = await window.electronAPI.saveTemplate(this._lastSavePath, template);
-                if (res.success) Toast.success(`양식 저장됨: ${this._lastSavePath}`);
+                if (res.success) {
+                    Toast.success(`양식 저장됨: ${this._lastSavePath}`);
+                    if (typeof SessionManager !== 'undefined') SessionManager._hasUnsavedChanges = false;
+                }
                 else Toast.error('저장 실패: ' + (res.error || ''));
             })();
             return;
@@ -221,7 +224,10 @@ const TemplateManager = {
                 onSave: async (relPath) => {
                     this._lastSavePath = relPath; // 경로 기억 → 다음부터 즉시 저장
                     const res = await window.electronAPI.saveTemplate(relPath, template);
-                    if (res.success) Toast.success(`양식 저장됨: ${res.path}`);
+                    if (res.success) {
+                        Toast.success(`양식 저장됨: ${res.path}`);
+                        if (typeof SessionManager !== 'undefined') SessionManager._hasUnsavedChanges = false;
+                    }
                     else Toast.error('저장 실패: ' + (res.error || ''));
                 },
             });
