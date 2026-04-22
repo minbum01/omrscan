@@ -610,7 +610,7 @@ const BatchProcess = {
 
     _progressStartTime: 0,
     updateProgress(current, total) {
-        if (current <= 1) this._progressStartTime = Date.now();
+        if (!this._progressStartTime || current <= 5) this._progressStartTime = Date.now() - (current * 50);
         const bar = document.getElementById('batch-bar');
         const progressText = document.getElementById('batch-text');
         const pct = Math.round((current / total) * 100);
@@ -731,6 +731,7 @@ const BatchProcess = {
         if (failed.length === 0) { onComplete(); return; }
 
         // ── 2단계: 재시도 실행 ──
+        this._retryStartTime = Date.now();
         const progressText = document.getElementById('batch-text');
         const bar = document.getElementById('batch-bar');
         if (progressText) progressText.textContent = `오류 문항 추가 검증중... (0/${failed.length})`;
@@ -878,7 +879,14 @@ const BatchProcess = {
             }
 
             retryIdx++;
-            if (progressText) progressText.textContent = `오류 문항 추가 검증중... (${retryIdx}/${failed.length})`;
+            let retryTime = '';
+            if (retryIdx > 1 && this._retryStartTime) {
+                const elapsed = (Date.now() - this._retryStartTime) / 1000;
+                const remaining = (elapsed / retryIdx) * (failed.length - retryIdx);
+                if (remaining > 60) retryTime = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                else if (remaining > 5) retryTime = ` (약 ${Math.round(remaining)}초 남음)`;
+            }
+            if (progressText) progressText.textContent = `오류 문항 추가 검증중... (${retryIdx}/${failed.length})${retryTime}`;
             if (bar) bar.style.width = Math.round((retryIdx / failed.length) * 100) + '%';
 
             if (retryIdx % 3 === 0 || retryIdx >= failed.length) {
