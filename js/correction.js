@@ -509,19 +509,21 @@ const Correction = {
         row._userCorrected = true;
         row._xvAutoCorrected = false;
         row.undetected = false;
-        this.invalidate();
+
+        // 캐시 무효화 (다음 탭 전환 시 재계산) — 하지만 render는 경량으로
+        this._cacheDirty = true;
 
         if (typeof Grading !== 'undefined') {
             img.gradeResult = Grading.grade(img.results, img);
         }
-        // 수험번호/전화번호 ROI를 교정했을 수 있으므로 이름 재매칭
         if (typeof ImageManager !== 'undefined' && ImageManager.applyPhonePrefix) {
             ImageManager.applyPhonePrefix(img);
         }
-        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof ImageManager !== 'undefined') ImageManager.invalidateStatus(img);
         if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
+        // 전체 render 대신 — 현재 카드만 DOM에서 제거하고 포커스 이동
         const curEl = document.activeElement;
         const curIsInput = curEl && curEl.classList && curEl.classList.contains('correction-input');
         const curColumnType = curIsInput ? curEl.dataset.columnType : null;
@@ -529,36 +531,36 @@ const Correction = {
         const allInputs = Array.from(document.querySelectorAll(columnSelector));
         const curIdx = curIsInput ? allInputs.indexOf(curEl) : -1;
 
-        const corrContainer = document.getElementById('correction-content');
-        const scrollParent = corrContainer ? (corrContainer.closest('.tab-content') || corrContainer.parentElement) : null;
-        const savedScroll = scrollParent ? scrollParent.scrollTop : 0;
+        // 현재 카드를 DOM에서 제거
+        const curCard = curEl ? curEl.closest('[style*="background:var(--bg-card)"]') : null;
+        if (curCard) curCard.remove();
 
-        this.render(corrContainer);
-
-        // 스크롤 위치 복원
-        if (scrollParent) scrollParent.scrollTop = savedScroll;
-
+        // 다음 input으로 포커스 이동 (DOM 재생성 없이)
         setTimeout(() => {
-            const colSel = curColumnType
-                ? `.correction-input-${curColumnType}`
-                : (document.querySelector('.correction-input-null-pending') ? '.correction-input-null-pending'
-                   : (document.querySelector('.correction-input-auto-pending') ? '.correction-input-auto-pending'
-                   : '.correction-input'));
-            const newInputs = Array.from(document.querySelectorAll(colSel));
-            if (newInputs.length === 0) {
-                const anyPending = document.querySelector('.correction-input-null-pending, .correction-input-auto-pending, .correction-input-multi-pending');
-                if (!anyPending) Toast.success('수정중인 항목을 모두 처리했습니다!');
+            const remaining = Array.from(document.querySelectorAll(columnSelector));
+            if (remaining.length === 0) {
+                // 현재 칼럼에 남은 항목 없음 — 배지만 갱신
+                const collected = this.collect();
+                this._applyBadge(collected.nullPending.length, collected.autoPending.length, collected.multiPending.length);
+                if (collected.nullPending.length + collected.autoPending.length + collected.multiPending.length === 0) {
+                    Toast.success('수정중인 항목을 모두 처리했습니다!');
+                }
                 return;
             }
-            const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), newInputs.length - 1);
-            const target = newInputs[targetIdx];
+            const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), remaining.length - 1);
+            const target = remaining[targetIdx];
             if (target) {
                 target.focus({ preventScroll: true });
                 target.select();
-                // 스크롤 위치 재복원 (focus가 스크롤 이동시킬 수 있음)
-                if (scrollParent) scrollParent.scrollTop = savedScroll;
             }
-        }, 50);
+            // 배지 갱신 (카운트만)
+            const badge = document.getElementById('tab-correction-badge');
+            if (badge) {
+                const pendingCount = document.querySelectorAll('.correction-input-null-pending, .correction-input-auto-pending, .correction-input-multi-pending').length;
+                if (pendingCount > 0) { badge.style.display = ''; badge.textContent = pendingCount; }
+                else { badge.style.display = 'none'; }
+            }
+        }, 10);
     },
 
     _focusNextInput(input) {
