@@ -618,17 +618,10 @@ const Correction = {
             row._userCorrected = true;
             row.undetected = false;
         });
-        this._cacheDirty = true;
+        this.invalidate();
         if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
-        // DOM에서 현재 페이지 카드만 제거
-        const col = document.getElementById('col-null-pending');
-        if (col) col.innerHTML = `<div style="padding:8px;background:var(--bg-card);border-radius:4px;color:var(--text-muted);font-size:10px;text-align:center;">처리 완료</div>`;
-        this._applyBadge(
-            Math.max(0, nullPending.length - count),
-            (this._cachedCollection || {}).autoPending ? this._cachedCollection.autoPending.length : 0,
-            (this._cachedCollection || {}).multiPending ? this._cachedCollection.multiPending.length : 0
-        );
+        this.render(document.getElementById('correction-content'));
         Toast.success(`null 수정중 ${count}개 빈칸 처리`);
     },
 
