@@ -523,8 +523,7 @@ const Correction = {
         row._xvAutoCorrected = false;
         row.undetected = false;
 
-        // 캐시 무효화 (다음 탭 전환 시 재계산) — 하지만 render는 경량으로
-        this._cacheDirty = true;
+        this.invalidate();
 
         if (typeof Grading !== 'undefined') {
             img.gradeResult = Grading.grade(img.results, img);
@@ -536,7 +535,6 @@ const Correction = {
         if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
 
-        // 전체 render 대신 — 현재 카드만 DOM에서 제거하고 포커스 이동
         const curEl = document.activeElement;
         const curIsInput = curEl && curEl.classList && curEl.classList.contains('correction-input');
         const curColumnType = curIsInput ? curEl.dataset.columnType : null;
@@ -544,36 +542,34 @@ const Correction = {
         const allInputs = Array.from(document.querySelectorAll(columnSelector));
         const curIdx = curIsInput ? allInputs.indexOf(curEl) : -1;
 
-        // 현재 카드를 DOM에서 제거
-        const curCard = curEl ? curEl.closest('[style*="background:var(--bg-card)"]') : null;
-        if (curCard) curCard.remove();
+        const corrContainer = document.getElementById('correction-content');
+        const scrollParent = corrContainer ? (corrContainer.closest('.tab-content') || corrContainer.parentElement) : null;
+        const savedScroll = scrollParent ? scrollParent.scrollTop : 0;
 
-        // 다음 input으로 포커스 이동 (DOM 재생성 없이)
+        this.render(corrContainer);
+
+        if (scrollParent) scrollParent.scrollTop = savedScroll;
+
         setTimeout(() => {
-            const remaining = Array.from(document.querySelectorAll(columnSelector));
-            if (remaining.length === 0) {
-                // 현재 칼럼에 남은 항목 없음 — 배지만 갱신
-                const collected = this.collect();
-                this._applyBadge(collected.nullPending.length, collected.autoPending.length, collected.multiPending.length);
-                if (collected.nullPending.length + collected.autoPending.length + collected.multiPending.length === 0) {
-                    Toast.success('수정중인 항목을 모두 처리했습니다!');
-                }
+            const colSel = curColumnType
+                ? `.correction-input-${curColumnType}`
+                : (document.querySelector('.correction-input-null-pending') ? '.correction-input-null-pending'
+                   : (document.querySelector('.correction-input-auto-pending') ? '.correction-input-auto-pending'
+                   : '.correction-input'));
+            const newInputs = Array.from(document.querySelectorAll(colSel));
+            if (newInputs.length === 0) {
+                const anyPending = document.querySelector('.correction-input-null-pending, .correction-input-auto-pending, .correction-input-multi-pending');
+                if (!anyPending) Toast.success('수정중인 항목을 모두 처리했습니다!');
                 return;
             }
-            const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), remaining.length - 1);
-            const target = remaining[targetIdx];
+            const targetIdx = Math.min(Math.max(0, curIdx >= 0 ? curIdx : 0), newInputs.length - 1);
+            const target = newInputs[targetIdx];
             if (target) {
                 target.focus({ preventScroll: true });
                 target.select();
+                if (scrollParent) scrollParent.scrollTop = savedScroll;
             }
-            // 배지 갱신 (카운트만)
-            const badge = document.getElementById('tab-correction-badge');
-            if (badge) {
-                const pendingCount = document.querySelectorAll('.correction-input-null-pending, .correction-input-auto-pending, .correction-input-multi-pending').length;
-                if (pendingCount > 0) { badge.style.display = ''; badge.textContent = pendingCount; }
-                else { badge.style.display = 'none'; }
-            }
-        }, 10);
+        }, 50);
     },
 
     _focusNextInput(input) {
@@ -603,7 +599,7 @@ const Correction = {
         this.setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer, { fromThumbnail: true });
     },
 
-    // null 수정중 — 현재 페이지 전체 빈칸 처리
+    // null 수정중 — 현재 페이지 전체 빈칸 처리 (경량)
     confirmAllNullBlank() {
         const { nullPending } = this.collect();
         if (nullPending.length === 0) return;
@@ -622,16 +618,17 @@ const Correction = {
             row._userCorrected = true;
             row.undetected = false;
         });
-        this.invalidate();
-        const affectedImgs = new Set(pageItems.map(e => e.imgIdx));
-        affectedImgs.forEach(imgIdx => {
-            const img = App.state.images[imgIdx];
-            if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
-        });
-        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        this._cacheDirty = true;
         if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
-        this.render(document.getElementById('correction-content'));
+        // DOM에서 현재 페이지 카드만 제거
+        const col = document.getElementById('col-null-pending');
+        if (col) col.innerHTML = `<div style="padding:8px;background:var(--bg-card);border-radius:4px;color:var(--text-muted);font-size:10px;text-align:center;">처리 완료</div>`;
+        this._applyBadge(
+            Math.max(0, nullPending.length - count),
+            (this._cachedCollection || {}).autoPending ? this._cachedCollection.autoPending.length : 0,
+            (this._cachedCollection || {}).multiPending ? this._cachedCollection.multiPending.length : 0
+        );
         Toast.success(`null 수정중 ${count}개 빈칸 처리`);
     },
 
