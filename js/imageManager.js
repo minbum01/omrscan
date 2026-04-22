@@ -50,6 +50,7 @@ const ImageManager = {
         const PARALLEL = 4;
         let nextIdx = 0;
         let completed = 0;
+        const _uploadStart = Date.now();
 
         const onAllDone = () => {
             this._uploading = false;
@@ -77,7 +78,14 @@ const ImageManager = {
                 completed++;
                 // 10장마다 UI 갱신 (매번 하면 렉)
                 if (completed % 10 === 0 || completed === total) {
-                    this.updateLoading(`이미지 처리 중... (${completed}/${total})`);
+                    let timeInfo = '';
+                    if (completed > 2) {
+                        const elapsed = (Date.now() - _uploadStart) / 1000;
+                        const remaining = (elapsed / completed) * (total - completed);
+                        if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                        else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+                    }
+                    this.updateLoading(`이미지 처리 중... (${completed}/${total})${timeInfo}`);
                 }
                 if (completed >= total) { onAllDone(); return; }
                 processOne(); // 다음 파일 즉시 시작

@@ -795,12 +795,20 @@ const CanvasManager = {
             document.body.appendChild(loadingEl);
         }
 
+        const _rotateStart = Date.now();
         const updateProgress = () => {
             if (!loadingEl) return;
             const pct = Math.round((completed / total) * 100);
             const prog = document.getElementById('rotate-loading-progress');
             const bar = document.getElementById('rotate-loading-bar');
-            if (prog) prog.textContent = `${completed} / ${total}`;
+            let timeInfo = '';
+            if (completed > 2) {
+                const elapsed = (Date.now() - _rotateStart) / 1000;
+                const remaining = (elapsed / completed) * (total - completed);
+                if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+            }
+            if (prog) prog.textContent = `${completed} / ${total}${timeInfo}`;
             if (bar) bar.style.width = pct + '%';
         };
 
