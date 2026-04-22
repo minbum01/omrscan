@@ -608,29 +608,129 @@ const BatchProcess = {
         return overlay;
     },
 
+    _progressStartTime: 0,
     updateProgress(current, total) {
+        if (current <= 1) this._progressStartTime = Date.now();
         const bar = document.getElementById('batch-bar');
         const progressText = document.getElementById('batch-text');
         const pct = Math.round((current / total) * 100);
         if (bar) bar.style.width = pct + '%';
-        if (progressText) progressText.textContent = `${current} / ${total} 처리 중...`;
+
+        let timeInfo = '';
+        if (current > 2 && this._progressStartTime) {
+            const elapsed = (Date.now() - this._progressStartTime) / 1000;
+            const perItem = elapsed / current;
+            const remaining = perItem * (total - current);
+            if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+            else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+        }
+        if (progressText) progressText.textContent = `${current} / ${total} 처리 중...${timeInfo}`;
     },
 
     // ─────────────────────────────────────────
     // 실패 이미지 자동 재시도 (진하기 + 미세 회전)
+    // null이 있는 ROI 중 "인식 오류 null"만 대상 (진짜 공란 제외)
     // ─────────────────────────────────────────
     _retryFailedImages(images, overlay, onComplete) {
-        // 실패 이미지 수집: validationErrors에 missing_questions가 있는 것
-        const failed = [];
+        const rlog = (...args) => {
+            const msg = args.join(' ');
+            console.log(msg);
+            if (OmrEngine._fileLog) OmrEngine._fileLogBuffer.push(msg);
+        };
+
+        // ── 1단계: 재시도 대상 수집 ──
+        // 각 이미지의 각 ROI에서 "인식 오류 null"이 있는지 판별
+        const failed = []; // { imgObj, imgIdx, failedRois: [{ ri, errorNullCount }] }
+
         images.forEach((imgObj, imgIdx) => {
-            if (!imgObj.validationErrors || imgObj.validationErrors.length === 0) return;
-            const hasMissing = imgObj.validationErrors.some(e => e.type === 'missing_questions');
-            if (hasMissing) failed.push({ imgObj, imgIdx });
+            if (!imgObj.results) return;
+            const failedRois = [];
+
+            imgObj.results.forEach((res, ri) => {
+                const roi = imgObj.rois[ri];
+                if (!roi || !roi.settings) return;
+                const rows = res.rows || [];
+                if (rows.length === 0) return;
+
+                // null인 문항 분류: 진짜 공란 vs 인식 오류
+                let errorNullCount = 0;
+                let realBlankCount = 0;
+                const hasNaN = rows.some(r => r.blobs && r.blobs.some(b => isNaN(b.cx) || isNaN(b.cy)));
+
+                rows.forEach(r => {
+                    if (r.markedAnswer !== null || r.corrected || r.undetected) return;
+                    if (!r.blobs || r.blobs.length === 0) { errorNullCount++; return; }
+
+                    const fills = r.blobs.map(b => b.centerFillRatio || 0);
+                    const maxFill = Math.max(...fills);
+                    const sorted = [...fills].sort((a, b) => b - a);
+                    const gap = sorted.length >= 2 ? sorted[0] - sorted[1] : 0;
+
+                    if (maxFill < 0.35 && gap < 0.08) {
+                        realBlankCount++; // 진짜 공란
+                    } else {
+                        errorNullCount++; // 인식 오류
+                    }
+                });
+
+                // missing_questions도 인식 오류
+                if (imgObj.validationErrors) {
+                    imgObj.validationErrors.forEach(e => {
+                        if (e.type === 'missing_questions' && (e.roiIndex || 1) - 1 === ri) {
+                            errorNullCount += e.missing || 0;
+                        }
+                    });
+                }
+
+                // 블롭 간격 불안정 검출 — 양식 기대 간격 대비 ±20% 이상 편차
+                let unstableGap = false;
+                const bp = roi.blobPattern;
+                if (bp && (bp.colSpacing || bp.rowSpacing)) {
+                    const isVert = roi.settings.orientation === 'vertical';
+                    const expectedGap = isVert ? (bp.colSpacing || bp.rowSpacing) : (bp.rowSpacing || bp.colSpacing);
+                    if (expectedGap > 0) {
+                        rows.forEach(r => {
+                            if (!r.blobs || r.blobs.length < 2) return;
+                            for (let bi = 1; bi < r.blobs.length; bi++) {
+                                const dx = Math.abs(r.blobs[bi].cx - r.blobs[bi-1].cx);
+                                const dy = Math.abs(r.blobs[bi].cy - r.blobs[bi-1].cy);
+                                const actualGap = isVert ? dx : dy;
+                                if (actualGap > 0 && Math.abs(actualGap - expectedGap) / expectedGap > 0.20) {
+                                    unstableGap = true;
+                                }
+                            }
+                        });
+                    }
+                }
+
+                if (errorNullCount > 0 || hasNaN || unstableGap) {
+                    failedRois.push({ ri, errorNullCount, realBlankCount, hasNaN, unstableGap });
+                }
+            });
+
+            if (failedRois.length > 0) {
+                failed.push({ imgObj, imgIdx, failedRois });
+            }
         });
+
+        // 로그
+        rlog(`\n${'═'.repeat(80)}`);
+        rlog(`[Retry] 재시도 대상: 전체 ${images.length}장 중 ${failed.length}장`);
+        failed.forEach(({ imgObj, failedRois }) => {
+            const details = failedRois.map(f => `ROI${f.ri+1}(오류null=${f.errorNullCount} 공란=${f.realBlankCount} NaN=${f.hasNaN} 간격불안정=${f.unstableGap || false})`).join(', ');
+            rlog(`  대상: ${imgObj.name} — ${details}`);
+        });
+        images.forEach((imgObj, imgIdx) => {
+            if (failed.some(f => f.imgIdx === imgIdx)) return;
+            if (!imgObj.results) return;
+            const nullTotal = imgObj.results.reduce((s, res) => s + res.rows.filter(r => r.markedAnswer === null && !r.corrected && !r.undetected).length, 0);
+            if (nullTotal > 0) rlog(`  패스: ${imgObj.name} — null ${nullTotal}개 (전부 진짜 공란)`);
+        });
+        rlog('─'.repeat(80));
 
         if (failed.length === 0) { onComplete(); return; }
 
-        // 로딩 메시지 변경
+        // ── 2단계: 재시도 실행 ──
         const progressText = document.getElementById('batch-text');
         const bar = document.getElementById('batch-bar');
         if (progressText) progressText.textContent = `오류 문항 추가 검증중... (0/${failed.length})`;
@@ -638,14 +738,16 @@ const BatchProcess = {
 
         const baseIntensity = CanvasManager.intensity || 115;
 
-        // 재시도 조합: [진하기 오프셋, 회전 각도]
+        // 8가지 조합
         const retryCombos = [
-            [100, 0],      // 1: 진하기 +100%
-            [100, 0.5],    // 2: 진하기 +100% + 0.5°
-            [100, -0.5],   // 3: 진하기 +100% - 0.5°
-            [200, 0],      // 4: 진하기 +200%
-            [200, 0.5],    // 5: 진하기 +200% + 0.5°
-            [200, -0.5],   // 6: 진하기 +200% - 0.5°
+            [100, 0],       // 1: +100%
+            [100, 0.5],     // 2: +100% +0.5°
+            [100, 1.0],     // 3: +100% +1.0°
+            [100, -0.5],    // 4: +100% -0.5°
+            [100, -1.0],    // 5: +100% -1.0°
+            [200, 0],       // 6: +200%
+            [200, 0.5],     // 7: +200% +0.5°
+            [200, -0.5],    // 8: +200% -0.5°
         ];
 
         let retryIdx = 0;
@@ -653,7 +755,7 @@ const BatchProcess = {
         const processNextRetry = async () => {
             if (retryIdx >= failed.length) { onComplete(); return; }
 
-            const { imgObj } = failed[retryIdx];
+            const { imgObj, failedRois } = failed[retryIdx];
             const imgIntensity = imgObj.intensity || baseIntensity;
 
             // Lazy Loading 복원
@@ -669,15 +771,9 @@ const BatchProcess = {
             const imgEl = imgObj.imgElement;
             const bw = imgEl.naturalWidth || imgEl.width;
             const bh = imgEl.naturalHeight || imgEl.height;
+            const failedRoiIndices = failedRois.map(f => f.ri);
 
-            // 실패한 ROI 인덱스 수집
-            const failedRoiIndices = [];
-            imgObj.validationErrors.forEach(e => {
-                if (e.type === 'missing_questions') {
-                    const ri = (e.roiIndex || 1) - 1;
-                    if (!failedRoiIndices.includes(ri)) failedRoiIndices.push(ri);
-                }
-            });
+            rlog(`[Retry] ${imgObj.name}: ROI=[${failedRoiIndices.map(i=>i+1).join(',')}] 기본intensity=${imgIntensity}`);
 
             let solved = false;
 
@@ -685,7 +781,7 @@ const BatchProcess = {
                 const [intensityOffset, rotation] = retryCombos[ci];
                 const tryIntensity = imgIntensity + intensityOffset;
 
-                // 1. 진하기 적용 캔버스 생성
+                // 진하기 적용
                 const prevI = CanvasManager.intensity;
                 CanvasManager.intensity = tryIntensity;
                 let srcCanvas = CanvasManager._getIntensifiedImage(imgObj);
@@ -697,25 +793,27 @@ const BatchProcess = {
                     srcCanvas.getContext('2d', { willReadFrequently: true }).drawImage(imgEl, 0, 0);
                 }
 
-                // 2. 회전 적용 (0이 아니면)
+                // 회전 적용
                 let analyzeCanvas = srcCanvas;
                 if (rotation !== 0) {
                     const rotCanvas = document.createElement('canvas');
                     rotCanvas.width = bw; rotCanvas.height = bh;
                     const rctx = rotCanvas.getContext('2d', { willReadFrequently: true });
+                    rctx.fillStyle = '#FFFFFF';
+                    rctx.fillRect(0, 0, bw, bh);
                     rctx.translate(bw / 2, bh / 2);
                     rctx.rotate(rotation * Math.PI / 180);
                     rctx.drawImage(srcCanvas, -bw / 2, -bh / 2);
                     analyzeCanvas = rotCanvas;
                 }
 
-                // 3. 실패한 ROI만 재분석
-                let allSolved = true;
-                const newResults = [];
+                // 전체 ROI 재분석 (실패 ROI만이 아니라 전체 — 회전은 이미지 전체에 영향)
+                let totalNull = 0;
+                const newAllResults = [];
 
-                for (const ri of failedRoiIndices) {
+                for (let ri = 0; ri < imgObj.rois.length; ri++) {
                     const roi = imgObj.rois[ri];
-                    if (!roi || !roi.settings) { allSolved = false; continue; }
+                    if (!roi || !roi.settings) continue;
                     const s = roi.settings;
 
                     const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h, analyzeCanvas);
@@ -726,45 +824,41 @@ const BatchProcess = {
                     const elongatedMode = s.elongatedMode || false;
                     const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
 
-                    OmrEngine.startImageLog(imgObj.name + ` [재시도${ci + 1}: +${intensityOffset}% ${rotation > 0 ? '+' : ''}${rotation}°]`, ri, s, roi.blobPattern);
+                    OmrEngine.startImageLog(imgObj.name + ` [재시도${ci+1}: +${intensityOffset}% ${rotation > 0 ? '+' : ''}${rotation}°]`, ri, s, roi.blobPattern);
                     const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
                     OmrEngine.endImageLog(analysis, s);
 
                     const startNum = s.startNum || 1;
                     analysis.rows.forEach((row, i) => { row.questionNumber = startNum + i; });
 
-                    // 성공 판정: 감지 문항수 >= 기대 문항수
-                    if (analysis.rows.length >= numQ) {
-                        newResults.push({ ri, analysis, intensity: tryIntensity, rotation });
-                    } else {
-                        allSolved = false;
-                    }
-                }
+                    const nullCount = analysis.rows.filter(r => r.markedAnswer === null).length;
+                    totalNull += nullCount;
 
-                // 모든 실패 ROI가 해결되면 결과 채택
-                if (allSolved && newResults.length === failedRoiIndices.length) {
-                    solved = true;
-                    newResults.forEach(({ ri, analysis, intensity, rotation }) => {
-                        const s = imgObj.rois[ri].settings;
-                        const startNum = s.startNum || 1;
-                        const expectedQ = s.numQuestions || 20;
-                        const expectedC = s.numChoices || 5;
-
-                        imgObj.results[ri] = {
+                    newAllResults.push({
+                        ri, analysis,
+                        roiResult: {
                             roiIndex: ri + 1,
                             numQuestions: analysis.rows.length,
                             numChoices: analysis.maxCols,
                             rows: analysis.rows,
                             settings: s,
                             validation: analysis.validation,
-                            _retryInfo: { intensityOffset: intensity - imgIntensity, rotation },
-                        };
+                            _retryInfo: { intensityOffset, rotation },
+                        }
                     });
+                }
 
-                    // validationErrors에서 해결된 missing_questions 제거
-                    imgObj.validationErrors = imgObj.validationErrors.filter(e => e.type !== 'missing_questions');
+                // 이전 결과 대비 비교
+                const prevNull = imgObj.results.reduce((s, res) => s + (res.rows || []).filter(r => r.markedAnswer === null && !r.corrected && !r.undetected).length, 0);
 
-                    // 재채점
+                rlog(`  시도${ci+1}: +${intensityOffset}% ${rotation}° → null=${totalNull}(이전${prevNull})`);
+
+                // 채택 조건: null 0개 (완전 인식) 또는 null이 줄었으면 채택
+                if (totalNull === 0 || (totalNull < prevNull)) {
+                    solved = true;
+                    newAllResults.forEach(({ ri, roiResult }) => { imgObj.results[ri] = roiResult; });
+                    imgObj.validationErrors = [];
+
                     ImageManager.applyPhonePrefix(imgObj);
                     const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
                         imgObj.rois.some(r => r.settings && r.settings.answerKey);
@@ -775,12 +869,12 @@ const BatchProcess = {
                         imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
                     }
 
-                    this._log(`[Retry] ${imgObj.name}: 해결 (시도${ci + 1}: +${retryCombos[ci][0]}% ${retryCombos[ci][1]}°)`);
+                    rlog(`  → 완전 인식! 결과 채택`);
                 }
             }
 
             if (!solved) {
-                this._log(`[Retry] ${imgObj.name}: 6회 시도 실패`);
+                rlog(`  → ${retryCombos.length}회 시도 후 미해결`);
             }
 
             retryIdx++;
@@ -796,8 +890,6 @@ const BatchProcess = {
 
         setTimeout(processNextRetry, 50);
     },
-
-    _log(...args) { console.log(...args); },
 
     // BUG9 fix: 변수명 충돌 해결
     finish(overlay, total) {

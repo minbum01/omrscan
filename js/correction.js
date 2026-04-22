@@ -148,11 +148,11 @@ const Correction = {
                 <div>${colHdr('null 수정중', nullPending.length, '#d97706')}<div id="col-null-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${histHdr('null 이력', nullHistory.length)}<div id="col-null-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${colHdr('1.5배 수정중', autoPending.length, '#16a34a',
-                    autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:1px 5px;font-size:9px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">전체확인</button>` : ''
+                    autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:1px 5px;font-size:9px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">현재페이지 전체확인</button>` : ''
                 )}<div id="col-auto-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${histHdr('1.5배 이력', autoHistory.length)}<div id="col-auto-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${colHdr('중복의심', multiPending.length, '#dc2626',
-                    multiPending.length > 0 ? `<button onclick="Correction.confirmAllMultiPending()" style="padding:1px 5px;font-size:9px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">전체확인</button>` : ''
+                    multiPending.length > 0 ? `<button onclick="Correction.confirmAllMultiPending()" style="padding:1px 5px;font-size:9px;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">현재페이지 전체확인</button>` : ''
                 )}<div id="col-multi-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${histHdr('중복이력', multiHistory.length)}<div id="col-multi-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
             </div>
@@ -508,7 +508,14 @@ const Correction = {
         const allInputs = Array.from(document.querySelectorAll(columnSelector));
         const curIdx = curIsInput ? allInputs.indexOf(curEl) : -1;
 
-        this.render(document.getElementById('correction-content'));
+        const corrContainer = document.getElementById('correction-content');
+        const scrollParent = corrContainer ? (corrContainer.closest('.tab-content') || corrContainer.parentElement) : null;
+        const savedScroll = scrollParent ? scrollParent.scrollTop : 0;
+
+        this.render(corrContainer);
+
+        // 스크롤 위치 복원
+        if (scrollParent) scrollParent.scrollTop = savedScroll;
 
         setTimeout(() => {
             const colSel = curColumnType
@@ -562,8 +569,13 @@ const Correction = {
     confirmAllAutoPending() {
         const { autoPending } = this.collect();
         if (autoPending.length === 0) return;
-        const count = autoPending.length;
-        autoPending.forEach(e => {
+        // 현재 페이지만
+        const page = this._getPage('col-auto-pending');
+        const PS = this.PAGE_SIZE;
+        const pageItems = autoPending.slice(page * PS, (page + 1) * PS);
+        if (pageItems.length === 0) return;
+        const count = pageItems.length;
+        pageItems.forEach(e => {
             const row = e.row;
             row.corrected = true;
             row._userCorrected = true;
@@ -571,7 +583,7 @@ const Correction = {
             row.undetected = false;
         });
         this.invalidate();
-        const affectedImgs = new Set(autoPending.map(e => e.imgIdx));
+        const affectedImgs = new Set(pageItems.map(e => e.imgIdx));
         affectedImgs.forEach(imgIdx => {
             const img = App.state.images[imgIdx];
             if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
@@ -587,8 +599,12 @@ const Correction = {
     confirmAllMultiPending() {
         const { multiPending } = this.collect();
         if (multiPending.length === 0) return;
-        const count = multiPending.length;
-        multiPending.forEach(e => {
+        const page = this._getPage('col-multi-pending');
+        const PS = this.PAGE_SIZE;
+        const pageItems = multiPending.slice(page * PS, (page + 1) * PS);
+        if (pageItems.length === 0) return;
+        const count = pageItems.length;
+        pageItems.forEach(e => {
             const row = e.row;
             const firstAnswer = row.markedIndices && row.markedIndices.length > 0 ? row.markedIndices[0] : null;
             row.markedAnswer = firstAnswer;
@@ -603,7 +619,7 @@ const Correction = {
             }
         });
         this.invalidate();
-        const affectedImgs = new Set(multiPending.map(e => e.imgIdx));
+        const affectedImgs = new Set(pageItems.map(e => e.imgIdx));
         affectedImgs.forEach(imgIdx => {
             const img = App.state.images[imgIdx];
             if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);

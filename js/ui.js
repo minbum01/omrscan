@@ -2319,31 +2319,39 @@ const UI = {
                 Correction.render(document.getElementById('correction-content'));
             }
         } else {
-            // 전체 확정: 모든 이미지에 대해 수험번호 재매칭 + 재채점
-            let updated = 0;
-            images.forEach(img => {
-                img._correctionConfirmed = true;
+            // 전체 확정: 로딩 표시 + 비동기 처리
+            if (typeof ImageManager !== 'undefined') ImageManager.showLoading('교정 확정 처리중...');
+            const startTime = Date.now();
 
-                // 수험번호/이름 재매칭 (교정된 값으로 갱신)
-                if (img.results) {
-                    ImageManager.applyPhonePrefix(img);
-                    img.gradeResult = Grading.grade(img.results, img);
-                    updated++;
+            setTimeout(() => {
+                let updated = 0;
+                images.forEach((img, i) => {
+                    img._correctionConfirmed = true;
+                    if (img.results) {
+                        ImageManager.applyPhonePrefix(img);
+                        img.gradeResult = Grading.grade(img.results, img);
+                        updated++;
+                    }
+                });
+
+                CanvasManager.render();
+                ImageManager.invalidateStatus();
+                ImageManager.updateList();
+                this.updateRightPanel();
+                if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+                if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+                if (typeof ImageManager !== 'undefined') ImageManager.hideLoading();
+
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                Toast.success(`전체 교정 확정 — ${updated}장 (${elapsed}초)`);
+
+                const cv2 = document.getElementById('correction-view');
+                if (cv2 && cv2.style.display !== 'none' && typeof Correction !== 'undefined') {
+                    Correction.render(document.getElementById('correction-content'));
                 }
-            });
-
-            CanvasManager.render();
-            ImageManager.updateList();
-            this.updateRightPanel();
-            Toast.success(`전체 교정 확정 — ${updated}장 수험번호/채점 갱신됨`);
-
-            // 교정 탭이 열려있으면 즉시 재렌더링
-            const cv2 = document.getElementById('correction-view');
-            if (cv2 && cv2.style.display !== 'none' && typeof Correction !== 'undefined') {
-                Correction.render(document.getElementById('correction-content'));
-            }
+            }, 50);
+            return; // 비동기이므로 아래 markDirty 건너뜀
         }
-        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
     },
 
     // 로컬스토리지 자동 저장 (수기 교정 데이터)
