@@ -318,6 +318,21 @@ ipcMain.handle('session:delete', async (event, sessionName) => {
     } catch (e) { return { success: false, error: e.message }; }
 });
 
+// 분석 로그 파일 저장
+ipcMain.handle('app:saveLog', async (_e, text) => {
+    try {
+        const { dialog } = require('electron');
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: '분석 로그 저장',
+            defaultPath: `분석로그_${new Date().toISOString().slice(0, 10)}.txt`,
+            filters: [{ name: 'Text', extensions: ['txt'] }],
+        });
+        if (result.canceled || !result.filePath) return { success: false };
+        fs.writeFileSync(result.filePath, text, 'utf-8');
+        return { success: true, path: result.filePath };
+    } catch (e) { return { success: false, error: e.message }; }
+});
+
 // 앱 데이터 경로 조회
 ipcMain.handle('app:getDataPath', async () => {
     return getAppDataPath();

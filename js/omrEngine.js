@@ -9,7 +9,89 @@
 const OmrEngine = {
 
     debugLog: false,
-    _log(...args) { if (this.debugLog) console.log(...args); },
+    // 분석 로그 파일 내보내기용 버퍼
+    _fileLog: false,       // true면 로그를 _fileLogBuffer에 수집
+    _fileLogBuffer: [],    // 수집된 로그 라인들
+    _fileLogImageHeader: '', // 현재 이미지 헤더
+
+    _log(...args) {
+        if (this.debugLog) console.log(...args);
+        if (this._fileLog) this._fileLogBuffer.push(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    },
+
+    // 분석 로그 시작 (이미지 + 양식 정보 헤더)
+    startImageLog(imageName, roiIdx, settings, blobPattern) {
+        if (!this._fileLog) return;
+        this._fileLogBuffer.push('');
+        this._fileLogBuffer.push('═'.repeat(80));
+        this._fileLogBuffer.push(`이미지: ${imageName}`);
+        this._fileLogBuffer.push(`영역 ${roiIdx + 1}: ${settings.name || '(이름없음)'}`);
+        this._fileLogBuffer.push(`─ 타입: ${settings.type} | 방향: ${settings.orientation} | 버블: ${settings.elongatedMode ? '세로길쭉' : '원형'}`);
+        this._fileLogBuffer.push(`─ 기대: ${settings.numQuestions}문항 × ${settings.numChoices}지선다 (시작번호: ${settings.startNum || 1})`);
+        if (blobPattern) {
+            this._fileLogBuffer.push(`─ 양식 패턴: 버블 ${blobPattern.bubbleW}×${blobPattern.bubbleH}, 열간격=${blobPattern.colSpacing}, 행간격=${blobPattern.rowSpacing}`);
+            if (blobPattern.colXRatios) this._fileLogBuffer.push(`─ 열위치비율: [${blobPattern.colXRatios.map(r => r.toFixed(3)).join(', ')}]`);
+        } else {
+            this._fileLogBuffer.push(`─ 양식 패턴: 없음 (자동 감지)`);
+        }
+        this._fileLogBuffer.push('─'.repeat(80));
+    },
+
+    // 분석 결과 요약 로그 (상세)
+    endImageLog(analysis, settings) {
+        if (!this._fileLog) return;
+        const rows = analysis.rows || [];
+        const expected = settings.numQuestions || 0;
+        const expectedC = settings.numChoices || 5;
+        this._fileLogBuffer.push(`─ 결과: ${rows.length}문항 감지 (기대 ${expected}) | maxCols=${analysis.maxCols} (기대 ${expectedC})`);
+
+        rows.forEach(r => {
+            const ans = r.markedAnswer != null ? r.markedAnswer : 'null';
+            const multi = r.multiMarked ? ` [중복:${r.markedIndices.join(',')}]` : '';
+            const undef = r.undetected ? ' [미감지]' : '';
+            const corrected = r.corrected ? ' [교정됨]' : '';
+            const blobCount = r.blobs ? r.blobs.length : 0;
+
+            // 블롭 좌표 + 간격
+            let blobInfo = '';
+            if (r.blobs && r.blobs.length > 0) {
+                const positions = r.blobs.map(b => `(${Math.round(b.cx)},${Math.round(b.cy)})`).join(' ');
+                // 블롭 간 간격 계산
+                const gaps = [];
+                for (let i = 1; i < r.blobs.length; i++) {
+                    const dx = Math.abs(r.blobs[i].cx - r.blobs[i-1].cx);
+                    const dy = Math.abs(r.blobs[i].cy - r.blobs[i-1].cy);
+                    gaps.push(Math.round(Math.max(dx, dy)));
+                }
+                blobInfo = ` | 블롭${blobCount}개 위치=${positions}`;
+                if (gaps.length > 0) blobInfo += ` 간격=[${gaps.join(',')}]`;
+
+                // 각 블롭의 comp 점수
+                const compScores = r.blobs.map((b, i) => {
+                    const f = b.centerFillRatio || 0;
+                    const e = b.erodedFill || 0;
+                    return `[${i+1}]f=${f.toFixed(2)}`;
+                }).join(' ');
+                blobInfo += `\n         comp: ${compScores}`;
+            } else {
+                blobInfo = ' | 블롭 없음';
+            }
+
+            this._fileLogBuffer.push(`  Q${r.questionNumber}: 답=${ans}${multi}${undef}${corrected} (선택지${blobCount}/${expectedC})${blobInfo}`);
+        });
+
+        if (analysis.validation) {
+            const v = analysis.validation;
+            this._fileLogBuffer.push(`─ 검증: passed=${v.passed} | 기대Q=${v.expectedQ} 실제Q=${v.actualQ} | 열불일치=${(v.choiceMismatchRows||[]).join(',') || '없음'}`);
+        }
+    },
+
+    // 로그 버퍼를 텍스트로 반환 + 초기화
+    exportLog() {
+        const text = this._fileLogBuffer.join('\n');
+        this._fileLogBuffer = [];
+        return text;
+    },
 
     // ==========================================
     // 전처리
@@ -1056,6 +1138,26 @@ const OmrEngine = {
         }
 
         this._log(`[Stage1.5] 열평균=[${colAvgPositions.map(Math.round).join(',')}] sampleSize=${Math.round(sw)}x${Math.round(sh)}`);
+
+        // 상세 로그: 행 그룹별 블롭 좌표
+        if (this._fileLog) {
+            this._fileLogBuffer.push(`─ rowGroups(${rowGroups.length}개):`);
+            rowGroups.forEach((rg, i) => {
+                const blobs = [...rg].sort((a, b) => a[sortProp] - b[sortProp]);
+                const rowPos = isVert
+                    ? Math.round(blobs.reduce((s, b) => s + b.cy, 0) / blobs.length)
+                    : Math.round(blobs.reduce((s, b) => s + b.cx, 0) / blobs.length);
+                const positions = blobs.map(b => `(${Math.round(b.cx)},${Math.round(b.cy)} ${Math.round(b.w)}x${Math.round(b.h)})`).join(' ');
+                this._fileLogBuffer.push(`  행${i+1}(pos=${rowPos}): ${blobs.length}블롭 ${positions}`);
+            });
+            // 양식 기대 간격 vs 실제 간격 비교
+            if (colAvgPositions.length > 1) {
+                const actualGaps = [];
+                for (let i = 1; i < colAvgPositions.length; i++) actualGaps.push(Math.round(colAvgPositions[i] - colAvgPositions[i-1]));
+                const expectedGap = patternHint ? (isVert ? patternHint.expectedColGap : patternHint.expectedRowGap) : null;
+                this._fileLogBuffer.push(`─ 열간격 실제=[${actualGaps.join(',')}] 양식기대=${expectedGap ? Math.round(expectedGap) : '없음'}`);
+            }
+        }
 
         // ──────────────────────────────────────
         // Stage 2: 모든 그리드 셀에서 샘플링 + 마킹 판별

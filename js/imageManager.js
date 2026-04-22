@@ -46,80 +46,78 @@ const ImageManager = {
         let loaded = 0;
         const total = files.length;
 
-        // 순차 처리 (UI 블로킹 방지)
-        const processFile = (index) => {
-            if (index >= total) {
-                this._uploading = false;
-                console.log(`[handleUpload] ${total}개 업로드 완료 (현재 state.images: ${App.state.images.length}장)`);
-                this.hideLoading();
-                this.updateList();
-                if (App.state.currentIndex === -1) this.select(0);
-                App.updateStatusBar();
-                if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
-                if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
-                Toast.success(`${total}장 업로드 완료`);
-                return;
-            }
+        // 병렬 처리 (최대 4스트림, 딜레이 없음)
+        const PARALLEL = 4;
+        let nextIdx = 0;
+        let completed = 0;
 
-            const file = files[index];
-            // 이 파일에 대한 advance는 단 1회만 — 어떤 경로로 오든 중복 호출 방지
-            let advanced = false;
-            const advance = () => {
-                if (advanced) {
-                    console.warn(`[handleUpload] 중복 advance 무시 (index=${index}, file=${file.name})`);
-                    return;
-                }
-                advanced = true;
-                processFile(index + 1);
-            };
+        const onAllDone = () => {
+            this._uploading = false;
+            console.log(`[handleUpload] ${total}개 업로드 완료 (현재 state.images: ${App.state.images.length}장)`);
+            this.hideLoading();
+            this.invalidateStatus();
+            this.updateList();
+            if (App.state.currentIndex === -1) this.select(0);
+            App.updateStatusBar();
+            if (typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
+            if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+            Toast.success(`${total}장 업로드 완료`);
+        };
 
-            // FileReader(data URL) 대신 blob URL 사용 — base64 인코딩 비용/메모리 절약
+        const processOne = () => {
+            if (nextIdx >= total) return;
+            const myIdx = nextIdx++;
+            const file = files[myIdx];
+
             const originalUrl = URL.createObjectURL(file);
             const originalImg = new Image();
             let handled = false;
+
+            const finish = () => {
+                completed++;
+                // 10장마다 UI 갱신 (매번 하면 렉)
+                if (completed % 10 === 0 || completed === total) {
+                    this.updateLoading(`이미지 처리 중... (${completed}/${total})`);
+                }
+                if (completed >= total) { onAllDone(); return; }
+                processOne(); // 다음 파일 즉시 시작
+            };
+
             originalImg.onload = () => {
                 if (handled) return;
                 handled = true;
-                this.updateLoading(`이미지 처리 중... (${index + 1}/${total}) - ${file.name}`);
-
-                setTimeout(() => {
-                    this.processImage(originalImg, (resized, resizedUrl) => {
-                        // 원본과 리사이즈 결과가 다르면 원본 URL은 더 이상 필요 없음
-                        if (resizedUrl && resizedUrl !== originalUrl) {
-                            URL.revokeObjectURL(originalUrl);
-                        }
-                        const finalUrl = resizedUrl || originalUrl;
-
-                        const imgEntry = {
-                            name: file.name,
-                            _originalName: file.name,
-                            _pristineName: file.name,
-                            imgElement: resized,
-                            _imgSrc: finalUrl, // Lazy Loading 복원용 blob URL
-                            _id: (typeof UI !== 'undefined') ? UI._genRoiId() : ('img_' + Date.now().toString(36)),
-                            rois: [],
-                            results: null,
-                            gradeResult: null,
-                            periodId: App.state.currentPeriodId || 'p1',
-                        };
-                        App.state.images.push(imgEntry);
-                        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
-
-                        advance();
+                this.processImage(originalImg, (resized, resizedUrl) => {
+                    if (resizedUrl && resizedUrl !== originalUrl) {
+                        URL.revokeObjectURL(originalUrl);
+                    }
+                    const finalUrl = resizedUrl || originalUrl;
+                    App.state.images.push({
+                        name: file.name,
+                        _originalName: file.name,
+                        _pristineName: file.name,
+                        imgElement: resized,
+                        _imgSrc: finalUrl,
+                        _id: (typeof UI !== 'undefined') ? UI._genRoiId() : ('img_' + Date.now().toString(36)),
+                        rois: [],
+                        results: null,
+                        gradeResult: null,
+                        periodId: App.state.currentPeriodId || 'p1',
                     });
-                }, 30);
+                    finish();
+                });
             };
             originalImg.onerror = () => {
                 if (handled) return;
                 handled = true;
                 URL.revokeObjectURL(originalUrl);
                 console.warn(`이미지 로드 실패: ${file.name}`);
-                advance();
+                finish();
             };
             originalImg.src = originalUrl;
         };
 
-        processFile(0);
+        // 최대 PARALLEL개 동시 시작
+        for (let i = 0; i < Math.min(PARALLEL, total); i++) processOne();
         e.target.value = '';
     },
 
@@ -230,9 +228,23 @@ const ImageManager = {
         this.updateList();
     },
 
-    // 이미지별 상태 요약 (태그/정렬용) — 현재 row 상태 기준으로 재판정
-    // validationErrors(스냅샷)에 의존하지 않음 → 사용자 수기 교정 후 정상 복귀
+    // 상태 캐시 무효화 (특정 이미지 또는 전체)
+    _statusCache: new WeakMap(),
+    invalidateStatus(imgObj) {
+        if (imgObj) this._statusCache.delete(imgObj);
+        else this._statusCache = new WeakMap();
+    },
+
+    // 이미지별 상태 요약 (태그/정렬용) — 캐시 사용
     _computeItemStatus(imgObj) {
+        const cached = this._statusCache.get(imgObj);
+        if (cached) return cached;
+        const result = this._computeItemStatusImpl(imgObj);
+        this._statusCache.set(imgObj, result);
+        return result;
+    },
+
+    _computeItemStatusImpl(imgObj) {
         let hasMulti = false, hasBlank = false, hasCorrected = false, hasMissing = false;
         let multiCount = 0, blankCount = 0, missingCount = 0;
         if (imgObj.results) {

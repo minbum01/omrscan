@@ -113,10 +113,14 @@ const BatchProcess = {
                 imgObj.validationErrors.push({ type: 'process_error', message: err.message });
             }
             processed++;
-            this.updateProgress(processed, images.length);
-            setTimeout(processNext, 30);
+            if (processed % 5 === 0 || processed >= images.length) {
+                this.updateProgress(processed, images.length);
+                setTimeout(processNext, 0);
+            } else {
+                processNext();
+            }
         };
-        setTimeout(processNext, 50);
+        setTimeout(processNext, 10);
     },
 
     finishPartial(overlay, count) {
@@ -174,7 +178,10 @@ const BatchProcess = {
 
         const processNext = async () => {
             if (processed >= images.length) {
-                this.finish(overlay, images.length);
+                // 1차 분석 완료 → 실패 이미지 자동 재시도
+                this._retryFailedImages(images, overlay, () => {
+                    this.finish(overlay, images.length);
+                });
                 return;
             }
 
@@ -242,7 +249,9 @@ const BatchProcess = {
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
                 const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
+                OmrEngine.startImageLog(imgObj.name || imgObj._originalName, idx, s, roi.blobPattern);
                 const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
+                OmrEngine.endImageLog(analysis, s);
 
                 const startNum = s.startNum || 1;
                 const expectedQ = s.numQuestions || 20;
@@ -314,11 +323,16 @@ const BatchProcess = {
             }
 
             processed++;
-            this.updateProgress(processed, images.length);
-            setTimeout(processNext, 30);
+            // 5장마다 UI 갱신 (매장 하면 렉)
+            if (processed % 5 === 0 || processed >= images.length) {
+                this.updateProgress(processed, images.length);
+                setTimeout(processNext, 0);
+            } else {
+                processNext();
+            }
         };
 
-        setTimeout(processNext, 50);
+        setTimeout(processNext, 10);
     },
 
     // ─────────────────────────────────────────
@@ -447,7 +461,9 @@ const BatchProcess = {
                 const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
                 const elongatedMode = s.elongatedMode || false;
                 const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
+                OmrEngine.startImageLog(imgObj.name || imgObj._originalName, idx, s, roi.blobPattern);
                 const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
+                OmrEngine.endImageLog(analysis, s);
 
                 const startNum  = s.startNum   || 1;
                 const expectedQ = s.numQuestions || 20;
@@ -513,11 +529,15 @@ const BatchProcess = {
             }
 
             processed++;
-            this.updateProgress(processed, tasks.length);
-            setTimeout(processNext, 30);
+            if (processed % 5 === 0 || processed >= tasks.length) {
+                this.updateProgress(processed, tasks.length);
+                setTimeout(processNext, 0);
+            } else {
+                processNext();
+            }
         };
 
-        setTimeout(processNext, 50);
+        setTimeout(processNext, 10);
     },
 
     _finishAllPeriods(overlay, total, periodCount) {
@@ -547,6 +567,7 @@ const BatchProcess = {
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 overlay.remove();
+                ImageManager.invalidateStatus(); // 전체 캐시 무효화
                 ImageManager.updateList();
                 CanvasManager.render();
                 UI.updateRightPanel();
@@ -578,6 +599,7 @@ const BatchProcess = {
                     <p id="batch-text" style="font-size:13px; color:var(--text-secondary);">0 / ${total} 처리 중...</p>
                     <div id="batch-done" style="display:none; margin-top:16px;">
                         <p id="batch-summary" style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;"></p>
+                        <button class="btn" id="batch-save-log" style="width:100%; margin-bottom:6px; display:none;">분석 로그 저장</button>
                         <button class="btn btn-primary" id="batch-close" style="width:100%;">닫기</button>
                     </div>
                 </div>
@@ -593,6 +615,189 @@ const BatchProcess = {
         if (bar) bar.style.width = pct + '%';
         if (progressText) progressText.textContent = `${current} / ${total} 처리 중...`;
     },
+
+    // ─────────────────────────────────────────
+    // 실패 이미지 자동 재시도 (진하기 + 미세 회전)
+    // ─────────────────────────────────────────
+    _retryFailedImages(images, overlay, onComplete) {
+        // 실패 이미지 수집: validationErrors에 missing_questions가 있는 것
+        const failed = [];
+        images.forEach((imgObj, imgIdx) => {
+            if (!imgObj.validationErrors || imgObj.validationErrors.length === 0) return;
+            const hasMissing = imgObj.validationErrors.some(e => e.type === 'missing_questions');
+            if (hasMissing) failed.push({ imgObj, imgIdx });
+        });
+
+        if (failed.length === 0) { onComplete(); return; }
+
+        // 로딩 메시지 변경
+        const progressText = document.getElementById('batch-text');
+        const bar = document.getElementById('batch-bar');
+        if (progressText) progressText.textContent = `오류 문항 추가 검증중... (0/${failed.length})`;
+        if (bar) bar.style.width = '0%';
+
+        const baseIntensity = CanvasManager.intensity || 115;
+
+        // 재시도 조합: [진하기 오프셋, 회전 각도]
+        const retryCombos = [
+            [100, 0],      // 1: 진하기 +100%
+            [100, 0.5],    // 2: 진하기 +100% + 0.5°
+            [100, -0.5],   // 3: 진하기 +100% - 0.5°
+            [200, 0],      // 4: 진하기 +200%
+            [200, 0.5],    // 5: 진하기 +200% + 0.5°
+            [200, -0.5],   // 6: 진하기 +200% - 0.5°
+        ];
+
+        let retryIdx = 0;
+
+        const processNextRetry = async () => {
+            if (retryIdx >= failed.length) { onComplete(); return; }
+
+            const { imgObj } = failed[retryIdx];
+            const imgIntensity = imgObj.intensity || baseIntensity;
+
+            // Lazy Loading 복원
+            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
+                await ImageManager.ensureLoaded(imgObj);
+            }
+            if (!imgObj.imgElement || imgObj.imgElement.width === 0) {
+                retryIdx++;
+                setTimeout(processNextRetry, 0);
+                return;
+            }
+
+            const imgEl = imgObj.imgElement;
+            const bw = imgEl.naturalWidth || imgEl.width;
+            const bh = imgEl.naturalHeight || imgEl.height;
+
+            // 실패한 ROI 인덱스 수집
+            const failedRoiIndices = [];
+            imgObj.validationErrors.forEach(e => {
+                if (e.type === 'missing_questions') {
+                    const ri = (e.roiIndex || 1) - 1;
+                    if (!failedRoiIndices.includes(ri)) failedRoiIndices.push(ri);
+                }
+            });
+
+            let solved = false;
+
+            for (let ci = 0; ci < retryCombos.length && !solved; ci++) {
+                const [intensityOffset, rotation] = retryCombos[ci];
+                const tryIntensity = imgIntensity + intensityOffset;
+
+                // 1. 진하기 적용 캔버스 생성
+                const prevI = CanvasManager.intensity;
+                CanvasManager.intensity = tryIntensity;
+                let srcCanvas = CanvasManager._getIntensifiedImage(imgObj);
+                CanvasManager.intensity = prevI;
+
+                if (!srcCanvas) {
+                    srcCanvas = document.createElement('canvas');
+                    srcCanvas.width = bw; srcCanvas.height = bh;
+                    srcCanvas.getContext('2d', { willReadFrequently: true }).drawImage(imgEl, 0, 0);
+                }
+
+                // 2. 회전 적용 (0이 아니면)
+                let analyzeCanvas = srcCanvas;
+                if (rotation !== 0) {
+                    const rotCanvas = document.createElement('canvas');
+                    rotCanvas.width = bw; rotCanvas.height = bh;
+                    const rctx = rotCanvas.getContext('2d', { willReadFrequently: true });
+                    rctx.translate(bw / 2, bh / 2);
+                    rctx.rotate(rotation * Math.PI / 180);
+                    rctx.drawImage(srcCanvas, -bw / 2, -bh / 2);
+                    analyzeCanvas = rotCanvas;
+                }
+
+                // 3. 실패한 ROI만 재분석
+                let allSolved = true;
+                const newResults = [];
+
+                for (const ri of failedRoiIndices) {
+                    const roi = imgObj.rois[ri];
+                    if (!roi || !roi.settings) { allSolved = false; continue; }
+                    const s = roi.settings;
+
+                    const imageData = CanvasManager.getAdjustedImageData(imgObj, roi.x, roi.y, roi.w, roi.h, analyzeCanvas);
+                    const orientation = s.orientation || 'vertical';
+                    const numQ = s.numQuestions || 0;
+                    const numC = s.numChoices || 0;
+                    const bSize = s.bubbleSize || CanvasManager.bubbleSize || 0;
+                    const elongatedMode = s.elongatedMode || false;
+                    const elongatedThresholds = elongatedMode ? UI.getThresholds(s) : null;
+
+                    OmrEngine.startImageLog(imgObj.name + ` [재시도${ci + 1}: +${intensityOffset}% ${rotation > 0 ? '+' : ''}${rotation}°]`, ri, s, roi.blobPattern);
+                    const analysis = OmrEngine.analyzeROI(imageData, roi.x, roi.y, orientation, numQ, numC, null, bSize, elongatedMode, elongatedThresholds, roi.blobPattern || null);
+                    OmrEngine.endImageLog(analysis, s);
+
+                    const startNum = s.startNum || 1;
+                    analysis.rows.forEach((row, i) => { row.questionNumber = startNum + i; });
+
+                    // 성공 판정: 감지 문항수 >= 기대 문항수
+                    if (analysis.rows.length >= numQ) {
+                        newResults.push({ ri, analysis, intensity: tryIntensity, rotation });
+                    } else {
+                        allSolved = false;
+                    }
+                }
+
+                // 모든 실패 ROI가 해결되면 결과 채택
+                if (allSolved && newResults.length === failedRoiIndices.length) {
+                    solved = true;
+                    newResults.forEach(({ ri, analysis, intensity, rotation }) => {
+                        const s = imgObj.rois[ri].settings;
+                        const startNum = s.startNum || 1;
+                        const expectedQ = s.numQuestions || 20;
+                        const expectedC = s.numChoices || 5;
+
+                        imgObj.results[ri] = {
+                            roiIndex: ri + 1,
+                            numQuestions: analysis.rows.length,
+                            numChoices: analysis.maxCols,
+                            rows: analysis.rows,
+                            settings: s,
+                            validation: analysis.validation,
+                            _retryInfo: { intensityOffset: intensity - imgIntensity, rotation },
+                        };
+                    });
+
+                    // validationErrors에서 해결된 missing_questions 제거
+                    imgObj.validationErrors = imgObj.validationErrors.filter(e => e.type !== 'missing_questions');
+
+                    // 재채점
+                    ImageManager.applyPhonePrefix(imgObj);
+                    const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
+                        imgObj.rois.some(r => r.settings && r.settings.answerKey);
+                    if (hasAnswers || App.state.answerKey) {
+                        imgObj.rois.forEach(roi => {
+                            if (roi.settings && roi.settings.type === 'subject_answer') UI._loadAnswersFromSubject(roi);
+                        });
+                        imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
+                    }
+
+                    this._log(`[Retry] ${imgObj.name}: 해결 (시도${ci + 1}: +${retryCombos[ci][0]}% ${retryCombos[ci][1]}°)`);
+                }
+            }
+
+            if (!solved) {
+                this._log(`[Retry] ${imgObj.name}: 6회 시도 실패`);
+            }
+
+            retryIdx++;
+            if (progressText) progressText.textContent = `오류 문항 추가 검증중... (${retryIdx}/${failed.length})`;
+            if (bar) bar.style.width = Math.round((retryIdx / failed.length) * 100) + '%';
+
+            if (retryIdx % 3 === 0 || retryIdx >= failed.length) {
+                setTimeout(processNextRetry, 0);
+            } else {
+                processNextRetry();
+            }
+        };
+
+        setTimeout(processNextRetry, 50);
+    },
+
+    _log(...args) { console.log(...args); },
 
     // BUG9 fix: 변수명 충돌 해결
     finish(overlay, total) {
@@ -618,18 +823,46 @@ const BatchProcess = {
                 summaryText = `분석 완료 ${total}장 (정답 미입력)`;
             }
 
+            // 재시도로 해결된 이미지 수
+            const retried = App.state.images.filter(i => i.results && i.results.some(r => r._retryInfo));
+            if (retried.length > 0) {
+                summaryText += `\n✓ 추가 검증으로 ${retried.length}장 복구됨`;
+            }
             if (warnings.length > 0) {
                 summaryText += `\n⚠ 검증 경고 ${warnings.length}장`;
+            }
+            if (retried.length > 0 || warnings.length > 0) {
                 summary.style.whiteSpace = 'pre-line';
             }
 
             summary.textContent = summaryText;
         }
 
+        // 분석 로그가 수집된 상태면 저장 버튼 표시
+        const logBtn = document.getElementById('batch-save-log');
+        if (logBtn && OmrEngine._fileLog && OmrEngine._fileLogBuffer.length > 0) {
+            logBtn.style.display = '';
+            logBtn.addEventListener('click', async () => {
+                if (window.electronAPI && window.electronAPI.saveLog) {
+                    const result = await window.electronAPI.saveLog(OmrEngine.exportLog());
+                    if (result.success) Toast.success(`로그 저장 완료`);
+                    else Toast.error('로그 저장 실패');
+                } else {
+                    const blob = new Blob([OmrEngine.exportLog()], { type: 'text/plain' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `분석로그_${new Date().toISOString().slice(0, 10)}.txt`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                }
+            });
+        }
+
         const closeBtn = document.getElementById('batch-close');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 overlay.remove();
+                ImageManager.invalidateStatus();
                 ImageManager.updateList();
                 CanvasManager.render();
                 UI.updateRightPanel();

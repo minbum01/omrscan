@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // 앱 정보
     getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
+    saveLog: (text) => ipcRenderer.invoke('app:saveLog', text),
 
     // 앱 종료 관련
     onBeforeClose: (callback) => ipcRenderer.on('app:before-close', callback),

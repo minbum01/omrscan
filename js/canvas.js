@@ -580,6 +580,7 @@ const CanvasManager = {
             }
 
             this.render();
+            ImageManager.invalidateStatus(imgObj);
             ImageManager.updateList();
             UI.updateRightPanel();
             if (typeof Correction !== 'undefined') {
@@ -707,7 +708,7 @@ const CanvasManager = {
         offCtx.putImageData(imgData, 0, 0);
 
         // 캐시 (최대 200개)
-        if (this._intensityCache.size > 200) {
+        if (this._intensityCache.size > 20) {
             const firstKey = this._intensityCache.keys().next().value;
             this._intensityCache.delete(firstKey);
         }

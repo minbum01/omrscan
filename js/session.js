@@ -782,27 +782,26 @@ const SessionManager = {
         const curPeriod = App.getCurrentPeriod();
         if (curPeriod) curPeriod.images = App.state.images;
 
-        // ── 매칭된 행 수집 (파일명 renaming용) ──
-        // "periodId:localIdx" → { name, examNo, phone, birthday }
+        // ── 매칭된 행 수집 (파일명 renaming용) — metadataOnly면 생략 ──
         const rowByRef = new Map();
-        try {
-            if (typeof Scoring !== 'undefined') {
-                const rows = Scoring.collectData() || [];
-                rows.forEach(r => {
-                    if (r._periodRows) {
-                        // 다교시 merged row
-                        r._periodRows.forEach(pr => {
-                            rowByRef.set(`${pr.periodId}:${pr._localIdx}`, r);
-                        });
-                    } else if (r.periodId !== undefined && r._localIdx !== undefined) {
-                        rowByRef.set(`${r.periodId}:${r._localIdx}`, r);
-                    } else if (typeof r.imgIdx === 'number' && r.imgIdx >= 0) {
-                        // 단일 교시 하위호환
-                        rowByRef.set(`${App.state.currentPeriodId || 'p1'}:${r.imgIdx}`, r);
-                    }
-                });
-            }
-        } catch (_) { /* 매칭 실패해도 저장은 진행 */ }
+        if (!metadataOnly) {
+            try {
+                if (typeof Scoring !== 'undefined') {
+                    const rows = Scoring.collectData() || [];
+                    rows.forEach(r => {
+                        if (r._periodRows) {
+                            r._periodRows.forEach(pr => {
+                                rowByRef.set(`${pr.periodId}:${pr._localIdx}`, r);
+                            });
+                        } else if (r.periodId !== undefined && r._localIdx !== undefined) {
+                            rowByRef.set(`${r.periodId}:${r._localIdx}`, r);
+                        } else if (typeof r.imgIdx === 'number' && r.imgIdx >= 0) {
+                            rowByRef.set(`${App.state.currentPeriodId || 'p1'}:${r.imgIdx}`, r);
+                        }
+                    });
+                }
+            } catch (_) { /* 매칭 실패해도 저장은 진행 */ }
+        }
 
         const sanitize   = (s) => String(s || '').replace(/[\\/:*?"<>|.]/g, '').trim();
         const getPristine = (img) => img._pristineName || img._originalName || img.name || '';
