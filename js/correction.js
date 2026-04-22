@@ -145,7 +145,9 @@ const Correction = {
             </div>
 
             <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;">
-                <div>${colHdr('null 수정중', nullPending.length, '#d97706')}<div id="col-null-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
+                <div>${colHdr('null 수정중', nullPending.length, '#d97706',
+                    nullPending.length > 0 ? `<button onclick="Correction.confirmAllNullBlank()" style="padding:1px 5px;font-size:9px;background:#d97706;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">현재페이지 전체빈칸</button>` : ''
+                )}<div id="col-null-pending" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${histHdr('null 이력', nullHistory.length)}<div id="col-null-history" style="display:flex;flex-direction:column;gap:4px;"></div></div>
                 <div>${colHdr('1.5배 수정중', autoPending.length, '#16a34a',
                     autoPending.length > 0 ? `<button onclick="Correction.confirmAllAutoPending()" style="padding:1px 5px;font-size:9px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-weight:700;">현재페이지 전체확인</button>` : ''
@@ -269,8 +271,8 @@ const Correction = {
         textInput.onfocus = () => {
             wrap.style.outline = '2px solid #3b82f6';
             wrap.style.outlineOffset = '-1px';
-            if (Correction._skipScrollOnce) { Correction._skipScrollOnce = false; }
-            else { wrap.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+            // 스크롤 이동 완전 제거 — render 후 복원 로직과 충돌 방지
+            Correction._skipScrollOnce = false;
             setTimeout(() => textInput.select(), 0);
         };
         textInput.onblur = () => { wrap.style.outline = ''; };
@@ -436,6 +438,26 @@ const Correction = {
             container.appendChild(cellWrap);
         });
 
+        // 빈칸 버튼 (수정중 카드에만)
+        if (!isSmall && !thumbOverride) {
+            const blankWrap = document.createElement('div');
+            blankWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:0px;';
+            const blankBtn = document.createElement('div');
+            blankBtn.style.cssText = `width:${THUMB_SIZE}px;height:${THUMB_SIZE}px;border:2px dashed #94a3b8;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;color:#94a3b8;font-weight:700;`;
+            blankBtn.textContent = '─';
+            blankBtn.title = '빈칸 처리';
+            blankBtn.onmousedown = (ev) => ev.preventDefault();
+            blankBtn.onclick = () => this.setAnswerAndAdvance(e.imgIdx, e.roiIdx, e.qNum, null, { fromThumbnail: true });
+            blankBtn.onmouseenter = () => { blankBtn.style.borderColor = '#dc2626'; blankBtn.style.color = '#dc2626'; };
+            blankBtn.onmouseleave = () => { blankBtn.style.borderColor = '#94a3b8'; blankBtn.style.color = '#94a3b8'; };
+            blankWrap.appendChild(blankBtn);
+            const blankLbl = document.createElement('div');
+            blankLbl.style.cssText = 'font-size:7px;color:#94a3b8;line-height:1;';
+            blankLbl.textContent = '빈칸';
+            blankWrap.appendChild(blankLbl);
+            container.appendChild(blankWrap);
+        }
+
         return container;
     },
 
@@ -564,6 +586,38 @@ const Correction = {
 
     setAnswer(imgIdx, roiIdx, qNum, newAnswer) {
         this.setAnswerAndAdvance(imgIdx, roiIdx, qNum, newAnswer, { fromThumbnail: true });
+    },
+
+    // null 수정중 — 현재 페이지 전체 빈칸 처리
+    confirmAllNullBlank() {
+        const { nullPending } = this.collect();
+        if (nullPending.length === 0) return;
+        const page = this._getPage('col-null-pending');
+        const PS = this.PAGE_SIZE;
+        const pageItems = nullPending.slice(page * PS, (page + 1) * PS);
+        if (pageItems.length === 0) return;
+        const count = pageItems.length;
+        pageItems.forEach(e => {
+            const row = e.row;
+            if (row.blobs) row.blobs.forEach(b => { b.isMarked = false; });
+            row.markedAnswer = null;
+            row.multiMarked = false;
+            row.markedIndices = [];
+            row.corrected = true;
+            row._userCorrected = true;
+            row.undetected = false;
+        });
+        this.invalidate();
+        const affectedImgs = new Set(pageItems.map(e => e.imgIdx));
+        affectedImgs.forEach(imgIdx => {
+            const img = App.state.images[imgIdx];
+            if (img && img.results && typeof Grading !== 'undefined') img.gradeResult = Grading.grade(img.results, img);
+        });
+        if (typeof ImageManager !== 'undefined') ImageManager.updateList();
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+        this.render(document.getElementById('correction-content'));
+        Toast.success(`null 수정중 ${count}개 빈칸 처리`);
     },
 
     confirmAllAutoPending() {

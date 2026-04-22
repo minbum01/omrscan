@@ -633,9 +633,9 @@ const BatchProcess = {
     // ─────────────────────────────────────────
     _retryFailedImages(images, overlay, onComplete) {
         const rlog = (...args) => {
+            if (!OmrEngine._fileLog) return; // 분석로그 OFF면 아무것도 안 함
             const msg = args.join(' ');
-            console.log(msg);
-            if (OmrEngine._fileLog) OmrEngine._fileLogBuffer.push(msg);
+            OmrEngine._fileLogBuffer.push(msg);
         };
 
         // ── 1단계: 재시도 대상 수집 ──
