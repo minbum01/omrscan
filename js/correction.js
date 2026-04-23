@@ -665,17 +665,12 @@ const Correction = {
         const count = pageItems.length;
         pageItems.forEach(e => {
             const row = e.row;
-            const firstAnswer = row.markedIndices && row.markedIndices.length > 0 ? row.markedIndices[0] : null;
-            row.markedAnswer = firstAnswer;
+            // 중복값 그대로 유지 — markedIndices 전부 마킹된 상태로 확정
             row.multiMarked = false;
-            row.markedIndices = firstAnswer ? [firstAnswer] : [];
             row.corrected = true;
             row._userCorrected = true;
             row.undetected = false;
-            if (row.blobs) {
-                row.blobs.forEach(b => b.isMarked = false);
-                if (firstAnswer && row.blobs[firstAnswer - 1]) row.blobs[firstAnswer - 1].isMarked = true;
-            }
+            // markedAnswer/markedIndices/blobs.isMarked는 그대로 유지
         });
         this.invalidate();
         const affectedImgs = new Set(pageItems.map(e => e.imgIdx));
