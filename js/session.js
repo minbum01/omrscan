@@ -922,33 +922,42 @@ const SessionManager = {
             if (this.isElectron) {
                 let imageDataArr = null; // null이면 main.js IPC가 이미지 디렉터리를 건드리지 않음
                 if (!metadataOnly) {
-                    let processed = 0;
-                    // 이미지 → base64 변환 (Lazy Loading 복원 포함)
-                    const total = allPeriodEntries.length + deletedImages.length;
-                    const imgToData = async (imgObj, filename) => {
+                    // 이미지 → base64 순차 변환 (진행률 + 남은 시간 표시)
+                    const allItems = [
+                        ...allPeriodEntries.map(({ img, periodId, localIdx }) => ({ imgObj: img, filename: buildFilenameByRef(img, periodId, localIdx) })),
+                        ...deletedImages.map(img => ({ imgObj: img, filename: getPristine(img) })),
+                    ];
+                    const total = allItems.length;
+                    const saveStart = Date.now();
+                    imageDataArr = [];
+
+                    for (let i = 0; i < total; i++) {
+                        const { imgObj: saveImg, filename: saveName } = allItems[i];
                         try {
-                            // Lazy Loading: 해제된 이미지 복원
-                            if (typeof ImageManager !== 'undefined' && (!imgObj.imgElement || !imgObj.imgElement.complete || imgObj.imgElement.width === 0)) {
-                                await ImageManager.ensureLoaded(imgObj);
+                            if (typeof ImageManager !== 'undefined' && (!saveImg.imgElement || !saveImg.imgElement.complete || saveImg.imgElement.width === 0)) {
+                                await ImageManager.ensureLoaded(saveImg);
                             }
-                            if (!imgObj.imgElement || imgObj.imgElement.width === 0) { processed++; this._updateProgressOverlay(`세션 저장 중... (${processed}/${total})`); return null; }
+                            if (!saveImg.imgElement || saveImg.imgElement.width === 0) continue;
                             const c = document.createElement('canvas');
-                            c.width  = imgObj.imgElement.naturalWidth  || imgObj.imgElement.width;
-                            c.height = imgObj.imgElement.naturalHeight || imgObj.imgElement.height;
-                            c.getContext('2d').drawImage(imgObj.imgElement, 0, 0);
-                            const result = { filename: filename || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) };
-                            processed++;
-                            this._updateProgressOverlay(`세션 저장 중... (${processed}/${total})`);
-                            return result;
-                        } catch (e) { processed++; return null; }
-                    };
-                    const activeArr = (await Promise.all(allPeriodEntries.map(({ img, periodId, localIdx }) =>
-                        imgToData(img, buildFilenameByRef(img, periodId, localIdx))
-                    ))).filter(Boolean);
-                    const deletedArr = (await Promise.all(deletedImages.map(img =>
-                        imgToData(img, getPristine(img))
-                    ))).filter(Boolean);
-                    imageDataArr = [...activeArr, ...deletedArr];
+                            c.width = saveImg.imgElement.naturalWidth || saveImg.imgElement.width;
+                            c.height = saveImg.imgElement.naturalHeight || saveImg.imgElement.height;
+                            c.getContext('2d').drawImage(saveImg.imgElement, 0, 0);
+                            imageDataArr.push({ filename: saveName || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) });
+                        } catch (_) {}
+
+                        // 10장마다 UI 갱신 (남은 시간 포함)
+                        if ((i + 1) % 10 === 0 || i === total - 1) {
+                            let timeInfo = '';
+                            if (i > 5) {
+                                const elapsed = (Date.now() - saveStart) / 1000;
+                                const remaining = (elapsed / (i + 1)) * (total - i - 1);
+                                if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                                else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+                            }
+                            this._updateProgressOverlay(`세션 저장 중... (${i + 1}/${total})${timeInfo}`);
+                            await new Promise(r => setTimeout(r, 0)); // UI 갱신 기회
+                        }
+                    }
                     this._updateProgressOverlay(`디스크에 저장 중... (${imageDataArr.length}장)`);
                 }
 
