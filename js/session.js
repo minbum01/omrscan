@@ -611,6 +611,7 @@ const SessionManager = {
             this.currentExamDate = data.examDate || this._parseExamDate(name);
             this.isTemplateMode = !!(data.isTemplateMode || (name && name.startsWith('[양식]')));
             this._hasUnsavedChanges = false;
+            this._savedOnce = true; // 디스크에 이미지가 이미 있음
             this._updateHeader();
 
             // 활성/삭제 이미지 분류용 맵 (파일명 기준)
@@ -922,43 +923,55 @@ const SessionManager = {
             if (this.isElectron) {
                 let imageDataArr = null; // null이면 main.js IPC가 이미지 디렉터리를 건드리지 않음
                 if (!metadataOnly) {
-                    // 이미지 → base64 순차 변환 (진행률 + 남은 시간 표시)
+                    // 이미지 → base64 순차 변환 (변경된 이미지만 인코딩)
+                    const isFirstSave = !this._savedOnce;
                     const allItems = [
                         ...allPeriodEntries.map(({ img, periodId, localIdx }) => ({ imgObj: img, filename: buildFilenameByRef(img, periodId, localIdx) })),
                         ...deletedImages.map(img => ({ imgObj: img, filename: getPristine(img) })),
                     ];
+                    const dirtyItems = isFirstSave ? allItems : allItems.filter(item => item.imgObj._imgDirty);
                     const total = allItems.length;
+                    const dirtyCount = dirtyItems.length;
                     const saveStart = Date.now();
                     imageDataArr = [];
 
-                    for (let i = 0; i < total; i++) {
-                        const { imgObj: saveImg, filename: saveName } = allItems[i];
-                        try {
-                            if (typeof ImageManager !== 'undefined' && (!saveImg.imgElement || !saveImg.imgElement.complete || saveImg.imgElement.width === 0)) {
-                                await ImageManager.ensureLoaded(saveImg);
-                            }
-                            if (!saveImg.imgElement || saveImg.imgElement.width === 0) continue;
-                            const c = document.createElement('canvas');
-                            c.width = saveImg.imgElement.naturalWidth || saveImg.imgElement.width;
-                            c.height = saveImg.imgElement.naturalHeight || saveImg.imgElement.height;
-                            c.getContext('2d').drawImage(saveImg.imgElement, 0, 0);
-                            imageDataArr.push({ filename: saveName || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) });
-                        } catch (_) {}
+                    if (dirtyCount === 0 && !isFirstSave) {
+                        // 변경된 이미지 없음 — 이미지 파일 건드리지 않음 (null 전달)
+                        imageDataArr = null;
+                        this._updateProgressOverlay(`메타데이터만 저장 중...`);
+                    } else {
+                        this._updateProgressOverlay(`이미지 저장 중... (${dirtyCount}/${total}장 변경됨)`);
 
-                        // 10장마다 UI 갱신 (남은 시간 포함)
-                        if ((i + 1) % 10 === 0 || i === total - 1) {
-                            let timeInfo = '';
-                            if (i > 5) {
-                                const elapsed = (Date.now() - saveStart) / 1000;
-                                const remaining = (elapsed / (i + 1)) * (total - i - 1);
-                                if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
-                                else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+                        for (let i = 0; i < dirtyItems.length; i++) {
+                            const { imgObj: saveImg, filename: saveName } = dirtyItems[i];
+                            try {
+                                if (typeof ImageManager !== 'undefined' && (!saveImg.imgElement || !saveImg.imgElement.complete || saveImg.imgElement.width === 0)) {
+                                    await ImageManager.ensureLoaded(saveImg);
+                                }
+                                if (!saveImg.imgElement || saveImg.imgElement.width === 0) continue;
+                                const c = document.createElement('canvas');
+                                c.width = saveImg.imgElement.naturalWidth || saveImg.imgElement.width;
+                                c.height = saveImg.imgElement.naturalHeight || saveImg.imgElement.height;
+                                c.getContext('2d').drawImage(saveImg.imgElement, 0, 0);
+                                imageDataArr.push({ filename: saveName || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) });
+                                saveImg._imgDirty = false; // 저장 완료
+                            } catch (_) {}
+
+                            if ((i + 1) % 10 === 0 || i === dirtyItems.length - 1) {
+                                let timeInfo = '';
+                                if (i > 3) {
+                                    const elapsed = (Date.now() - saveStart) / 1000;
+                                    const remaining = (elapsed / (i + 1)) * (dirtyItems.length - i - 1);
+                                    if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                                    else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+                                }
+                                this._updateProgressOverlay(`이미지 저장 중... (${i + 1}/${dirtyCount})${timeInfo}`);
+                                await new Promise(r => setTimeout(r, 0));
                             }
-                            this._updateProgressOverlay(`세션 저장 중... (${i + 1}/${total})${timeInfo}`);
-                            await new Promise(r => setTimeout(r, 0)); // UI 갱신 기회
                         }
                     }
-                    this._updateProgressOverlay(`디스크에 저장 중... (${imageDataArr.length}장)`);
+                    this._updateProgressOverlay(`디스크에 저장 중...`);
+                    this._savedOnce = true;
                 }
 
                 const result = await window.electronAPI.saveSession(name, data, imageDataArr);

@@ -747,7 +747,7 @@ const CanvasManager = {
                     if (typeof ImageManager !== 'undefined') ImageManager._revokeBlobUrl(imgObj._imgSrc);
                     imgObj.imgElement = newImg;
                     imgObj._imgSrc = url;
-                    // ROI와 결과는 유지 (미세 보정이므로)
+                    imgObj._imgDirty = true; // 보정됨 → 재저장 필요
                     imgObj.results = null;
                     imgObj.gradeResult = null;
 
@@ -862,8 +862,8 @@ const CanvasManager = {
                     // 이전 _imgSrc가 blob이면 해제
                     if (typeof ImageManager !== 'undefined') ImageManager._revokeBlobUrl(imgObj._imgSrc);
                     imgObj.imgElement = newImg;
-                    // 회전된 이미지의 blob URL을 그대로 _imgSrc로 사용 (Lazy Loading 복원 시 회전 상태 유지)
                     imgObj._imgSrc = url;
+                    imgObj._imgDirty = true; // 회전됨 → 재저장 필요
                     imgObj.rois = [];
                     imgObj.results = null;
                     imgObj.gradeResult = null;

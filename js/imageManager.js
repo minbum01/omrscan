@@ -105,6 +105,7 @@ const ImageManager = {
                         _pristineName: file.name,
                         imgElement: resized,
                         _imgSrc: finalUrl,
+                        _imgDirty: true, // 신규 → 저장 필요
                         _id: (typeof UI !== 'undefined') ? UI._genRoiId() : ('img_' + Date.now().toString(36)),
                         rois: [],
                         results: null,
