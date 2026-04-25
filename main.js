@@ -318,6 +318,21 @@ ipcMain.handle('session:delete', async (event, sessionName) => {
     } catch (e) { return { success: false, error: e.message }; }
 });
 
+// 게시용 성적표 HTML 저장 + 브라우저 열기
+ipcMain.handle('app:saveReport', async (_e, sessionName, html) => {
+    try {
+        const sessDir = path.join(getSessionsPath(), safeRel(sessionName));
+        if (!fs.existsSync(sessDir)) fs.mkdirSync(sessDir, { recursive: true });
+        const baseName = path.basename(safeRel(sessionName));
+        const filePath = path.join(sessDir, `${baseName}_성적표.html`);
+        fs.writeFileSync(filePath, html, 'utf-8');
+        // 기본 브라우저로 열기
+        const { shell } = require('electron');
+        shell.openPath(filePath);
+        return { success: true, path: filePath };
+    } catch (e) { return { success: false, error: e.message }; }
+});
+
 // 분석 로그 파일 저장
 ipcMain.handle('app:saveLog', async (_e, text) => {
     try {

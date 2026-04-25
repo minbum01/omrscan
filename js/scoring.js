@@ -1155,6 +1155,9 @@ const Scoring = {
             ${this._tabBtn('report', '성적일람표')}
             ${this._tabBtn('item', '문항분석표')}
             ${this._tabBtn('personal', '개인별 성적표')}
+            <div style="margin-left:auto; display:flex; align-items:center;">
+                <button class="btn btn-sm btn-primary" onclick="PublicReport.generate()" style="font-size:11px; padding:5px 12px;">게시용 성적표</button>
+            </div>
         </div>`;
 
         // 탭 내용
