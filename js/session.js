@@ -466,6 +466,7 @@ const SessionManager = {
         App.state.deletedImages = [];
         App.state.currentIndex = -1;
         App.state.answerKey = null;
+        App.state.subjectMerges = [];
 
         if (typeof App._initPeriods === 'function') App._initPeriods();
         else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
@@ -515,6 +516,7 @@ const SessionManager = {
         App.state.deletedImages = [];
         App.state.currentIndex = -1;
         App.state.answerKey = null;
+        App.state.subjectMerges = [];
 
         if (typeof App._initPeriods === 'function') App._initPeriods();
         else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
@@ -578,6 +580,7 @@ const SessionManager = {
                 App.state.students = [];
                 App.state.images = [];
                 App.state.currentIndex = -1;
+                App.state.subjectMerges = [];
                 this._hasUnsavedChanges = false;
                 this._updateHeader();
                 this._hideProgressOverlay();
@@ -593,6 +596,7 @@ const SessionManager = {
             App.state.students = data.students || [];
             App.state.matchFields = data.matchFields || { name: true, birth: false, examNo: false, phone: false };
             App.state.answerKey = data.answerKey || null;
+            App.state.subjectMerges = Array.isArray(data.subjectMerges) ? data.subjectMerges : [];
             App.state.images = [];
             App.state.deletedImages = [];
             App.state.currentIndex = -1;
@@ -896,10 +900,11 @@ const SessionManager = {
             isTemplateMode: !!this.isTemplateMode,
             version: 1,
             savedAt: new Date().toISOString(),
-            subjects:    App.state.subjects  || [],
-            students:    App.state.students  || [],
-            matchFields: App.state.matchFields || {},
-            answerKey:   App.state.answerKey  || null,
+            subjects:       App.state.subjects      || [],
+            students:       App.state.students      || [],
+            matchFields:    App.state.matchFields   || {},
+            answerKey:      App.state.answerKey     || null,
+            subjectMerges:  App.state.subjectMerges || [],
             imageCount:  allPeriodEntries.length,
             // 모든 교시 이미지 (periodId 포함)
             imageResults: allPeriodEntries.map(({ img, periodId, localIdx }) =>

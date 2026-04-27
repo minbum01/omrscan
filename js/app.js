@@ -28,6 +28,10 @@ const App = {
         // periods[i].images 와 App.state.images 는 같은 배열 참조 (currentPeriod 기준)
         periods: [],           // [{ id, name, images[], answerKey, subjects[] }]
         currentPeriodId: null, // 현재 편집/분석 중인 교시 id
+
+        // 과목 합치기 — 학생별 마킹 영역이 다른 경우 통합 채점
+        // [{ target: 'B', sources: ['A','C'] }, ...]
+        subjectMerges: [],
     },
 
     els: {},

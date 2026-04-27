@@ -213,6 +213,16 @@ const UI = {
 
         if (listOpen && imgObj.rois.length > 0) {
             html += `<div style="margin:-1px -16px 12px; padding:6px 16px; background:var(--bg-input); border-top:1px solid var(--border-light); border-bottom:1px solid var(--border-light); position:sticky; top:44px; z-index:9; max-height:40vh; overflow-y:auto;">`;
+
+            // 과목 합치기 버튼 — 영역 목록 상단
+            const _mergeGroups = (App.state.subjectMerges || []);
+            const _mergeBadge = _mergeGroups.length > 0 ? `<span style="margin-left:6px; padding:1px 6px; background:#f59e0b; color:#fff; border-radius:8px; font-size:10px; font-weight:700;">${_mergeGroups.length}개 그룹</span>` : '';
+            html += `<div style="margin-bottom:6px;">
+                <button onclick="SubjectMerge.openModal()" style="width:100%; padding:6px 10px; font-size:11px; font-weight:600; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; color:var(--text-secondary);">
+                    🔗 과목 합치기${_mergeBadge}
+                </button>
+            </div>`;
+
             imgObj.rois.forEach((roi, idx) => {
                 // 연결된 과목코드 ROI는 목록에서 숨김
                 if (roi._id && _linkedCodeIds.has(roi._id)) return;
@@ -261,7 +271,15 @@ const UI = {
             html += `<datalist id="subject-name-list">${[...subjectNames].map(n => `<option value="${this.esc(n)}">`).join('')}</datalist>`;
 
             // 영역별로 설정 + 결과를 묶어서 표시
-            imgObj.rois.forEach((roi, idx) => {
+            // 교정 필요한 ROI(이미지 기준)를 최상단에 — 원본 idx는 유지(버튼/onclick에 영향 없음)
+            const _sortedRoiIdxs = imgObj.rois.map((_, i) => i).sort((a, b) => {
+                const an = this._roiNeedsCorrection(imgObj.results && imgObj.results[a]);
+                const bn = this._roiNeedsCorrection(imgObj.results && imgObj.results[b]);
+                if (an !== bn) return an ? -1 : 1;
+                return a - b;
+            });
+            _sortedRoiIdxs.forEach(idx => {
+                const roi = imgObj.rois[idx];
                 // 연결된 과목코드 ROI는 카드 숨김
                 if (roi._id && _linkedCodeIds.has(roi._id)) return;
 
@@ -2172,9 +2190,9 @@ const UI = {
             const img = images[idx];
             if (!img.results) continue;
 
-            // 오류 있는 이미지인지 확인
+            // 오류 있는 이미지인지 확인 — 이미 corrected 처리된 행은 제외
             const hasError = img.results.some(res =>
-                res.rows.some(r => r.multiMarked || r.markedAnswer === null)
+                res.rows.some(r => !r.corrected && (r.multiMarked || r.markedAnswer === null))
             );
 
             if (hasError) {
@@ -2227,6 +2245,12 @@ const UI = {
         if (target >= 0) this.selectCell(cells[target]);
     },
 
+    // ROI에 아직 처리(corrected)되지 않은 오류 행이 있는지 — 카드 정렬 및 다음 이동 판정에 사용
+    _roiNeedsCorrection(res) {
+        if (!res || !res.rows) return false;
+        return res.rows.some(r => !r.corrected && (r.multiMarked || r.markedAnswer === null || r.undetected));
+    },
+
     // 영역 전체를 빈칸(미기입) 처리
     markAllBlank(roiIdx) {
         const imgObj = App.getCurrentImage();
@@ -2238,6 +2262,7 @@ const UI = {
             row.markedIndices = [];
             row.corrected = true;
             row._userCorrected = true;
+            row.undetected = false;
         });
         imgObj.gradeResult = null;
         if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
@@ -2245,6 +2270,10 @@ const UI = {
         ImageManager.updateList();
         this.updateRightPanel();
         Toast.info('전체 빈칸 처리됨');
+
+        // 현재 이미지에 더 처리할 ROI가 없으면 다음 교정 대상 이미지로 이동
+        const stillNeeds = imgObj.results.some(res => this._roiNeedsCorrection(res));
+        if (!stillNeeds) this.moveToNextImageError();
     },
 
     applyCorrection(roiIdx, qNum, newAnswer) {

@@ -861,8 +861,8 @@ const BatchProcess = {
                     solved = true;
                     newAllResults.forEach(({ ri, roiResult }) => { imgObj.results[ri] = roiResult; });
                     imgObj.validationErrors = [];
-                    // 진하기 갱신 (슬라이더 반영)
-                    imgObj.intensity = tryIntensity;
+                    // 진하기 누적 방지 — 재시도의 부스트는 일회성. base intensity 유지.
+                    // (필요시 imgObj._retryUsedIntensity = tryIntensity 로 별도 기록 가능)
 
                     ImageManager.applyPhonePrefix(imgObj);
                     const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||
@@ -1011,8 +1011,7 @@ const BatchProcess = {
 
             if (thisImproved) {
                 improved++;
-                // 진하기도 +100%로 갱신 (슬라이더 반영)
-                imgObj.intensity = tryIntensity;
+                // 진하기 누적 방지 — 1.5배 검증의 +100% 부스트는 일회성. base intensity 유지.
                 // 재채점
                 ImageManager.applyPhonePrefix(imgObj);
                 const hasAnswers = (App.state.subjects && App.state.subjects.length > 0) ||

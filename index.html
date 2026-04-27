@@ -94,6 +94,8 @@
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">교정 <span id="tab-correction-badge" style="display:none; margin-left:4px; padding:1px 6px; background:#f59e0b; color:#fff; border-radius:8px; font-size:10px;">0</span></button>
         <button class="main-tab" id="tab-scoring" onclick="switchMainTab('scoring')"
             style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">채점및결과</button>
+        <button class="main-tab" id="tab-public-report" onclick="switchMainTab('publicReport')"
+            style="padding:8px 24px; font-size:13px; font-weight:600; border:none; background:var(--bg-input); color:var(--text-secondary); cursor:pointer; border-radius:6px 6px 0 0; margin-left:2px;">게시용 성적표</button>
     </div>
 
     <!-- 교시(Period) 탭 바 — 분석/채점 탭 아래, 이미지 목록 위 -->
@@ -232,17 +234,24 @@
         <div id="scoring-content" style="max-width:1200px; margin:0 auto;"></div>
     </div>
 
+    <!-- 게시용 성적표 탭: 전체 페이지 -->
+    <div id="public-report-view" style="display:none; flex:1; overflow-y:auto; padding:20px; background:var(--bg);">
+        <div id="public-report-content" style="max-width:900px; margin:0 auto;"></div>
+    </div>
+
     <script>
     function switchMainTab(tab) {
         const views = {
-            analysis:   document.getElementById('analysis-view'),
-            correction: document.getElementById('correction-view'),
-            scoring:    document.getElementById('scoring-view'),
+            analysis:     document.getElementById('analysis-view'),
+            correction:   document.getElementById('correction-view'),
+            scoring:      document.getElementById('scoring-view'),
+            publicReport: document.getElementById('public-report-view'),
         };
         const tabs = {
-            analysis:   document.getElementById('tab-analysis'),
-            correction: document.getElementById('tab-correction'),
-            scoring:    document.getElementById('tab-scoring'),
+            analysis:     document.getElementById('tab-analysis'),
+            correction:   document.getElementById('tab-correction'),
+            scoring:      document.getElementById('tab-scoring'),
+            publicReport: document.getElementById('tab-public-report'),
         };
         Object.keys(views).forEach(k => {
             views[k].style.display = (k === tab) ? '' : 'none';
@@ -258,6 +267,8 @@
             Scoring.renderScoringPanel(document.getElementById('scoring-content'));
         } else if (tab === 'correction' && typeof Correction !== 'undefined') {
             Correction.render(document.getElementById('correction-content'));
+        } else if (tab === 'publicReport' && typeof PublicReport !== 'undefined' && PublicReport.renderPanel) {
+            PublicReport.renderPanel(document.getElementById('public-report-content'));
         }
     }
     </script>
@@ -324,5 +335,6 @@
     <script src="js/export.js"></script>
     <script src="js/correction.js"></script>
     <script src="js/publicReport.js"></script>
+    <script src="js/subjectMerge.js"></script>
 </body>
 </html>
