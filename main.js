@@ -475,3 +475,265 @@ ipcMain.handle('session:deleteGroup', async (_e, rel) => {
     try { return await trashImpl(getSessionsPath(), rel); }
     catch (e) { return { success: false, error: e.message }; }
 });
+
+// ==========================================
+// Exam / Session 신모델 IPC (Phase 1-B)
+// 설계: 참고자료/md/세션병합_데이터모델_설계.md
+// 경로: {userData}/OMR_Data/exams/{examId}/
+//         ├── exam.json
+//         ├── sessions/{sessionId}/session.json + images/
+//         └── mergeSnapshots/{snapshotId}.json
+// ==========================================
+
+function getExamsPath() {
+    const p = path.join(getAppDataPath(), 'exams');
+    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+    return p;
+}
+
+function _examDir(examId) {
+    const clean = safeRel(examId);
+    if (!clean) throw new Error('examId 누락');
+    return path.join(getExamsPath(), clean);
+}
+
+function _sessionDir(examId, sessionId) {
+    const clean = safeRel(sessionId);
+    if (!clean) throw new Error('sessionId 누락');
+    return path.join(_examDir(examId), 'sessions', clean);
+}
+
+function _snapshotsDir(examId) {
+    return path.join(_examDir(examId), 'mergeSnapshots');
+}
+
+// ----- Exam -----
+ipcMain.handle('exam:list', async () => {
+    try {
+        const root = getExamsPath();
+        const dirs = fs.readdirSync(root).filter(d => {
+            if (d.startsWith('_') || d === '.group') return false;
+            return fs.statSync(path.join(root, d)).isDirectory();
+        });
+        const exams = [];
+        dirs.forEach(d => {
+            const jsonPath = path.join(root, d, 'exam.json');
+            if (!fs.existsSync(jsonPath)) return;
+            const meta = { id: d };
+            try {
+                const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+                meta.name = data.name || d;
+                meta.date = data.date || '';
+                meta.createdAt = data.createdAt || '';
+                meta.updatedAt = data.updatedAt || '';
+                meta.subjectCount = (data.subjects || []).length;
+                meta.scoreScale = data.scoreScale || null;
+                // 세션 개수 카운트
+                const sessDir = path.join(root, d, 'sessions');
+                meta.sessionCount = 0;
+                if (fs.existsSync(sessDir)) {
+                    meta.sessionCount = fs.readdirSync(sessDir).filter(s => {
+                        const sp = path.join(sessDir, s);
+                        return fs.statSync(sp).isDirectory() && fs.existsSync(path.join(sp, 'session.json'));
+                    }).length;
+                }
+            } catch (_) {}
+            exams.push(meta);
+        });
+        // 최신 수정 순
+        exams.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        return { success: true, exams };
+    } catch (e) {
+        return { success: false, error: e.message, exams: [] };
+    }
+});
+
+ipcMain.handle('exam:load', async (_e, examId) => {
+    try {
+        const filePath = path.join(_examDir(examId), 'exam.json');
+        if (!fs.existsSync(filePath)) return { success: false, error: 'exam.json 없음' };
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        return { success: true, data };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('exam:save', async (_e, examId, data) => {
+    try {
+        const dir = _examDir(examId);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, 'exam.json');
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+        return { success: true, path: filePath };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('exam:delete', async (_e, examId) => {
+    try {
+        const clean = safeRel(examId);
+        return await trashImpl(getExamsPath(), clean);
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+// ----- Exam Session (Exam 하위 세션) -----
+ipcMain.handle('examSession:list', async (_e, examId) => {
+    try {
+        const sessDir = path.join(_examDir(examId), 'sessions');
+        if (!fs.existsSync(sessDir)) return { success: true, sessions: [] };
+        const items = fs.readdirSync(sessDir).filter(d => {
+            const abs = path.join(sessDir, d);
+            return fs.statSync(abs).isDirectory() && fs.existsSync(path.join(abs, 'session.json'));
+        });
+        const sessions = items.map(sid => {
+            const jsonPath = path.join(sessDir, sid, 'session.json');
+            const meta = { id: sid };
+            try {
+                const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+                meta.name = data.name || sid;
+                meta.takenAt = data.takenAt || '';
+                meta.savedAt = data.savedAt || '';
+                meta.studentCount = (data.students || []).length;
+                meta.imageCount = data.imageCount || 0;
+                meta.attendanceBookId = data.attendanceBookId || null;
+            } catch (_) {}
+            return meta;
+        });
+        sessions.sort((a, b) => (a.takenAt || '').localeCompare(b.takenAt || ''));
+        return { success: true, sessions };
+    } catch (e) {
+        return { success: false, error: e.message, sessions: [] };
+    }
+});
+
+ipcMain.handle('examSession:load', async (_e, examId, sessionId) => {
+    try {
+        const dir = _sessionDir(examId, sessionId);
+        const filePath = path.join(dir, 'session.json');
+        if (!fs.existsSync(filePath)) return { success: false, error: 'session.json 없음' };
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const imgDir = path.join(dir, 'images');
+        let imageFiles = [];
+        if (fs.existsSync(imgDir)) {
+            imageFiles = fs.readdirSync(imgDir)
+                .filter(f => /\.(jpg|jpeg|png|bmp|gif|webp)$/i.test(f))
+                .map(f => ({
+                    filename: f,
+                    path: path.join(imgDir, f),
+                    url: 'file:///' + path.join(imgDir, f).replace(/\\/g, '/'),
+                }));
+        }
+        return { success: true, data, imageFiles };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('examSession:save', async (_e, examId, sessionId, data, images) => {
+    try {
+        const dir = _sessionDir(examId, sessionId);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, 'session.json');
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+
+        // images === null → 이미지 디렉터리 건드리지 않음 (메타만 저장)
+        if (images === null || images === undefined) return { success: true, path: filePath };
+
+        if (images && images.length > 0) {
+            const imgDir = path.join(dir, 'images');
+            if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+
+            const keepSet = new Set(
+                images.filter(i => i && i.filename)
+                      .map(i => i.filename.replace(/[\\/:*?"<>|]/g, '_'))
+            );
+            try {
+                fs.readdirSync(imgDir).forEach(f => {
+                    if (!keepSet.has(f)) {
+                        try { fs.unlinkSync(path.join(imgDir, f)); } catch (_) {}
+                    }
+                });
+            } catch (_) {}
+
+            images.forEach(img => {
+                if (img.dataUrl && img.filename) {
+                    const base64 = img.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+                    const filename = img.filename.replace(/[\\/:*?"<>|]/g, '_');
+                    fs.writeFileSync(path.join(imgDir, filename), Buffer.from(base64, 'base64'));
+                }
+            });
+        }
+        return { success: true, path: filePath };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('examSession:delete', async (_e, examId, sessionId) => {
+    try {
+        const rel = path.join(safeRel(examId), 'sessions', safeRel(sessionId));
+        return await trashImpl(getExamsPath(), rel);
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+// ----- Merge Snapshot -----
+ipcMain.handle('mergeSnapshot:list', async (_e, examId) => {
+    try {
+        const dir = _snapshotsDir(examId);
+        if (!fs.existsSync(dir)) return { success: true, snapshots: [] };
+        const files = fs.readdirSync(dir).filter(f => /\.json$/i.test(f));
+        const snapshots = files.map(f => {
+            const meta = { id: f.replace(/\.json$/i, '') };
+            try {
+                const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+                meta.name = data.name || meta.id;
+                meta.savedAt = data.savedAt || '';
+                meta.sessionIds = data.sessionIds || [];
+            } catch (_) {}
+            return meta;
+        });
+        snapshots.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+        return { success: true, snapshots };
+    } catch (e) {
+        return { success: false, error: e.message, snapshots: [] };
+    }
+});
+
+ipcMain.handle('mergeSnapshot:save', async (_e, examId, snapshotId, data) => {
+    try {
+        const dir = _snapshotsDir(examId);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const clean = safeRel(snapshotId);
+        const filePath = path.join(dir, clean + '.json');
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+        return { success: true, path: filePath };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('mergeSnapshot:load', async (_e, examId, snapshotId) => {
+    try {
+        const filePath = path.join(_snapshotsDir(examId), safeRel(snapshotId) + '.json');
+        if (!fs.existsSync(filePath)) return { success: false, error: '스냅샷 없음' };
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        return { success: true, data };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+ipcMain.handle('mergeSnapshot:delete', async (_e, examId, snapshotId) => {
+    try {
+        const rel = path.join(safeRel(examId), 'mergeSnapshots', safeRel(snapshotId) + '.json');
+        return await trashImpl(getExamsPath(), rel);
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});

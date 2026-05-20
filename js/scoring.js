@@ -24,6 +24,9 @@ const Scoring = {
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
+    // 표준점수 스케일 (시험/세션별 설정) — center: 평균 위치, unit: 1σ에 해당하는 점수
+    // 기본값 100/20 = 수능식. 50/10 = 전통 T-Score. 30/5 = 학원식 등 자유 설정.
+    _scoreScale: { center: 100, unit: 20 },
     // 별색 처리
     _manualHL: {},     // 수동 클릭: { 'q1_rate': '#fecaca' }
     _selectedColor: '#fecaca',
@@ -158,6 +161,36 @@ const Scoring = {
         this._defaultMaxQ = Math.max(1, Math.min(100, parseInt(n) || 40));
         this._omrColumns = null; // 리셋
         this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 표준점수 스케일 변경 — 호출 즉시 재계산/재렌더
+    setScoreScale(center, unit) {
+        const c = Number(center);
+        const u = Number(unit);
+        if (!isFinite(c) || !isFinite(u) || u <= 0) {
+            if (typeof Toast !== 'undefined') Toast.error('표편(σ 단위)은 0보다 큰 숫자여야 합니다');
+            return;
+        }
+        this._scoreScale = { center: c, unit: u };
+        this.invalidate();
+        if (typeof SessionManager !== 'undefined') SessionManager._hasUnsavedChanges = true;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+    // 스케일 프리셋 적용
+    setScalePreset(name) {
+        const presets = {
+            suneung: { center: 100, unit: 20 },
+            tscore:  { center: 50,  unit: 10 },
+            academy: { center: 30,  unit: 5 },
+        };
+        const p = presets[name];
+        if (p) this.setScoreScale(p.center, p.unit);
+    },
+    getScoreScale() {
+        const s = this._scoreScale || {};
+        const center = isFinite(s.center) ? s.center : 100;
+        const unit = isFinite(s.unit) && s.unit > 0 ? s.unit : 20;
+        return { center, unit };
     },
 
     // ==========================================
@@ -679,9 +712,10 @@ const Scoring = {
         const stdDev = Math.sqrt(variance);
 
         const sorted = [...scores].sort((a, b) => b - a);
+        const { center: tCenter, unit: tUnit } = this.getScoreScale();
         validRows.forEach(r => {
             r.rank = sorted.filter(s => s > r.score).length + 1;
-            r.tScore = stdDev > 0 ? ((r.score - mean) / stdDev) * 20 + 100 : 100;
+            r.tScore = stdDev > 0 ? ((r.score - mean) / stdDev) * tUnit + tCenter : tCenter;
             r.percentile = N > 1 ? ((N - r.rank) / (N - 1)) * 100 : 100;
         });
 
@@ -697,7 +731,7 @@ const Scoring = {
                 const s = r.subjects[subj];
                 if (!s) return;
                 s.rank = subSorted.filter(v => v > s.score).length + 1;
-                s.tScore = subStd > 0 ? ((s.score - subMean) / subStd) * 20 + 100 : 100;
+                s.tScore = subStd > 0 ? ((s.score - subMean) / subStd) * tUnit + tCenter : tCenter;
                 s.percentile = N > 1 ? ((N - s.rank) / (N - 1)) * 100 : 100;
             });
         });
@@ -782,22 +816,29 @@ const Scoring = {
         SubjectManager._downloadFile(csv, `${name}_${n}_${d}.csv`);
     },
 
-    // XLSX 다운로드 (AoA → 시트)
-    _dlXlsx(aoa, name, sheetName) {
+    // XLSX 다운로드 (AoA → 시트). opts: { merges, cols }
+    _dlXlsx(aoa, name, sheetName, opts) {
         if (typeof XLSX === 'undefined') { Toast.error('XLSX 라이브러리 로드 실패'); return; }
         const n = SessionManager.currentSessionName || '';
         const d = new Date().toISOString().slice(0, 10);
         const wb = XLSX.utils.book_new();
+        const ws = this._aoaToSheet(aoa, opts);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+        XLSX.writeFile(wb, `${name}_${n}_${d}.xlsx`);
+    },
+
+    // AoA + (옵션) 병합/열폭 → 시트
+    _aoaToSheet(aoa, opts) {
         const ws = XLSX.utils.aoa_to_sheet(aoa);
-        // 열 폭
-        if (aoa[0]) {
+        if (opts && opts.cols) ws['!cols'] = opts.cols;
+        else if (aoa[0]) {
             ws['!cols'] = aoa[0].map((h, i) => {
                 const maxLen = Math.max(String(h).length, ...aoa.slice(1).map(r => String(r[i] == null ? '' : r[i]).length));
                 return { wch: Math.min(Math.max(maxLen + 2, 6), 30) };
             });
         }
-        XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
-        XLSX.writeFile(wb, `${name}_${n}_${d}.xlsx`);
+        if (opts && Array.isArray(opts.merges) && opts.merges.length) ws['!merges'] = opts.merges;
+        return ws;
     },
 
     // 성적일람표용 AoA 빌더
@@ -834,17 +875,92 @@ const Scoring = {
         return aoa;
     },
 
-    // 문항분석표용 AoA 빌더
+    // 문항분석표용 AoA 빌더 — 화면 UI 그대로 (문항당 3행 + 반응분포)
+    // 반환: { aoa, merges, cols } — merges는 XLSX !merges 형식, cols는 열 폭 힌트
     _buildItemAoA(items) {
         const uPct = this._upperPct, lPct = this._lowerPct;
         const mPct = 100 - uPct - lPct;
-        const header = ['문항', '정답', `상위${uPct}%O`, `상위${uPct}%X`, `중위${mPct}%O`, `중위${mPct}%X`, `하위${lPct}%O`, `하위${lPct}%X`, '정답률(%)', '변별도'];
+        const choiceNums = [1, 2, 3, 4, 5, 6, 7];
+
+        // 헤더 (UI와 동일한 단일 행)
+        const header = [
+            '문항', '정답', '구분',
+            `상위${uPct}%`, `중위${mPct}%`, `하위${lPct}%`, '총계',
+            '정답률(%)', '변별도', '구분',
+            ...choiceNums.map(n => `${n}번`),
+            '공백', '중복', '계',
+        ];
         const aoa = [header];
-        items.forEach(i => {
-            aoa.push([i.q, i.correctAnswer || '', i.upper.correct, i.upper.wrong, i.mid.correct, i.mid.wrong, i.lower.correct, i.lower.wrong,
-                Math.round(i.correctRate * 10) / 10, Math.round(i.discrimination * 1000) / 1000]);
+        const merges = [];
+
+        items.forEach((it, idx) => {
+            const totalCorrect = it.upper.correct + it.mid.correct + it.lower.correct;
+            const totalWrong = it.upper.wrong + it.mid.wrong + it.lower.wrong;
+            const totalAll = totalCorrect + totalWrong;
+            const ca = it.correctAnswer || '';
+            const rate = Math.round(it.correctRate * 10) / 10;
+            const disc = Math.round(it.discrimination * 1000) / 1000;
+
+            const distRow = (dist) => [
+                ...choiceNums.map(n => dist[n] || 0),
+                dist.blank || 0,
+                dist.multi || 0,
+                dist.total || 0,
+            ];
+
+            // 행 1: 정답 / 상50%
+            aoa.push([
+                it.q, ca, '정답',
+                it.upper.correct, it.mid.correct, it.lower.correct, totalCorrect,
+                rate, disc, '상50%',
+                ...distRow(it.distUpper || {}),
+            ]);
+            // 행 2: 오답 / 하50% (병합될 셀은 빈 문자열)
+            aoa.push([
+                '', '', '오답',
+                it.upper.wrong, it.mid.wrong, it.lower.wrong, totalWrong,
+                '', '', '하50%',
+                ...distRow(it.distLower || {}),
+            ]);
+            // 행 3: 계 / 전체
+            aoa.push([
+                '', '', '계',
+                it.upper.total, it.mid.total, it.lower.total, totalAll,
+                '', '', '계',
+                ...distRow(it.distTotal || {}),
+            ]);
+
+            // 병합: 문항(0), 정답(1), 정답률(7), 변별도(8) 컬럼을 3행 통합
+            // aoa 인덱스: 헤더(0) + idx*3 ~ idx*3+2
+            const r0 = 1 + idx * 3;
+            const r2 = r0 + 2;
+            [0, 1, 7, 8].forEach(c => merges.push({ s: { r: r0, c }, e: { r: r2, c } }));
         });
-        return aoa;
+
+        // 전체 평균 행 (UI에는 별도 행으로 표시됨)
+        if (items.length > 0) {
+            const avgR = items.reduce((s, i) => s + i.correctRate, 0) / items.length;
+            const avgD = items.reduce((s, i) => s + i.discrimination, 0) / items.length;
+            // 빈 행 + 평균 행
+            aoa.push([]);
+            const avgRow = new Array(header.length).fill('');
+            avgRow[0] = '전체 평균';
+            avgRow[7] = Math.round(avgR * 10) / 10;
+            avgRow[8] = Math.round(avgD * 1000) / 1000;
+            aoa.push(avgRow);
+        }
+
+        // 열 폭 힌트 (UI 비례)
+        const cols = header.map((h, i) => {
+            if (i === 0) return { wch: 6 };               // 문항
+            if (i === 1) return { wch: 6 };               // 정답
+            if (i === 2 || i === 9) return { wch: 7 };    // 구분
+            if (i === 7 || i === 8) return { wch: 9 };    // 정답률, 변별도
+            if (i >= 10 && i <= 16) return { wch: 5 };    // 1~7번
+            return { wch: 7 };
+        });
+
+        return { aoa, merges, cols };
     },
 
     // XLSX 다운로드 엔트리 (현재 탭 기준)
@@ -881,7 +997,8 @@ const Scoring = {
     downloadItemXlsx(items) {
         if (!items.length) return;
         const subj = this._resolveSubject(this.collectData(), this._itemSubject);
-        this._dlXlsx(this._buildItemAoA(items), subj ? `문항분석표_${subj}` : '문항분석표', '문항분석');
+        const built = this._buildItemAoA(items);
+        this._dlXlsx(built.aoa, subj ? `문항분석표_${subj}` : '문항분석표', '문항분석', { merges: built.merges, cols: built.cols });
     },
 
     // rows + 선택 과목 → 2D 배열 (CSV/XLSX 공용) — 헤더 visible 상태 반영
@@ -1017,14 +1134,14 @@ const Scoring = {
         this._dl(csv, '성적일람표');
     },
 
+    // CSV는 화면 표 그대로 직렬화 (XLSX와 동일 AoA 사용 — 병합 셀은 빈 칸으로)
     _buildItemCsv(items) {
-        const uPct = this._upperPct, lPct = this._lowerPct;
-        const mPct = 100 - uPct - lPct;
-        let csv = `문항,정답,상위${uPct}%O,상위${uPct}%X,중위${mPct}%O,중위${mPct}%X,하위${lPct}%O,하위${lPct}%X,정답률(%),변별도\n`;
-        items.forEach(i => {
-            csv += `${i.q},${i.correctAnswer||''},${i.upper.correct},${i.upper.wrong},${i.mid.correct},${i.mid.wrong},${i.lower.correct},${i.lower.wrong},${i.correctRate.toFixed(1)},${i.discrimination.toFixed(3)}\n`;
-        });
-        return csv;
+        const { aoa } = this._buildItemAoA(items);
+        const escape = v => {
+            const s = String(v == null ? '' : v);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        return aoa.map(row => (row || []).map(escape).join(',')).join('\n') + '\n';
     },
 
     downloadItem(items) {
@@ -1042,10 +1159,12 @@ const Scoring = {
 
     downloadItemCurrentXlsx() {
         const rows = this.collectData();
+        if (!rows.length) return;
         const subj = this._resolveSubject(rows, this._itemSubject);
         const items = this.calcItemAnalysis(rows, subj);
         if (!items.length) return;
-        this._dlXlsx(this._buildItemAoA(items), subj ? `문항분석표_${subj}` : '문항분석표', '문항분석');
+        const built = this._buildItemAoA(items);
+        this._dlXlsx(built.aoa, subj ? `문항분석표_${subj}` : '문항분석표', '문항분석', { merges: built.merges, cols: built.cols });
     },
 
     downloadItemAllXlsx() {
@@ -1055,13 +1174,17 @@ const Scoring = {
         const n = SessionManager.currentSessionName || '';
         const d = new Date().toISOString().slice(0, 10);
         const wb = XLSX.utils.book_new();
+        const appendSheet = (items, sheetName) => {
+            if (!items.length) return;
+            const built = this._buildItemAoA(items);
+            const ws = this._aoaToSheet(built.aoa, { merges: built.merges, cols: built.cols });
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        };
         if (list.length === 0) {
-            const items = this.calcItemAnalysis(rows, null);
-            if (items.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(this._buildItemAoA(items)), '문항분석');
+            appendSheet(this.calcItemAnalysis(rows, null), '문항분석');
         } else {
             list.forEach(subj => {
-                const items = this.calcItemAnalysis(rows, subj);
-                if (items.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(this._buildItemAoA(items)), subj.slice(0, 28));
+                appendSheet(this.calcItemAnalysis(rows, subj), subj.slice(0, 28));
             });
         }
         XLSX.writeFile(wb, `문항분석표_${n}_${d}.xlsx`);
@@ -1131,18 +1254,20 @@ const Scoring = {
                     </button>
                     <span style="font-size:13px; color:var(--text-muted);">${SessionManager.currentSessionName || ''}</span>
                 </div>
-            </div>`;
+            </div>
+            ${this._renderExamSessionBar()}`;
 
         // 요약 카드
         if (stats) {
             html += `
-            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:24px;">
+            <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:12px;">
                 ${this._statCard('응시 인원', `${stats.N}명`, '#3b82f6')}
                 ${this._statCard('평균', `${this._fmtScore(stats.mean)}점`, '#8b5cf6')}
                 ${this._statCard('표준편차', `${this._fmtScore(stats.stdDev)}`, '#6366f1')}
                 ${this._statCard('최고점', `${this._fmtScore(stats.max)}점`, '#22c55e')}
                 ${this._statCard('최저점', `${this._fmtScore(stats.min)}점`, '#ef4444')}
-            </div>`;
+            </div>
+            ${this._renderScaleBar()}`;
         }
 
         if (rows.length === 0) {
@@ -1176,6 +1301,158 @@ const Scoring = {
         return `<div style="background:white; border-radius:10px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.08); border-left:4px solid ${color};">
             <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">${label}</div>
             <div style="font-size:20px; font-weight:700; color:${color};">${value}</div>
+        </div>`;
+    },
+
+    // 활성 시험/회차 표시 + 회차 전환 + 새 회차 추가 (신규 모델 활성 시에만)
+    _renderExamSessionBar() {
+        if (typeof ExamHub === 'undefined' || !ExamHub.isActive()) return '';
+        // 병합 모드일 때는 노란 배너로 대체
+        if (ExamHub.isMergeMode()) return this._renderMergeBar();
+        const examName = ExamHub.currentExam ? ExamHub.currentExam.name : '';
+        const sessName = ExamHub.currentSession ? ExamHub.currentSession.name : '';
+        return `<div style="display:flex; align-items:center; gap:10px; padding:10px 14px; margin-bottom:12px;
+                background:#eef2ff; border:1px solid #6366f1; border-radius:8px;">
+            <span style="font-size:11px; font-weight:700; color:#4338ca; padding:2px 8px; background:white; border-radius:4px;">시험 / 회차</span>
+            <span style="font-size:13px; font-weight:600; color:#1e293b;">${examName}</span>
+            <span style="color:#94a3b8;">›</span>
+            <span style="font-size:13px; font-weight:600; color:#4338ca;" id="eh-current-session-name">${sessName}</span>
+            <div style="margin-left:auto; display:flex; gap:6px;">
+                <button class="btn btn-sm" onclick="Scoring._switchSessionPrompt()" style="font-size:11px;" title="이 시험의 다른 회차로 전환">
+                    ↔ 회차 전환
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="Scoring._addNewSessionPrompt()" style="font-size:11px;" title="이 시험에 새 회차 추가">
+                    + 회차 추가
+                </button>
+                <button class="btn btn-sm" style="font-size:11px; background:#fef3c7; border-color:#f59e0b; color:#d97706;"
+                    onclick="ExamHub_UI.openMergeDialog()" title="여러 회차 합쳐서 통계">
+                    🔀 세션 병합
+                </button>
+                <button class="btn btn-sm" onclick="ExamHub_UI.openExamSessions(ExamHub.currentExamId)" style="font-size:11px;" title="시험/회차 관리 모달">
+                    📚 관리
+                </button>
+            </div>
+        </div>`;
+    },
+
+    // 병합 뷰 모드 배너 (노란색)
+    _renderMergeBar() {
+        const exam = ExamHub.currentExam;
+        const examName = exam ? exam.name : '';
+        const ids = ExamHub._mergeSessionIds || [];
+        const N = (App.state.students || []).length;
+        return `<div style="display:flex; align-items:center; gap:10px; padding:10px 14px; margin-bottom:12px;
+                background:#fef3c7; border:2px solid #f59e0b; border-radius:8px;">
+            <span style="font-size:11px; font-weight:700; color:#d97706; padding:2px 8px; background:white; border-radius:4px;">🔀 병합 뷰</span>
+            <span style="font-size:13px; font-weight:600; color:#1e293b;">${examName}</span>
+            <span style="color:#94a3b8;">›</span>
+            <span style="font-size:13px; font-weight:600; color:#d97706;">${ids.length}개 회차 합산 · 총 ${N}명</span>
+            <span style="font-size:10px; color:var(--text-muted); padding:2px 6px; background:white; border-radius:3px;" title="자동 저장된 스냅샷 ID">
+                snap: ${ExamHub._mergeSnapshotId ? ExamHub._mergeSnapshotId.slice(0, 14) + '…' : '저장 안 됨'}
+            </span>
+            <div style="margin-left:auto; display:flex; gap:6px;">
+                <button class="btn btn-sm" style="font-size:11px;" onclick="ExamHub_UI.openMergeDialog()" title="병합 대상 변경">
+                    ✎ 병합 편집
+                </button>
+                <button class="btn btn-sm btn-primary" style="font-size:11px;" onclick="Scoring._exitMergeView()" title="단독 회차로 복귀">
+                    ← 단독 회차로 복귀
+                </button>
+            </div>
+        </div>`;
+    },
+
+    _exitMergeView() {
+        if (typeof ExamHub !== 'undefined') {
+            ExamHub.deactivateMergeView();
+            this.renderScoringPanel(document.getElementById('scoring-content'));
+        }
+    },
+
+    async _switchSessionPrompt() {
+        if (!ExamHub.isActive()) return;
+        const list = await ExamStore.listSessions(ExamHub.currentExamId, { forceRefresh: true });
+        if (list.length <= 1) { Toast.info('전환할 다른 회차가 없습니다'); return; }
+        // 간단한 prompt — 회차 이름 선택 (드롭다운 다이얼로그)
+        const labels = list.map(s => s.name + (s.id === ExamHub.currentSessionId ? ' (현재)' : ''));
+        const selected = await this._pickFromList('전환할 회차 선택', labels);
+        if (selected < 0) return;
+        const target = list[selected];
+        if (target.id === ExamHub.currentSessionId) return;
+        await ExamHub.switchSession(target.id);
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    async _addNewSessionPrompt() {
+        if (!ExamHub.isActive()) return;
+        const name = await UIDialog.prompt('새 회차 이름', '');
+        if (!name) return;
+        const copyFromCurrent = await UIDialog.confirm('현재 회차의 인원/매칭 설정을 복사할까요?', { okLabel: '복사', cancelLabel: '빈 회차' });
+        await ExamHub.createNewSessionInCurrent({ name, copyAttendanceFromCurrent: copyFromCurrent });
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    _pickFromList(title, labels) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.style.zIndex = '10001';
+            const items = labels.map((l, i) => `
+                <button class="btn" data-idx="${i}"
+                    style="width:100%; text-align:left; padding:8px 12px; margin-bottom:4px; font-size:13px;">${l}</button>
+            `).join('');
+            overlay.innerHTML = `<div class="modal" style="width:360px;">
+                <div class="modal-header"><h2>${title}</h2></div>
+                <div class="modal-body">${items}</div>
+                <div class="modal-footer">
+                    <button class="btn" data-cancel="1">취소</button>
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
+            overlay.querySelectorAll('[data-idx]').forEach(b => {
+                b.addEventListener('click', () => {
+                    const i = parseInt(b.dataset.idx);
+                    overlay.remove(); resolve(i);
+                });
+            });
+            overlay.querySelector('[data-cancel]').addEventListener('click', () => { overlay.remove(); resolve(-1); });
+        });
+    },
+
+    // 표준점수 스케일 설정 바 — 평균/표편 입력 + 프리셋
+    _renderScaleBar() {
+        const { center, unit } = this.getScoreScale();
+        const presetBtn = (name, label, c, u) => {
+            const active = (Math.round(center) === c && Math.round(unit) === u);
+            return `<button onclick="Scoring.setScalePreset('${name}')"
+                style="padding:4px 10px; font-size:11px; border:1px solid ${active ? '#6366f1' : 'var(--border)'};
+                       background:${active ? '#eef2ff' : 'white'}; color:${active ? '#4338ca' : 'var(--text-muted)'};
+                       border-radius:6px; cursor:pointer; font-weight:${active ? '600' : '400'};">
+                ${label} <span style="color:#94a3b8;">${c}/${u}</span>
+            </button>`;
+        };
+        return `<div style="display:flex; align-items:center; gap:12px; padding:10px 14px; margin-bottom:24px;
+                background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
+            <span style="font-size:12px; font-weight:600; color:#475569;">표준점수 스케일</span>
+            <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--text-muted);">
+                평균
+                <input type="number" id="scale-center" value="${center}" step="1"
+                    style="width:60px; padding:3px 6px; font-size:12px; border:1px solid var(--border); border-radius:5px; text-align:center;"
+                    onchange="Scoring.setScoreScale(this.value, document.getElementById('scale-unit').value)">
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--text-muted);">
+                표편(σ)
+                <input type="number" id="scale-unit" value="${unit}" step="1" min="1"
+                    style="width:60px; padding:3px 6px; font-size:12px; border:1px solid var(--border); border-radius:5px; text-align:center;"
+                    onchange="Scoring.setScoreScale(document.getElementById('scale-center').value, this.value)">
+            </label>
+            <div style="display:flex; gap:6px; margin-left:8px;">
+                ${presetBtn('suneung', '수능식', 100, 20)}
+                ${presetBtn('tscore',  '전통T',  50,  10)}
+                ${presetBtn('academy', '학원식',  30,  5)}
+            </div>
+            <span style="margin-left:auto; font-size:11px; color:#94a3b8;">
+                표점 = (원점수−평균)/σ × ${unit} + ${center}
+            </span>
         </div>`;
     },
 

@@ -25,6 +25,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     templateDelete:      (rel) => ipcRenderer.invoke('template:delete', rel),
     templateDeleteGroup: (rel) => ipcRenderer.invoke('template:deleteGroup', rel),
 
+    // Exam / Session 신모델 (Phase 1-C) — 설계: 참고자료/md/세션병합_데이터모델_설계.md
+    listExams:           () => ipcRenderer.invoke('exam:list'),
+    loadExam:            (examId) => ipcRenderer.invoke('exam:load', examId),
+    saveExam:            (examId, data) => ipcRenderer.invoke('exam:save', examId, data),
+    deleteExam:          (examId) => ipcRenderer.invoke('exam:delete', examId),
+
+    listExamSessions:    (examId) => ipcRenderer.invoke('examSession:list', examId),
+    loadExamSession:     (examId, sessionId) => ipcRenderer.invoke('examSession:load', examId, sessionId),
+    saveExamSession:     (examId, sessionId, data, images) => ipcRenderer.invoke('examSession:save', examId, sessionId, data, images),
+    deleteExamSession:   (examId, sessionId) => ipcRenderer.invoke('examSession:delete', examId, sessionId),
+
+    listMergeSnapshots:  (examId) => ipcRenderer.invoke('mergeSnapshot:list', examId),
+    saveMergeSnapshot:   (examId, snapId, data) => ipcRenderer.invoke('mergeSnapshot:save', examId, snapId, data),
+    loadMergeSnapshot:   (examId, snapId) => ipcRenderer.invoke('mergeSnapshot:load', examId, snapId),
+    deleteMergeSnapshot: (examId, snapId) => ipcRenderer.invoke('mergeSnapshot:delete', examId, snapId),
+
     // 앱 정보
     getDataPath: () => ipcRenderer.invoke('app:getDataPath'),
     saveLog: (text) => ipcRenderer.invoke('app:saveLog', text),

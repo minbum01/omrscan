@@ -195,6 +195,20 @@ const SessionManager = {
                             📄 양식 불러오기
                         </button>
                     </div>
+                    <div style="margin:10px 0 8px; padding:8px 10px; border:1px dashed #6366f1; border-radius:8px; background:#eef2ff;">
+                        <div style="font-size:11px; font-weight:700; color:#4338ca; margin-bottom:4px;">
+                            🆕 신규: 시험-회차 분리 모델 (Phase 2 베타)
+                        </div>
+                        <div style="font-size:10px; color:var(--text-muted); margin-bottom:6px;">
+                            한 시험을 여러 반/회차로 나눠 응시 → 회차별 또는 합산 통계 산출
+                        </div>
+                        <div style="display:flex; gap:6px;">
+                            <button class="btn btn-sm btn-primary" style="font-size:12px; flex:1;"
+                                onclick="ExamHub_UI.promptCreateExam()">+ 새 시험 (신규 모델)</button>
+                            <button class="btn btn-sm" style="font-size:12px; flex:1;"
+                                onclick="ExamHub_UI.openExamList()">📚 시험/회차 관리</button>
+                        </div>
+                    </div>
                     ${sessions.length > 0 ? `<div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">최근 세션</div>` : ''}
                     ${sessions.length > 0 ? sessions.slice(0, 3).map(s => `
                         <div style="display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:4px; cursor:pointer;"
@@ -207,6 +221,9 @@ const SessionManager = {
                                     ${s.imageCount ? ' · 이미지 ' + s.imageCount + '장' : ''}
                                 </div>
                             </div>
+                            <button class="btn btn-sm" title="신규 모델(시험-회차)로 변환"
+                                onclick="event.stopPropagation(); ExamHub_UI.convertLegacy('${s.name.replace(/'/g, "\\'")}')"
+                                style="font-size:9px; padding:2px 6px; color:#4338ca; border-color:#6366f1;">↗ 변환</button>
                             <button class="roi-delete-btn" title="삭제" style="font-size:10px;"
                                 onclick="event.stopPropagation(); SessionManager.deleteSession('${s.name.replace(/'/g, "\\'")}')">✕</button>
                         </div>
@@ -467,6 +484,7 @@ const SessionManager = {
         App.state.currentIndex = -1;
         App.state.answerKey = null;
         App.state.subjectMerges = [];
+        if (typeof Scoring !== 'undefined') Scoring._scoreScale = { center: 100, unit: 20 };
 
         if (typeof App._initPeriods === 'function') App._initPeriods();
         else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
@@ -517,6 +535,7 @@ const SessionManager = {
         App.state.currentIndex = -1;
         App.state.answerKey = null;
         App.state.subjectMerges = [];
+        if (typeof Scoring !== 'undefined') Scoring._scoreScale = { center: 100, unit: 20 };
 
         if (typeof App._initPeriods === 'function') App._initPeriods();
         else App.state.periods = [{ id: 'p1', name: '1교시', images: App.state.images, answerKey: null }];
@@ -597,6 +616,15 @@ const SessionManager = {
             App.state.matchFields = data.matchFields || { name: true, birth: false, examNo: false, phone: false };
             App.state.answerKey = data.answerKey || null;
             App.state.subjectMerges = Array.isArray(data.subjectMerges) ? data.subjectMerges : [];
+            // 표준점수 스케일 복원 — 없으면 기본값(수능식 100/20) 유지
+            if (typeof Scoring !== 'undefined' && Scoring.setScoreScale && data.scoreScale) {
+                Scoring._scoreScale = {
+                    center: isFinite(data.scoreScale.center) ? Number(data.scoreScale.center) : 100,
+                    unit:   isFinite(data.scoreScale.unit) && data.scoreScale.unit > 0 ? Number(data.scoreScale.unit) : 20,
+                };
+            } else if (typeof Scoring !== 'undefined') {
+                Scoring._scoreScale = { center: 100, unit: 20 };
+            }
             App.state.images = [];
             App.state.deletedImages = [];
             App.state.currentIndex = -1;
@@ -905,6 +933,7 @@ const SessionManager = {
             matchFields:    App.state.matchFields   || {},
             answerKey:      App.state.answerKey     || null,
             subjectMerges:  App.state.subjectMerges || [],
+            scoreScale:     (typeof Scoring !== 'undefined' && Scoring.getScoreScale) ? Scoring.getScoreScale() : null,
             imageCount:  allPeriodEntries.length,
             // 모든 교시 이미지 (periodId 포함)
             imageResults: allPeriodEntries.map(({ img, periodId, localIdx }) =>

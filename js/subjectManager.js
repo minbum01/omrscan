@@ -686,6 +686,10 @@ const SubjectManager = {
                     <label class="btn btn-sm" style="cursor:pointer;">CSV 불러오기<input type="file" id="sm-student-csv" accept=".csv" style="display:none;"></label>
                     <button class="btn btn-sm" onclick="SubjectManager.downloadStudentCSVTemplate()">CSV 양식</button>
                     <button class="btn btn-sm" onclick="SubjectManager.exportStudentsCSV()">현재 인원 CSV 다운로드</button>
+                    <span style="width:1px; height:22px; background:var(--border); margin:0 4px;"></span>
+                    <button class="btn btn-sm" onclick="AttendanceBook.openManageModal()" title="저장된 반/선생님별 출석부에서 불러오거나 새로 저장">
+                        📋 출석부
+                    </button>
                     <div style="flex:1;"></div>
                     <button class="btn" onclick="SubjectManager._onCloseModal()">닫기</button>
                     <button class="btn btn-primary" onclick="SubjectManager.saveStudents()">저장</button>
@@ -901,7 +905,9 @@ const SubjectManager = {
             </tr></thead><tbody>`;
 
         students.forEach((st, idx) => {
-            const stColor = st._source === 'csv' ? '#dbeafe' : (st._source === 'manual' ? '#fef3c7' : '');
+            const stColor = st._source === 'csv' ? '#dbeafe'
+                : (st._source === 'attendance' ? '#dcfce7'
+                : (st._source === 'manual' ? '#fef3c7' : ''));
             html += `<tr style="border-bottom:1px solid var(--border-light);${stColor ? ' background:' + stColor + ';' : ''}">
                 <td style="padding:3px 6px; text-align:center; color:var(--text-muted); font-size:11px;">${idx + 1}</td>
                 <td><input type="text" class="st-name" value="${st.name || ''}" style="width:100%; border:none; padding:3px; font-size:12px; background:transparent;"></td>
