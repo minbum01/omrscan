@@ -2,7 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// v2 — userData 경로를 v1과 분리 (세션/양식 데이터 별도 관리)
+app.setName('omr-grading-system_v2');
+
 let mainWindow;
+let reportWindow = null;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -10,7 +14,7 @@ function createWindow() {
         height: 900,
         minWidth: 1000,
         minHeight: 700,
-        title: 'OMR 채점 시스템',
+        title: 'OMR 채점 시스템_v2',
         icon: path.join(__dirname, 'icon.png'),
         webPreferences: {
             nodeIntegration: false,
@@ -43,6 +47,47 @@ function createWindow() {
         // 사용자가 취소 — 아무것도 안 함
     });
 }
+
+// ==========================================
+// 채점/결과 새창 보기 (보기 전용) — 메인 창이 HTML 스냅샷을 밀어주고,
+// 새창에서의 행 클릭은 IPC로 메인 창에 전달해 처리한다. 새창은 자체 데이터/상태를 갖지 않는다.
+// ==========================================
+function createReportWindow() {
+    if (reportWindow && !reportWindow.isDestroyed()) {
+        reportWindow.focus();
+        return;
+    }
+    reportWindow = new BrowserWindow({
+        width: 1200,
+        height: 800,
+        title: '채점 및 결과 - 새창',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload-report.js'),
+        },
+    });
+    reportWindow.loadFile('report-window.html');
+    reportWindow.on('closed', () => {
+        reportWindow = null;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('report:closed');
+    });
+}
+
+ipcMain.on('report:open', () => {
+    createReportWindow();
+});
+
+ipcMain.on('report:updateContent', (_e, html) => {
+    if (reportWindow && !reportWindow.isDestroyed()) reportWindow.webContents.send('report:content', html);
+});
+
+ipcMain.on('report:navigate', (_e, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('report:navigateRequest', payload);
+        mainWindow.focus();
+    }
+});
 
 app.whenReady().then(createWindow);
 
@@ -194,7 +239,11 @@ async function trashImpl(rootPath, rel) {
 }
 
 // 세션 저장 (JSON + 이미지) — sessionName은 relPath (그룹/세션명 또는 세션명)
-ipcMain.handle('session:save', async (event, sessionName, data, images) => {
+// data 저장 + 이미지 폴더 정리(cleanup)만 담당. 이미지 바이트는 session:save-images-chunk가 별도로 씀.
+// expectedFilenames: 이번 세션에 "존재해야 할" 전체 파일명 목록 (변경 여부 무관, 전체) — 이 목록 기준으로만 정리한다.
+// (예전엔 "이번에 새로 보낸 이미지 목록"을 기준으로 정리해서, 변경 안 된 이미지만 있는 부분 저장 시
+//  나머지 이미지 파일이 전부 삭제되는 버그가 있었음 — expectedFilenames는 항상 전체 목록이어야 함)
+ipcMain.handle('session:save', async (event, sessionName, data, expectedFilenames) => {
     try {
         const relClean = safeRel(sessionName);
         const sessionDir = path.join(getSessionsPath(), relClean);
@@ -205,43 +254,55 @@ ipcMain.handle('session:save', async (event, sessionName, data, images) => {
         const filePath = path.join(sessionDir, baseName + '.json');
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 
-        // images === null 이면 이미지 파일 영역은 건드리지 않음 (메타만 저장)
-        if (images === null || images === undefined) {
+        // expectedFilenames가 null/undefined면 이미지 파일 영역은 건드리지 않음 (메타만 저장)
+        if (expectedFilenames === null || expectedFilenames === undefined) {
             return { success: true, path: filePath };
         }
 
-        // 이미지 저장
-        if (images && images.length > 0) {
-            const imgDir = path.join(sessionDir, 'images');
-            if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+        const imgDir = path.join(sessionDir, 'images');
+        if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
 
-            // 새 저장에 포함될 파일명 집합
-            const keepSet = new Set(
-                images
-                    .filter(i => i && i.filename)
-                    .map(i => i.filename.replace(/[\\/:*?"<>|]/g, '_'))
-            );
+        // 이번 세션에 있어야 할 전체 파일명 집합 (일부 변경분이 아니라 전체 기준)
+        const keepSet = new Set(
+            (expectedFilenames || [])
+                .filter(Boolean)
+                .map(f => f.replace(/[\\/:*?"<>|]/g, '_'))
+        );
 
-            // 이전에 있던 파일 중 이번 저장에 없는 것은 삭제 (렌이밍/삭제 반영)
-            try {
-                fs.readdirSync(imgDir).forEach(f => {
-                    if (!keepSet.has(f)) {
-                        try { fs.unlinkSync(path.join(imgDir, f)); } catch (_) {}
-                    }
-                });
-            } catch (_) {}
-
-            images.forEach(img => {
-                if (img.dataUrl && img.filename) {
-                    // base64 → 파일
-                    const base64 = img.dataUrl.replace(/^data:image\/\w+;base64,/, '');
-                    const filename = img.filename.replace(/[\\/:*?"<>|]/g, '_');
-                    fs.writeFileSync(path.join(imgDir, filename), Buffer.from(base64, 'base64'));
+        // 목록에 없는 기존 파일은 삭제 (리네임/삭제 반영)
+        try {
+            fs.readdirSync(imgDir).forEach(f => {
+                if (!keepSet.has(f)) {
+                    try { fs.unlinkSync(path.join(imgDir, f)); } catch (_) {}
                 }
             });
-        }
+        } catch (_) {}
 
         return { success: true, path: filePath };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+});
+
+// 이미지 바이트를 청크 단위로 저장 — 정리(cleanup)는 하지 않음 (session:save가 먼저 전체 기준으로 처리).
+// 대량 이미지를 한 번의 IPC 메시지로 몰아서 보내는 대신 여러 번 나눠 보내 렌더러/메인 양쪽의
+// 순간 메모리 사용량을 청크 크기 수준으로 고정한다.
+ipcMain.handle('session:save-images-chunk', async (event, sessionName, images) => {
+    try {
+        const relClean = safeRel(sessionName);
+        const sessionDir = path.join(getSessionsPath(), relClean);
+        const imgDir = path.join(sessionDir, 'images');
+        if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
+
+        (images || []).forEach(img => {
+            if (img && img.dataUrl && img.filename) {
+                const base64 = img.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+                const filename = img.filename.replace(/[\\/:*?"<>|]/g, '_');
+                fs.writeFileSync(path.join(imgDir, filename), Buffer.from(base64, 'base64'));
+            }
+        });
+
+        return { success: true };
     } catch (e) {
         return { success: false, error: e.message };
     }

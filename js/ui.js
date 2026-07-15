@@ -2148,12 +2148,13 @@ const UI = {
             const curIdx = cells.indexOf(input.closest('.grid-cell'));
             if (curIdx < 0) return;
 
-            // 현재 위치 이후에서 오류 셀 찾기 (중복, 미기입, 미인식)
+            // 현재 위치 이후에서 오류 셀 찾기 (중복, 미기입, 미인식) — 이미 교정 완료된 셀은 제외
             let nextError = -1;
             for (let i = curIdx + 1; i < cells.length; i++) {
-                if (cells[i].classList.contains('grid-cell-multi') ||
+                if (!cells[i].classList.contains('grid-cell-corrected') &&
+                    (cells[i].classList.contains('grid-cell-multi') ||
                     cells[i].classList.contains('grid-cell-empty') ||
-                    cells[i].classList.contains('grid-cell-undetected')) {
+                    cells[i].classList.contains('grid-cell-undetected'))) {
                     nextError = i;
                     break;
                 }
@@ -2161,9 +2162,10 @@ const UI = {
             // 현재 위치 이전(처음부터)에서도 찾기 (순환)
             if (nextError === -1) {
                 for (let i = 0; i < curIdx; i++) {
-                    if (cells[i].classList.contains('grid-cell-multi') ||
+                    if (!cells[i].classList.contains('grid-cell-corrected') &&
+                        (cells[i].classList.contains('grid-cell-multi') ||
                         cells[i].classList.contains('grid-cell-empty') ||
-                        cells[i].classList.contains('grid-cell-undetected')) {
+                        cells[i].classList.contains('grid-cell-undetected'))) {
                         nextError = i;
                         break;
                     }
@@ -2202,9 +2204,10 @@ const UI = {
                 setTimeout(() => {
                     const cells = Array.from(document.querySelectorAll('.grid-cell'));
                     for (let i = 0; i < cells.length; i++) {
-                        if (cells[i].classList.contains('grid-cell-multi') ||
+                        if (!cells[i].classList.contains('grid-cell-corrected') &&
+                            (cells[i].classList.contains('grid-cell-multi') ||
                             cells[i].classList.contains('grid-cell-empty') ||
-                            cells[i].classList.contains('grid-cell-undetected')) {
+                            cells[i].classList.contains('grid-cell-undetected'))) {
                             this.selectCell(cells[i]);
                             cells[i].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                             return;

@@ -283,11 +283,14 @@ const ImageManager = {
         }
         const hasWarning = hasMissing || hasChoiceMismatch;
         const hasIssue = hasWarning || hasMulti || hasBlank;
-        return { hasWarning, hasMulti, hasBlank, hasCorrected, hasIssue, multiCount, blankCount, missingCount };
+        // 이름 미매칭 — 시험인원이 등록된 상태에서 분석은 됐지만 학생과 매칭되지 않은 경우만 해당
+        const studentsRegistered = !!(App.state.students && App.state.students.length > 0);
+        const hasUnmatchedName = studentsRegistered && !!imgObj.results && imgObj._nameMatched === false;
+        return { hasWarning, hasMulti, hasBlank, hasCorrected, hasIssue, multiCount, blankCount, missingCount, hasUnmatchedName };
     },
 
     _buildItemHtml(imgObj, status) {
-        const { hasIssue, hasCorrected, hasWarning, hasMulti, hasBlank, multiCount, blankCount, missingCount } = status;
+        const { hasIssue, hasCorrected, hasWarning, hasMulti, hasBlank, multiCount, blankCount, missingCount, hasUnmatchedName } = status;
         let tag = '';
         if (hasCorrected && imgObj._correctionConfirmed) {
             tag = `<span class="image-tag" style="background:#166534;color:#4ade80;">확정</span>`;
@@ -302,9 +305,12 @@ const ImageManager = {
         } else if (imgObj.results) {
             tag = `<span class="image-tag tag-ok">분석됨</span>`;
         }
+        const unmatchedTag = hasUnmatchedName
+            ? `<span class="image-tag" style="background:#7c2d12;color:#fdba74;" title="시험인원 명단과 이름이 매칭되지 않았습니다">미매칭</span>`
+            : '';
         const maxLen = 20;
         const displayName = imgObj.name.length > maxLen ? imgObj.name.substring(0, maxLen) + '...' : imgObj.name;
-        return `<div class="image-info-line">${tag}<span class="image-name">${displayName}</span></div>`;
+        return `<div class="image-info-line">${tag}${unmatchedTag}<span class="image-name">${displayName}</span></div>`;
     },
 
     _ensureSearchWrap(list) {
@@ -319,9 +325,10 @@ const ImageManager = {
         tabBar.className = 'image-filter-tabs';
         tabBar.style.cssText = 'display:flex;gap:2px;margin-bottom:4px;';
         const tabs = [
-            { mode: 'all',    label: '전체' },
-            { mode: 'normal', label: '정상' },
-            { mode: 'error',  label: '오류' },
+            { mode: 'all',      label: '전체' },
+            { mode: 'normal',   label: '정상' },
+            { mode: 'error',    label: '오류' },
+            { mode: 'unmatched', label: '미매칭' },
         ];
         tabs.forEach(t => {
             const btn = document.createElement('button');
@@ -478,6 +485,7 @@ const ImageManager = {
             // 필터 모드 적용
             if (this._filterMode === 'normal' && status.hasIssue) return;
             if (this._filterMode === 'error' && !status.hasIssue) return;
+            if (this._filterMode === 'unmatched' && !status.hasUnmatchedName) return;
 
             const li = document.createElement('li');
             li.className = `image-list-item${index === curIdx ? ' active' : ''}${status.hasIssue ? ' has-error' : ''}`;
@@ -590,20 +598,29 @@ const ImageManager = {
         }
     },
 
+    // 동일 이미지에 대해 로드가 이미 진행 중이면 그 Promise를 재사용 (중복 디코딩 방지)
+    _loadingPromises: new Map(), // imgObj → in-flight Promise<HTMLImageElement|null>
+
     // 이미지 로드 보장 (Lazy Loading 복원) — Promise 반환
     ensureLoaded(imgObj) {
-        return new Promise((resolve) => {
-            if (imgObj.imgElement && imgObj.imgElement.complete && imgObj.imgElement.width > 0) {
-                resolve(imgObj.imgElement);
-                return;
-            }
-            const src = imgObj._imgSrc;
-            if (!src) { resolve(null); return; }
+        if (imgObj.imgElement && imgObj.imgElement.complete && imgObj.imgElement.width > 0) {
+            return Promise.resolve(imgObj.imgElement);
+        }
+        const inFlight = this._loadingPromises.get(imgObj);
+        if (inFlight) return inFlight;
+
+        const src = imgObj._imgSrc;
+        if (!src) return Promise.resolve(null);
+
+        const p = new Promise((resolve) => {
             const newImg = new Image();
             newImg.onload = () => { imgObj.imgElement = newImg; resolve(newImg); };
             newImg.onerror = () => { resolve(null); };
             newImg.src = src;
-        });
+        }).finally(() => { this._loadingPromises.delete(imgObj); });
+
+        this._loadingPromises.set(imgObj, p);
+        return p;
     },
 
     // 현재 선택 이미지에서 먼 이미지의 imgElement 해제 (메모리 절약)
@@ -717,6 +734,10 @@ const ImageManager = {
                 const incomplete = (detectedExamNo && detectedExamNo.includes('?')) || (detectedPhone && detectedPhone.includes('?'));
                 console.log(`[매칭] 실패 imgName=${imgObj.name} detectedExamNo=${detectedExamNo} detectedPhone=${detectedPhone}${incomplete ? ' (감지 불완전 — 교정 필요)' : ''}`);
             }
+            // 분석 탭 이미지목록의 "미매칭" 필터용 — 시험인원이 등록된 상태에서만 의미 있음
+            imgObj._nameMatched = !!(matched && matched.name);
+        } else {
+            imgObj._nameMatched = undefined; // 시험인원 미등록 — 매칭 여부 판단 불가
         }
 
         // 파일명 생성: (이름)홍길동_(수험)12345_원본파일명 (항상 _pristineName 기준으로 재조합)

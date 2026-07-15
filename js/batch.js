@@ -7,6 +7,35 @@ const BatchProcess = {
         // 드롭다운 메뉴의 개별 항목에서 직접 호출하므로 별도 바인딩 불필요
     },
 
+    // 배치 중 처리를 마친 이미지의 디코딩된 비트맵을 순차 해제 (메모리 상한 고정)
+    // 최근 KEEP_RECENT장은 재시도/미리보기 대비 남겨두고, _imgSrc(blob URL)는 유지 —
+    // 나중에 필요하면 ImageManager.ensureLoaded()가 다시 로드한다.
+    _KEEP_RECENT: 5,
+    _evictProcessed(images, processedIdx) {
+        const idx = processedIdx - this._KEEP_RECENT;
+        if (idx < 0) return;
+        if (idx === App.state.currentIndex) return; // 현재 화면에 보이는 이미지는 유지
+        const target = images[idx];
+        if (target && target.imgElement && target._imgSrc && target.imgElement.width > 0) {
+            target.imgElement.src = '';
+            target.imgElement = new Image();
+        }
+    },
+
+    // runAllPeriods()용 — tasks: [{ period, imgObj }, ...]
+    _evictProcessedTask(tasks, processedIdx) {
+        const idx = processedIdx - this._KEEP_RECENT;
+        if (idx < 0) return;
+        const target = tasks[idx] && tasks[idx].imgObj;
+        if (!target) return;
+        const current = App.getCurrentImage && App.getCurrentImage();
+        if (target === current) return; // 현재 화면에 보이는 이미지는 유지
+        if (target.imgElement && target._imgSrc && target.imgElement.width > 0) {
+            target.imgElement.src = '';
+            target.imgElement = new Image();
+        }
+    },
+
     // 특정 이미지 배열에 대해서만 일괄 분석 (오류 탭 재분석용)
     // 각 이미지의 현재 ROI 사용 — 양식 적용이 이미 호출부에서 끝난 상태 가정
     runForImages(images) {
@@ -14,11 +43,13 @@ const BatchProcess = {
         const missingRoi = images.find(img => !img.rois || img.rois.length === 0);
         if (missingRoi) { Toast.error(`박스(ROI)가 없는 이미지: ${missingRoi.name}`); return; }
 
+        this._cancelRequested = false;
         const overlay = this.createModal(images.length);
         document.body.appendChild(overlay);
 
         let processed = 0;
         const processNext = async () => {
+            if (this._isCancelled(overlay, processed, images.length)) return;
             if (processed >= images.length) {
                 this.finishPartial(overlay, images.length);
                 return;
@@ -170,6 +201,7 @@ const BatchProcess = {
         }
 
         this._template = template;
+        this._cancelRequested = false;
 
         const overlay = this.createModal(images.length);
         document.body.appendChild(overlay);
@@ -177,6 +209,7 @@ const BatchProcess = {
         let processed = 0;
 
         const processNext = async () => {
+            if (this._isCancelled(overlay, processed, images.length)) return;
             if (processed >= images.length) {
                 // 1차 분석 완료 → 실패 이미지 자동 재시도 → 1.5배 재분석
                 this._retryFailedImages(images, overlay, () => {
@@ -324,6 +357,7 @@ const BatchProcess = {
                 imgObj.validationErrors.push({ type: 'process_error', message: err.message });
             }
 
+            this._evictProcessed(images, processed);
             processed++;
             // 5장마다 UI 갱신 (매장 하면 렉)
             if (processed % 5 === 0 || processed >= images.length) {
@@ -368,6 +402,7 @@ const BatchProcess = {
         });
 
 
+        this._cancelRequested = false;
         const overlay = this.createModal(tasks.length);
         const txt = overlay.querySelector('#batch-text');
         if (txt) txt.textContent = `0 / ${tasks.length} 처리 중 (전체 ${periods.length}교시)...`;
@@ -380,15 +415,24 @@ const BatchProcess = {
         const savedAnswerKey = App.state.answerKey;
         const savedSubjects  = App.state.subjects;
 
+        const restoreState = () => {
+            App.state.currentPeriodId = savedPeriodId;
+            App.state.answerKey       = savedAnswerKey;
+            App.state.subjects        = savedSubjects;
+            const cur = App.getCurrentPeriod();
+            if (cur) App.state.images = cur.images;
+            if (typeof PeriodManager !== 'undefined') PeriodManager.render();
+        };
+
         const processNext = async () => {
+            if (this._cancelRequested) {
+                restoreState();
+                this._finishCancelled(overlay, processed, tasks.length);
+                return;
+            }
             if (processed >= tasks.length) {
                 // 원래 교시 복원
-                App.state.currentPeriodId = savedPeriodId;
-                App.state.answerKey       = savedAnswerKey;
-                App.state.subjects        = savedSubjects;
-                const cur = App.getCurrentPeriod();
-                if (cur) App.state.images = cur.images;
-                if (typeof PeriodManager !== 'undefined') PeriodManager.render();
+                restoreState();
                 this._finishAllPeriods(overlay, tasks.length, periods.length);
                 return;
             }
@@ -530,6 +574,7 @@ const BatchProcess = {
                 imgObj.gradeResult = Grading.grade(imgObj.results, imgObj);
             }
 
+            this._evictProcessedTask(tasks, processed);
             processed++;
             if (processed % 5 === 0 || processed >= tasks.length) {
                 this.updateProgress(processed, tasks.length);
@@ -599,6 +644,7 @@ const BatchProcess = {
                         <div class="progress-bar-fill" id="batch-bar" style="width:0%"></div>
                     </div>
                     <p id="batch-text" style="font-size:13px; color:var(--text-secondary);">0 / ${total} 처리 중...</p>
+                    <button class="btn" id="batch-cancel" style="width:100%; margin-top:12px;">취소</button>
                     <div id="batch-done" style="display:none; margin-top:16px;">
                         <p id="batch-summary" style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;"></p>
                         <button class="btn" id="batch-save-log" style="width:100%; margin-bottom:6px; display:none;">분석 로그 저장</button>
@@ -607,7 +653,53 @@ const BatchProcess = {
                 </div>
             </div>
         `;
+        const cancelBtn = overlay.querySelector('#batch-cancel');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this._cancelRequested = true;
+                cancelBtn.disabled = true;
+                cancelBtn.textContent = '취소 중...';
+            });
+        }
         return overlay;
+    },
+
+    // 취소 요청 여부 확인 — 취소됐으면 마무리 처리 후 true 반환 (호출부는 즉시 return)
+    _isCancelled(overlay, processed, total) {
+        if (!this._cancelRequested) return false;
+        this._finishCancelled(overlay, processed, total);
+        return true;
+    },
+
+    _finishCancelled(overlay, processed, total) {
+        const progressText = document.getElementById('batch-text');
+        const done = document.getElementById('batch-done');
+        const summary = document.getElementById('batch-summary');
+        const bar = document.getElementById('batch-bar');
+        const cancelBtn = document.getElementById('batch-cancel');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (bar) bar.style.width = (total ? Math.round((processed / total) * 100) : 0) + '%';
+        if (progressText) progressText.textContent = `취소됨 (${processed}/${total})`;
+        if (summary) summary.textContent = `일괄 처리가 취소되었습니다. 이미 처리된 ${processed}장의 결과는 유지됩니다.`;
+        if (done) done.style.display = 'block';
+
+        const closeBtn = document.getElementById('batch-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                overlay.remove();
+                ImageManager.invalidateStatus();
+                ImageManager.updateList();
+                CanvasManager.render();
+                UI.updateRightPanel();
+            });
+        }
+        if (typeof Correction !== 'undefined') {
+            Correction.invalidate && Correction.invalidate();
+            Correction.updateBadge && Correction.updateBadge();
+        }
+        if (typeof Scoring !== 'undefined' && Scoring.invalidate) Scoring.invalidate();
+        if (typeof SessionManager !== 'undefined') SessionManager.markDirty();
+        Toast.info(`일괄 처리 취소됨 (${processed}/${total} 완료)`);
     },
 
     _progressStartTime: 0,
@@ -756,6 +848,8 @@ const BatchProcess = {
         let retryIdx = 0;
 
         const processNextRetry = async () => {
+            // 1차 분석은 이미 전체 완료된 상태 — 여기서 취소되면 추가 검증만 중단
+            if (this._cancelRequested) { this._finishCancelled(overlay, images.length, images.length); return; }
             if (retryIdx >= failed.length) { onComplete(); return; }
 
             const { imgObj, failedRois } = failed[retryIdx];
@@ -931,6 +1025,8 @@ const BatchProcess = {
         let improved = 0;
 
         const processNextXv = async () => {
+            // 1차 분석은 이미 전체 완료된 상태 — 여기서 취소되면 1.5배 재검증만 중단
+            if (this._cancelRequested) { this._finishCancelled(overlay, images.length, images.length); return; }
             if (xvIdx >= xvImages.length) {
                 if (improved > 0 && typeof Correction !== 'undefined' && Correction.invalidate) Correction.invalidate();
                 onComplete();

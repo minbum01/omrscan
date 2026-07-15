@@ -15,3 +15,11 @@ devlog/
 node_modules/
 dist/
 package-lock.json
+
+# 개인정보(실제 응시자 이름/생년월일/전화번호/성적) 포함 파일 — 저장소에 올리지 않음
+*.csv
+*.xlsx
+성적표_150명_샘플.html
+
+# 로컬 전용 Claude Code 설정 (이 컴퓨터의 절대경로/권한 포함)
+.claude/settings.local.json

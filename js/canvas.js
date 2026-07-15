@@ -673,7 +673,17 @@ const CanvasManager = {
         });
     },
 
-    // 감마 보정된 이미지 생성 (캐시)
+    // 감마 LUT 생성 (슬라이더 오른쪽(150)=진하게, 왼쪽(50)=옅게)
+    _buildIntensityLUT(intensity) {
+        const gamma = intensity / 100;
+        const lut = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) {
+            lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
+        }
+        return lut;
+    },
+
+    // 감마 보정된 이미지 생성 (캐시) — 이미지 전체 해상도 처리. 분석/캔버스 렌더링용.
     _getIntensifiedImage(imgObj) {
         if (this.intensity === 100) return null; // 원본 사용
 
@@ -686,12 +696,7 @@ const CanvasManager = {
 
         if (this._intensityCache.has(key)) return this._intensityCache.get(key);
 
-        // 감마 LUT: 슬라이더 오른쪽(150)=진하게, 왼쪽(50)=옅게
-        const gamma = this.intensity / 100;
-        const lut = new Uint8Array(256);
-        for (let i = 0; i < 256; i++) {
-            lut[i] = Math.round(255 * Math.pow(i / 255, gamma));
-        }
+        const lut = this._buildIntensityLUT(this.intensity);
 
         const off = document.createElement('canvas');
         off.width = w; off.height = h;
@@ -714,6 +719,28 @@ const CanvasManager = {
         }
         this._intensityCache.set(key, off);
         return off;
+    },
+
+    // 작은 영역만 크롭 후 LUT 적용 — 교정탭 썸네일처럼 이미지 전체를 처리할 필요가 없는 경우.
+    // 캐시하지 않음: 크롭 크기(수십px)가 작아 재계산 비용이 이미지 전체 처리 대비 무시할 수준.
+    _getIntensifiedCrop(imgEl, sx, sy, sw, sh, intensity) {
+        const crop = document.createElement('canvas');
+        crop.width = Math.max(1, Math.round(sw));
+        crop.height = Math.max(1, Math.round(sh));
+        const ctx = crop.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+        if (!intensity || intensity === 100) return crop;
+
+        const lut = this._buildIntensityLUT(intensity);
+        const imgData = ctx.getImageData(0, 0, crop.width, crop.height);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+            d[i] = lut[d[i]];
+            d[i+1] = lut[d[i+1]];
+            d[i+2] = lut[d[i+2]];
+        }
+        ctx.putImageData(imgData, 0, 0);
+        return crop;
     },
 
     // 미세 기울기 보정

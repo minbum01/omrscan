@@ -3,7 +3,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 렌더러(웹페이지)에서 사용할 수 있는 API
 contextBridge.exposeInMainWorld('electronAPI', {
     // 세션
-    saveSession:   (name, data, images) => ipcRenderer.invoke('session:save', name, data, images),
+    // saveSession의 3번째 인자는 실제 이미지 데이터가 아니라 "이번 세션에 있어야 할 전체 파일명 목록"
+    // (정리/cleanup 판단용). 실제 이미지 바이트는 saveSessionImagesChunk로 청크 단위 전송.
+    saveSession:            (name, data, expectedFilenames) => ipcRenderer.invoke('session:save', name, data, expectedFilenames),
+    saveSessionImagesChunk: (name, images) => ipcRenderer.invoke('session:save-images-chunk', name, images),
     loadSession:   (name) => ipcRenderer.invoke('session:load', name),
     listSessions:  () => ipcRenderer.invoke('session:list'),
     deleteSession: (name) => ipcRenderer.invoke('session:delete', name),
@@ -50,6 +53,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onBeforeClose: (callback) => ipcRenderer.on('app:before-close', callback),
     confirmClose:  () => ipcRenderer.send('app:close-confirmed'),
     cancelClose:   () => ipcRenderer.send('app:close-cancelled'),
+
+    // 채점/결과 새창 보기 (보기 전용 — 메인 창이 데이터를 밀어주고, 새창의 클릭 요청을 받음)
+    openReportWindow:        () => ipcRenderer.send('report:open'),
+    updateReportContent:     (html) => ipcRenderer.send('report:updateContent', html),
+    onReportNavigateRequest: (callback) => ipcRenderer.on('report:navigateRequest', (_e, payload) => callback(payload)),
+    onReportClosed:          (callback) => ipcRenderer.on('report:closed', () => callback()),
 
     // Electron 환경 여부
     isElectron: true,

@@ -21,6 +21,8 @@ const Scoring = {
     _itemSubject: null,      // 문항분석표: 선택된 과목
     _periodFilter: null,     // 교시 필터 (null = 전체)
     _personalIdx: 0,         // 개인별 성적표: 현재 학생 인덱스
+    _omrPage: 0,             // OMR 결과표: 현재 페이지 (대용량 인원 렌더링 성능용)
+    _omrPageSize: 150,
     // 문항분석 그룹 비율 (사용자 커스터마이징)
     _upperPct: 27,
     _lowerPct: 27,
@@ -1252,6 +1254,10 @@ const Scoring = {
                     <button class="btn btn-primary btn-sm" onclick="Scoring.regradeFromAnalysis()" title="분석 탭의 최신 결과를 가져와 채점 갱신">
                         ↻ 분석 결과 가져와 채점
                     </button>
+                    ${(typeof window !== 'undefined' && window.electronAPI) ? `
+                    <button class="btn btn-sm" onclick="Scoring.openReportWindow()" title="OMR결과표/성적일람표를 별도 창에서 크게 봅니다">
+                        ⧉ 새창에서 보기
+                    </button>` : ''}
                     <span style="font-size:13px; color:var(--text-muted);">${SessionManager.currentSessionName || ''}</span>
                 </div>
             </div>
@@ -1275,6 +1281,8 @@ const Scoring = {
                 표시할 데이터가 없습니다.<br>분석 탭에서 이미지를 분석하거나 시험관리에서 인원을 등록하세요.<br><span style="font-size:12px;">※ 정답이 없어도 채점 탭에 진입할 수 있습니다.</span>
             </div></div>`;
             container.innerHTML = html;
+            this._lastNavTableHtml = null;
+            this._pushReportSnapshot();
             return;
         }
 
@@ -1286,7 +1294,8 @@ const Scoring = {
             ${this._tabBtn('personal', '개인별 성적표')}
         </div>`;
 
-        // 탭 내용
+        // 탭 내용 (omr/report만 새창 미러링 대상 — item/personal은 캐시 비움)
+        if (this._activeTab !== 'omr' && this._activeTab !== 'report') this._lastNavTableHtml = null;
         html += `<div id="scoring-tab-content">`;
         if (this._activeTab === 'omr') html += this._renderOMR(rows);
         else if (this._activeTab === 'report') html += this._renderReport(rows);
@@ -1295,6 +1304,7 @@ const Scoring = {
         html += `</div></div>`;
 
         container.innerHTML = html;
+        this._pushReportSnapshot();
     },
 
     _statCard(label, value, color) {
@@ -1495,6 +1505,12 @@ const Scoring = {
 
     setCurrentSubject(name) {
         this._currentSubject = name || null;
+        this._omrPage = 0;
+        this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    setOmrPage(page) {
+        this._omrPage = Math.max(0, page);
         this.renderScoringPanel(document.getElementById('scoring-content'));
     },
 
@@ -1507,8 +1523,100 @@ const Scoring = {
         this._periodFilter = id || null;
         this._currentSubject = null; // 과목 리셋 (교시별 과목 다를 수 있음)
         this._itemSubject = null;
+        this._omrPage = 0;
         this.invalidate(); // collectData가 _periodFilter를 참조하므로 캐시 무효화
         this.renderScoringPanel(document.getElementById('scoring-content'));
+    },
+
+    // 결과표에서 행 클릭 → 분석 탭의 해당 이미지로 이동 (_navRows는 렌더 시점에 저장됨)
+    goToImageRow(idx) {
+        const row = this._navRows && this._navRows[idx];
+        if (!row) return;
+        this._navigateToRow(row);
+    },
+
+    // row로부터 이동 대상(교시id + 교시 내 이미지 인덱스)을 결정 — 없으면 null
+    // 다교시 병합 행(_periodRows) → 첫 교시 기준, 원본 다교시 행(periodId) → 해당 교시, 단일교시 → 현재 교시
+    _resolveNavTarget(row) {
+        if (!row || row._noOmr) return null;
+        let periodId = null;
+        let localIdx = null;
+        if (row._periodRows && row._periodRows.length > 0) {
+            periodId = row._periodRows[0].periodId;
+            localIdx = row._periodRows[0]._localIdx;
+        } else if (row.periodId) {
+            periodId = row.periodId;
+            localIdx = row._localIdx != null ? row._localIdx : row.imgIdx;
+        } else {
+            localIdx = row.imgIdx;
+        }
+        if (localIdx == null || localIdx < 0) return null;
+        return { periodId, localIdx };
+    },
+
+    _navigateToRow(row) {
+        if (!row || row._noOmr) { Toast.error('연결된 OMR 이미지가 없습니다'); return; }
+        const target = this._resolveNavTarget(row);
+        this._navigateToTarget(target, row.name || row.filename || '');
+    },
+
+    // { periodId, localIdx } 기준으로 분석 탭 + 해당 이미지로 이동 (새창에서의 요청도 이 경로를 공유)
+    _navigateToTarget(target, label) {
+        if (!target || target.localIdx == null || target.localIdx < 0) { Toast.error('연결된 OMR 이미지가 없습니다'); return; }
+        const { periodId, localIdx } = target;
+
+        // 다른 교시면 전환
+        if (periodId && App.state.currentPeriodId !== periodId) {
+            const period = (App.state.periods || []).find(p => p.id === periodId);
+            if (period) {
+                App.state.currentPeriodId = periodId;
+                App.state.images = period.images;
+                if (typeof PeriodManager !== 'undefined') PeriodManager.render();
+            }
+        }
+
+        if (localIdx >= App.state.images.length) { Toast.error('이미지를 찾을 수 없습니다'); return; }
+
+        // 분석 탭으로 전환 후 이미지 선택 (전환 먼저 — 캔버스 크기 계산이 보이는 상태에서 이뤄져야 함)
+        App.state.rightTab = 'results';
+        switchMainTab('analysis');
+        ImageManager.select(localIdx);
+        if (label) Toast.info(`${label} 이미지로 이동`);
+    },
+
+    // ==========================================
+    // 채점/결과 새창 보기 (보기 전용 — 데이터는 메인 창에서만 관리, 행 클릭은 IPC로 메인 창에 전달)
+    // ==========================================
+    _reportWindowOpen: false,
+
+    init() {
+        if (typeof window === 'undefined' || !window.electronAPI) return;
+        if (window.electronAPI.onReportNavigateRequest) {
+            window.electronAPI.onReportNavigateRequest((payload) => {
+                this._navigateToTarget({ periodId: payload && payload.periodId || null, localIdx: payload && payload.localIdx }, '');
+            });
+        }
+        if (window.electronAPI.onReportClosed) {
+            window.electronAPI.onReportClosed(() => { this._reportWindowOpen = false; });
+        }
+    },
+
+    openReportWindow() {
+        if (typeof window === 'undefined' || !window.electronAPI || !window.electronAPI.openReportWindow) {
+            Toast.error('새창 보기는 데스크톱 앱에서만 지원됩니다');
+            return;
+        }
+        window.electronAPI.openReportWindow();
+        this._reportWindowOpen = true;
+        this._pushReportSnapshot();
+    },
+
+    _pushReportSnapshot() {
+        if (!this._reportWindowOpen) return;
+        if (typeof window === 'undefined' || !window.electronAPI || !window.electronAPI.updateReportContent) return;
+        const html = this._lastNavTableHtml
+            || `<div style="text-align:center; padding:60px 20px; color:#94a3b8; font-size:13px;">OMR결과표 또는 성적일람표 탭에서만 미러링됩니다.</div>`;
+        window.electronAPI.updateReportContent(html);
     },
 
     _periodDropdown() {
@@ -1622,8 +1730,20 @@ const Scoring = {
             </span>
         </div>`;
 
-        // 테이블
-        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
+        // 대용량 인원 렌더링 성능 보호 — 화면에는 페이지 단위로만 그림 (CSV/XLSX 내보내기는 전체 rows 그대로 사용, 영향 없음)
+        const pageSize = this._omrPageSize;
+        const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+        if (this._omrPage >= totalPages) this._omrPage = totalPages - 1;
+        if (this._omrPage < 0) this._omrPage = 0;
+        const pageStart = this._omrPage * pageSize;
+        const pageRows = rows.slice(pageStart, pageStart + pageSize);
+
+        if (totalPages > 1) {
+            html += this._renderOmrPager(totalPages, rows.length);
+        }
+
+        // 테이블 (별도 변수에 누적 — 새창 미러링 시 재사용)
+        let tableHtml = `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
         <thead><tr>`;
 
@@ -1632,22 +1752,30 @@ const Scoring = {
             const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
             const bg = col.type === 'ox' ? 'background:#fef3c7;' : col.id === 'score' ? 'color:var(--blue);' : 'background:#f8fafc;';
             const minW = _widths[col.id] ? `min-width:${_widths[col.id]}px;` : '';
-            html += `<th style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} ${hl} ${minW} position:sticky; top:0; z-index:2; white-space:nowrap;">${col.label}</th>`;
+            tableHtml += `<th style="padding:6px 8px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); ${bg} ${hl} ${minW} position:sticky; top:0; z-index:2; white-space:nowrap;">${col.label}</th>`;
         });
-        html += `</tr></thead><tbody>`;
+        tableHtml += `</tr></thead><tbody>`;
 
-        rows.forEach((r, ri) => {
+        // 행 클릭 → 분석 탭 이동을 위해 원본 rows 배열 참조 저장 (goToImageRow의 인덱스 기준)
+        this._navRows = rows;
+
+        pageRows.forEach((r, ri) => {
             let bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             if (r._sameName) bg = 'background:#fef9c3;'; // 동명이인 노란 별색
             const noOmr = r._noOmr;
             const blankForSubject = r._noSubject; // 현재 과목 미응시 (info는 표시, 그 외는 blank)
             const faded = noOmr || blankForSubject;
-            const title = r._sameName ? ' title="동명이인 또는 체킹 오류 확인 필요"' : '';
-            html += `<tr style="${bg} ${faded ? 'opacity:0.5;' : ''}"${title}>`;
+            const titleText = r._sameName ? '동명이인 또는 체킹 오류 확인 필요' : (noOmr ? '' : '클릭하면 분석 탭에서 원본 이미지를 봅니다');
+            const titleAttr = titleText ? ` title="${titleText}"` : '';
+            const navIdx = pageStart + ri;
+            const navTarget = noOmr ? null : this._resolveNavTarget(r);
+            const navAttr = noOmr ? '' : ` onclick="Scoring.goToImageRow(${navIdx})"`;
+            const navDataAttr = navTarget ? ` data-nav="1" data-period-id="${navTarget.periodId || ''}" data-local-idx="${navTarget.localIdx}"` : '';
+            tableHtml += `<tr style="${bg} ${faded ? 'opacity:0.5;' : ''} ${noOmr ? '' : 'cursor:pointer;'}"${titleAttr}${navAttr}${navDataAttr}>`;
             cols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#dbeafe !important;' : '';
                 let val = '', style = `padding:5px 6px; text-align:center; font-size:11px; border-bottom:1px solid #f1f5f9; ${hl}`;
-                if ((noOmr || blankForSubject) && col.type !== 'info') { val = ''; html += `<td style="${style}">${val}</td>`; return; }
+                if ((noOmr || blankForSubject) && col.type !== 'info') { val = ''; tableHtml += `<td style="${style}">${val}</td>`; return; }
                 if (col.id === 'examNo') val = r.examNo;
                 else if (col.id === 'name') { val = r.name; style += 'font-weight:600;'; }
                 else if (col.id === 'score') { val = this._fmtScore(r.score); style += 'font-weight:700; color:var(--blue); font-size:12px;'; }
@@ -1673,13 +1801,26 @@ const Scoring = {
                 } else if (col.type === 'custom') {
                     val = '';
                 }
-                html += `<td style="${style}">${val}</td>`;
+                tableHtml += `<td style="${style}">${val}</td>`;
             });
-            html += `</tr>`;
+            tableHtml += `</tr>`;
         });
 
-        html += `</tbody></table></div>`;
+        tableHtml += `</tbody></table></div>`;
+        this._lastNavTableHtml = tableHtml;
+        html += tableHtml;
+        if (totalPages > 1) html += this._renderOmrPager(totalPages, rows.length);
         return html;
+    },
+
+    // OMR 결과표 페이지 이동 UI (인원이 많을 때 렌더링 부하 방지용)
+    _renderOmrPager(totalPages, totalRows) {
+        const page = this._omrPage;
+        return `<div style="display:flex; align-items:center; justify-content:center; gap:10px; margin:8px 0;">
+            <button class="btn btn-sm" ${page === 0 ? 'disabled' : ''} onclick="Scoring.setOmrPage(${page - 1})">◀ 이전</button>
+            <span style="font-size:12px; color:var(--text-muted);">${page + 1} / ${totalPages} 페이지 · 전체 ${totalRows}명</span>
+            <button class="btn btn-sm" ${page >= totalPages - 1 ? 'disabled' : ''} onclick="Scoring.setOmrPage(${page + 1})">다음 ▶</button>
+        </div>`;
     },
 
     // 정렬 버튼 (rows: collectData() 결과)
@@ -2114,16 +2255,17 @@ const Scoring = {
             tScore: 'background:#f5f3ff;', rank: 'background:#fef3c7;', percentile: 'background:#fce7f3;',
         };
 
-        html += `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
+        // 테이블 (별도 변수에 누적 — 새창 미러링 시 재사용)
+        let tableHtml = `<div style="overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:8px; background:white;">
         <table style="border-collapse:collapse; width:100%;">
         <thead>`;
 
         // 과목 그룹 헤더 (정보열 rowspan + 과목별 colspan)
         if (scoreCols.length > 0 && groups.length > 0) {
-            html += `<tr>`;
+            tableHtml += `<tr>`;
             infoCols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
-                html += `<th rowspan="2" style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); border-right:1px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
+                tableHtml += `<th rowspan="2" style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); border-right:1px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
             });
             groups.forEach(g => {
                 const bg = g.isTotal ? 'background:#fef3c7;' : 'background:#dbeafe;';
@@ -2131,35 +2273,43 @@ const Scoring = {
                 const pName = !g.isTotal ? (periodBySubject[g.key] || '') : '';
                 const tipAttr = pName ? ` title="${g.label} (${pName})" style="cursor:help;"` : '';
                 const displayLabel = pName ? `${g.label}<span style="font-size:9px; font-weight:400; opacity:0.7; margin-left:3px;">(${pName})</span>` : g.label;
-                html += `<th colspan="${scoreCols.length}" style="padding:8px 10px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid var(--border); border-right:2px solid var(--border); ${bg} position:sticky; top:0; white-space:nowrap;"${tipAttr}>${displayLabel}</th>`;
+                tableHtml += `<th colspan="${scoreCols.length}" style="padding:8px 10px; text-align:center; font-size:12px; font-weight:700; border-bottom:1px solid var(--border); border-right:2px solid var(--border); ${bg} position:sticky; top:0; white-space:nowrap;"${tipAttr}>${displayLabel}</th>`;
             });
-            html += `</tr><tr>`;
+            tableHtml += `</tr><tr>`;
             groups.forEach((g, gi) => {
                 scoreCols.forEach((col, ci) => {
                     const extra = colStyle[col.id] || '';
                     const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
                     const rightBorder = ci === scoreCols.length - 1 ? 'border-right:2px solid var(--border);' : '';
-                    html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); position:sticky; top:30px; white-space:nowrap; ${extra} ${hl} ${rightBorder}">${col.label}</th>`;
+                    tableHtml += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); position:sticky; top:30px; white-space:nowrap; ${extra} ${hl} ${rightBorder}">${col.label}</th>`;
                 });
             });
-            html += `</tr>`;
+            tableHtml += `</tr>`;
         } else {
             // 성적 열 0개 — 정보 열만
-            html += `<tr>`;
+            tableHtml += `<tr>`;
             infoCols.forEach(col => {
                 const hl = (this._highlightCol === col.id) ? 'background:#93c5fd !important;' : '';
-                html += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
+                tableHtml += `<th style="padding:8px 10px; text-align:center; font-size:11px; font-weight:600; border-bottom:2px solid var(--border); background:#f8fafc; position:sticky; top:0; white-space:nowrap; ${hl}">${col.label}</th>`;
             });
-            html += `</tr>`;
+            tableHtml += `</tr>`;
         }
 
-        html += `</thead><tbody>`;
+        tableHtml += `</thead><tbody>`;
+
+        // 행 클릭 → 분석 탭 이동을 위해 원본 rows 배열 참조 저장 (goToImageRow의 인덱스 기준)
+        this._navRows = rows;
 
         rows.forEach((r, ri) => {
             let bg = ri % 2 === 0 ? '' : 'background:#f8fafc;';
             if (r._sameName) bg = 'background:#fef9c3;'; // 동명이인 노란 별색
-            const title = r._sameName ? ' title="동명이인 또는 체킹 오류 확인 필요"' : '';
-            html += `<tr style="${bg}"${title}>`;
+            const noOmr = r._noOmr;
+            const titleText = r._sameName ? '동명이인 또는 체킹 오류 확인 필요' : (noOmr ? '' : '클릭하면 분석 탭에서 원본 이미지를 봅니다');
+            const titleAttr = titleText ? ` title="${titleText}"` : '';
+            const navTarget = noOmr ? null : this._resolveNavTarget(r);
+            const navAttr = noOmr ? '' : ` onclick="Scoring.goToImageRow(${ri})"`;
+            const navDataAttr = navTarget ? ` data-nav="1" data-period-id="${navTarget.periodId || ''}" data-local-idx="${navTarget.localIdx}"` : '';
+            tableHtml += `<tr style="${bg} ${noOmr ? '' : 'cursor:pointer;'}"${titleAttr}${navAttr}${navDataAttr}>`;
 
             // 정보 셀
             infoCols.forEach(col => {
@@ -2173,7 +2323,7 @@ const Scoring = {
                 else if (col.id === 'subjectCode') val = r.subjectCode || '';
                 else if (col.id === 'filename') val = r.filename;
                 else if (col.id && col.id.startsWith('etc_')) val = r.etcFields[col.etcName || col.id.replace('etc_', '')] || '';
-                html += `<td ${style}>${val}</td>`;
+                tableHtml += `<td ${style}>${val}</td>`;
             });
 
             // 과목별 성적 셀
@@ -2194,7 +2344,7 @@ const Scoring = {
                     let val = '';
                     let style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; ${hl} ${rightBorder}"`;
                     if (r._noOmr || !src) {
-                        html += `<td ${style}></td>`;
+                        tableHtml += `<td ${style}></td>`;
                         return;
                     }
                     if (col.id === 'correctCount') { val = this._fmtScore(src.correctCount); style = `style="padding:6px 8px; text-align:center; font-size:12px; border-bottom:1px solid #f1f5f9; color:#22c55e; font-weight:600; ${hl} ${rightBorder}"`; }
@@ -2204,14 +2354,16 @@ const Scoring = {
                     else if (col.id === 'percentile') val = src.percentile != null ? src.percentile.toFixed(1) + '%' : '';
                     else if (col.id === 'wrongCount') val = this._fmtScore(src.wrongCount);
                     else if (col.id === 'totalPossible') val = this._fmtMax(src.totalPossible);
-                    html += `<td ${style}>${val}</td>`;
+                    tableHtml += `<td ${style}>${val}</td>`;
                 });
             });
 
-            html += `</tr>`;
+            tableHtml += `</tr>`;
         });
 
-        html += `</tbody></table></div>`;
+        tableHtml += `</tbody></table></div>`;
+        this._lastNavTableHtml = tableHtml;
+        html += tableHtml;
         return html;
     },
 

@@ -999,8 +999,8 @@ const SubjectManager = {
         if (!value) return '';
         let v = String(value).trim().replace(/[^0-9]/g, ''); // 숫자만 추출
         if (type === 'birth' && v.length > 0) {
-            while (v.length < 6) v = '0' + v;
-            v = v.substring(0, 6);
+            if (v.length > 6) v = v.slice(-6);      // yyyy-mm-dd 등 8자리(19970904) → 뒤 6자리(970904, 연도 앞 2자리는 버림)
+            else while (v.length < 6) v = '0' + v;  // 6자리 미만이면 앞에 0 채움 (예: 10101 → 010101)
             return v; // 내부 저장은 010101, 표시는 formatBirth로
         }
         if (type === 'phone' && v.length > 0) {

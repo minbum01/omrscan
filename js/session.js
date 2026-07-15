@@ -652,11 +652,18 @@ const SessionManager = {
             const deletedMap = new Map();
             (data.deletedImageResults || []).forEach(r => { if (r.filename) deletedMap.set(r.filename, r); });
 
-            // 이미지 자동 로드 (Electron)
+            // 이미지 자동 로드 (Electron) — 동시 로딩 개수 제한 (업로드와 동일하게 PARALLEL=4)
             if (imageFiles.length > 0) {
                 this._updateProgressOverlay(`이미지 로드 중... (0/${imageFiles.length})`);
                 let loaded = 0;
-                imageFiles.forEach((imgFile, idx) => {
+                const LOAD_PARALLEL = 4;
+                const total = imageFiles.length;
+                let nextIdx = 0;
+
+                const loadOne = () => {
+                    if (nextIdx >= total) return;
+                    const idx = nextIdx++;
+                    const imgFile = imageFiles[idx];
                     const img = new Image();
                     img.onload = () => {
                         const isDeleted = deletedMap.has(imgFile.filename);
@@ -701,8 +708,8 @@ const SessionManager = {
                         }
 
                         loaded++;
-                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${imageFiles.length})`);
-                        if (loaded === imageFiles.length) {
+                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${total})`);
+                        if (loaded === total) {
                             // 현재 교시의 images 를 App.state.images 로 동기화
                             const cp = App.getCurrentPeriod();
                             if (cp) App.state.images = cp.images;
@@ -722,22 +729,29 @@ const SessionManager = {
                             const periodCount  = (App.state.periods || []).length;
                             const pLabel = periodCount > 1 ? ` (${periodCount}교시)` : '';
                             Toast.success(`세션 "${name}" 로드 완료 (활성 ${totalActive}장${pLabel}${deletedCount > 0 ? `, 삭제됨 ${deletedCount}장` : ''})`);
+                        } else {
+                            loadOne(); // 다음 이미지 로드 시작
                         }
                     };
                     img.onerror = () => {
                         loaded++;
-                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${imageFiles.length})`);
+                        this._updateProgressOverlay(`이미지 로드 중... (${loaded}/${total})`);
                         console.warn(`이미지 로드 실패: ${imgFile.filename}`);
-                        if (loaded === imageFiles.length) {
+                        if (loaded === total) {
                             const cp = App.getCurrentPeriod();
                             if (cp) App.state.images = cp.images;
                             if (typeof PeriodManager !== 'undefined') PeriodManager.render();
                             if (typeof ImageManager !== 'undefined') ImageManager.updateList();
                             this._hideProgressOverlay();
+                        } else {
+                            loadOne(); // 다음 이미지 로드 시작
                         }
                     };
                     img.src = imgFile.url;
-                });
+                };
+
+                // 최대 LOAD_PARALLEL개 동시 시작
+                for (let i = 0; i < Math.min(LOAD_PARALLEL, total); i++) loadOne();
             } else {
                 if (typeof ImageManager !== 'undefined') ImageManager.updateList();
                 if (typeof UI !== 'undefined') UI.updateRightPanel();
@@ -955,65 +969,78 @@ const SessionManager = {
 
         try {
             if (this.isElectron) {
-                let imageDataArr = null; // null이면 main.js IPC가 이미지 디렉터리를 건드리지 않음
-                if (!metadataOnly) {
-                    // 이미지 → base64 순차 변환 (변경된 이미지만 인코딩)
+                if (metadataOnly) {
+                    // 메타데이터만 — 이미지 영역은 건드리지 않음 (정리/cleanup도 스킵)
+                    const result = await window.electronAPI.saveSession(name, data, null);
+                    if (!result.success) throw new Error(result.error);
+                    console.log(`[세션] 메타만 저장: ${result.path}`);
+                } else {
                     const isFirstSave = !this._savedOnce;
                     const allItems = [
                         ...allPeriodEntries.map(({ img, periodId, localIdx }) => ({ imgObj: img, filename: buildFilenameByRef(img, periodId, localIdx) })),
                         ...deletedImages.map(img => ({ imgObj: img, filename: getPristine(img) })),
                     ];
+                    // 이번 세션에 "존재해야 할" 전체 파일명 목록 — 변경 여부 무관, 항상 전체.
+                    // (일부만 변경된 이미지 목록으로 정리 판단을 하면 나머지 이미지 파일이
+                    //  전부 삭제되는 버그가 있었음 — 반드시 전체 목록으로 넘겨야 함)
+                    const expectedFilenames = allItems.map(item => item.filename);
+
+                    // 1) 메타데이터 저장 + 정리(cleanup) — 이미지 바이트 전송 전에 먼저 처리
+                    const metaResult = await window.electronAPI.saveSession(name, data, expectedFilenames);
+                    if (!metaResult.success) throw new Error(metaResult.error);
+
+                    // 2) 변경된 이미지만 청크 단위로 인코딩 + 전송 (메모리 사용량을 청크 크기로 고정)
                     const dirtyItems = isFirstSave ? allItems : allItems.filter(item => item.imgObj._imgDirty);
                     const total = allItems.length;
                     const dirtyCount = dirtyItems.length;
-                    const saveStart = Date.now();
-                    imageDataArr = [];
 
                     if (dirtyCount === 0 && !isFirstSave) {
-                        // 변경된 이미지 없음 — 이미지 파일 건드리지 않음 (null 전달)
-                        imageDataArr = null;
                         this._updateProgressOverlay(`메타데이터만 저장 중...`);
                     } else {
-                        this._updateProgressOverlay(`이미지 저장 중... (${dirtyCount}/${total}장 변경됨)`);
+                        const CHUNK_SIZE = 30;
+                        const saveStart = Date.now();
+                        let done = 0;
+                        this._updateProgressOverlay(`이미지 저장 중... (0/${dirtyCount}장 변경됨)`);
 
-                        for (let i = 0; i < dirtyItems.length; i++) {
-                            const { imgObj: saveImg, filename: saveName } = dirtyItems[i];
-                            try {
-                                if (typeof ImageManager !== 'undefined' && (!saveImg.imgElement || !saveImg.imgElement.complete || saveImg.imgElement.width === 0)) {
-                                    await ImageManager.ensureLoaded(saveImg);
-                                }
-                                if (!saveImg.imgElement || saveImg.imgElement.width === 0) continue;
-                                const c = document.createElement('canvas');
-                                c.width = saveImg.imgElement.naturalWidth || saveImg.imgElement.width;
-                                c.height = saveImg.imgElement.naturalHeight || saveImg.imgElement.height;
-                                c.getContext('2d').drawImage(saveImg.imgElement, 0, 0);
-                                imageDataArr.push({ filename: saveName || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) });
-                                saveImg._imgDirty = false; // 저장 완료
-                            } catch (_) {}
+                        for (let start = 0; start < dirtyItems.length; start += CHUNK_SIZE) {
+                            const chunk = dirtyItems.slice(start, start + CHUNK_SIZE);
+                            const chunkData = [];
 
-                            if ((i + 1) % 10 === 0 || i === dirtyItems.length - 1) {
-                                let timeInfo = '';
-                                if (i > 3) {
-                                    const elapsed = (Date.now() - saveStart) / 1000;
-                                    const remaining = (elapsed / (i + 1)) * (dirtyItems.length - i - 1);
-                                    if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
-                                    else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
-                                }
-                                this._updateProgressOverlay(`이미지 저장 중... (${i + 1}/${dirtyCount})${timeInfo}`);
-                                await new Promise(r => setTimeout(r, 0));
+                            for (const { imgObj: saveImg, filename: saveName } of chunk) {
+                                try {
+                                    if (typeof ImageManager !== 'undefined' && (!saveImg.imgElement || !saveImg.imgElement.complete || saveImg.imgElement.width === 0)) {
+                                        await ImageManager.ensureLoaded(saveImg);
+                                    }
+                                    if (!saveImg.imgElement || saveImg.imgElement.width === 0) continue;
+                                    const c = document.createElement('canvas');
+                                    c.width = saveImg.imgElement.naturalWidth || saveImg.imgElement.width;
+                                    c.height = saveImg.imgElement.naturalHeight || saveImg.imgElement.height;
+                                    c.getContext('2d').drawImage(saveImg.imgElement, 0, 0);
+                                    chunkData.push({ filename: saveName || `image_${Date.now()}.jpg`, dataUrl: c.toDataURL('image/jpeg', 0.9) });
+                                    saveImg._imgDirty = false; // 저장 완료
+                                } catch (_) {}
                             }
+
+                            if (chunkData.length > 0) {
+                                const chunkResult = await window.electronAPI.saveSessionImagesChunk(name, chunkData);
+                                if (!chunkResult.success) throw new Error(chunkResult.error);
+                            }
+                            // chunkData는 다음 반복 진입 전에 GC 대상 — 전체를 한 번에 들고 있지 않음
+
+                            done += chunk.length;
+                            let timeInfo = '';
+                            if (done > 3) {
+                                const elapsed = (Date.now() - saveStart) / 1000;
+                                const remaining = (elapsed / done) * (dirtyItems.length - done);
+                                if (remaining > 60) timeInfo = ` (약 ${Math.ceil(remaining / 60)}분 남음)`;
+                                else if (remaining > 5) timeInfo = ` (약 ${Math.round(remaining)}초 남음)`;
+                            }
+                            this._updateProgressOverlay(`이미지 저장 중... (${Math.min(done, dirtyCount)}/${dirtyCount})${timeInfo}`);
+                            await new Promise(r => setTimeout(r, 0));
                         }
                     }
-                    this._updateProgressOverlay(`디스크에 저장 중...`);
                     this._savedOnce = true;
-                }
-
-                const result = await window.electronAPI.saveSession(name, data, imageDataArr);
-                if (!result.success) throw new Error(result.error);
-                if (metadataOnly) {
-                    console.log(`[세션] 메타만 저장: ${result.path}`);
-                } else {
-                    console.log(`[세션] 파일 저장: ${result.path} (이미지 ${imageDataArr.length}장)`);
+                    console.log(`[세션] 파일 저장: ${metaResult.path} (이미지 ${dirtyCount}/${total}장 갱신)`);
                 }
             } else {
                 localStorage.setItem(this.STORAGE_PREFIX + name, JSON.stringify(data));

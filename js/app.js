@@ -75,10 +75,56 @@ const App = {
         TemplateManager.init();
         SessionManager.init();
         SubjectManager.init();
+        Scoring.init();
         Toast.init();
+
+        this._initPanelResizer();
 
         this.updateStep(this.STEPS.UPLOAD);
         this.updateStatusBar();
+    },
+
+    // 좌측 이미지목록 패널 너비 드래그 조절 (localStorage에 저장/복원)
+    _initPanelResizer() {
+        const panel = document.getElementById('panel-left');
+        const handle = document.getElementById('panel-left-resizer');
+        if (!panel || !handle) return;
+
+        const STORAGE_KEY = 'omr_panelLeftWidth';
+        const MIN_W = 220;
+        const MAX_W = 640;
+
+        const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+        if (!isNaN(saved) && saved >= MIN_W && saved <= MAX_W) {
+            panel.style.width = saved + 'px';
+        }
+
+        let startX = 0;
+        let startW = 0;
+
+        const onMouseMove = (e) => {
+            const newW = Math.min(MAX_W, Math.max(MIN_W, startW + (e.clientX - startX)));
+            panel.style.width = newW + 'px';
+        };
+        const onMouseUp = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            handle.classList.remove('resizing');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            localStorage.setItem(STORAGE_KEY, parseInt(panel.style.width, 10));
+        };
+
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startX = e.clientX;
+            startW = panel.getBoundingClientRect().width;
+            handle.classList.add('resizing');
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
     },
 
     getCurrentImage() {

@@ -1,5 +1,5 @@
 {
-  "name": "omr-grading-system",
+  "name": "omr-grading-system_v2",
   "version": "1.0.0",
   "description": "OMR 채점 시스템",
   "main": "main.js",
@@ -15,8 +15,8 @@
   "author": "",
   "license": "ISC",
   "build": {
-    "appId": "com.omrscan.app",
-    "productName": "OMR채점시스템",
+    "appId": "com.omrscan.app.v2",
+    "productName": "OMR채점시스템_v2",
     "directories": {
       "output": "dist"
     },

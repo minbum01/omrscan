@@ -375,29 +375,24 @@ const Correction = {
             const placeholder = document.createElement('div');
             placeholder.style.cssText = 'padding:8px;background:#f1f5f9;border-radius:4px;font-size:9px;color:var(--text-muted);text-align:center;';
             placeholder.textContent = '이미지 미로드';
-            // 비동기로 로드 후 갱신 — results가 null이면 시도 안 함 (회전 후 등)
+            // 비동기로 로드 후 이 카드만 교체 — 탭 전체 재렌더 금지 (연쇄 재렌더 방지)
             if (typeof ImageManager !== 'undefined' && img._imgSrc && img.results) {
-                const capturedGen = this._activeRenderGen;
                 ImageManager.ensureLoaded(img).then((loaded) => {
                     if (!loaded) return; // 로드 실패 시 재시도 안 함
-                    if (capturedGen !== this._activeRenderGen) return;
-                    if (!this._isVisible()) return;
-                    const container = document.getElementById('correction-content');
-                    if (container) this.render(container);
+                    if (!placeholder.isConnected) return; // 이미 다른 렌더로 교체/제거된 경우 무시
+                    const replacement = this._makeZoomCanvas(e, isSmall, thumbOverride);
+                    if (replacement) placeholder.replaceWith(replacement);
                 });
             }
             return placeholder;
         }
 
-        let sourceImg = img.imgElement;
-        if (typeof CanvasManager !== 'undefined') {
-            const prevIntensity = CanvasManager.intensity;
-            const imgIntensity = img.intensity || prevIntensity || 100;
-            CanvasManager.intensity = imgIntensity;
-            const intensified = CanvasManager._getIntensifiedImage(img);
-            CanvasManager.intensity = prevIntensity;
-            if (intensified) sourceImg = intensified;
-        }
+        // 썸네일은 20~30px 크롭이면 충분 — 이미지 전체 해상도를 처리하지 않고
+        // 필요한 작은 영역만 잘라낸 뒤 그 크롭에만 진하기(LUT)를 적용한다.
+        const rawImg = img.imgElement;
+        const imgIntensity = (typeof CanvasManager !== 'undefined')
+            ? (img.intensity || CanvasManager.intensity || 100)
+            : 100;
 
         const THUMB_SIZE = thumbOverride || (isSmall ? 22 : 28);
         const PAD = 3;
@@ -416,8 +411,8 @@ const Correction = {
             const cropSize = Math.max(b.w || 10, b.h || 10) + PAD * 2;
             const sx = Math.max(0, Math.round(cx - cropSize / 2));
             const sy = Math.max(0, Math.round(cy - cropSize / 2));
-            const sw = Math.min(sourceImg.width - sx, cropSize);
-            const sh = Math.min(sourceImg.height - sy, cropSize);
+            const sw = Math.min(rawImg.width - sx, cropSize);
+            const sh = Math.min(rawImg.height - sy, cropSize);
 
             const cv = document.createElement('canvas');
             cv.width = THUMB_SIZE;
@@ -438,7 +433,13 @@ const Correction = {
 
             const cvctx = cv.getContext('2d');
             cvctx.imageSmoothingEnabled = false;
-            if (sw > 0 && sh > 0) cvctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
+            if (sw > 0 && sh > 0) {
+                const cropCanvas = (typeof CanvasManager !== 'undefined')
+                    ? CanvasManager._getIntensifiedCrop(rawImg, sx, sy, sw, sh, imgIntensity)
+                    : null;
+                if (cropCanvas) cvctx.drawImage(cropCanvas, 0, 0, cropCanvas.width, cropCanvas.height, 0, 0, THUMB_SIZE, THUMB_SIZE);
+                else cvctx.drawImage(rawImg, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
+            }
             cellWrap.appendChild(cv);
 
             const label = (e.choiceLabels && e.choiceLabels[idx]) || String(idx + 1);

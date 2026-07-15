@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>채점 및 결과 - 새창</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+    body {
+        margin: 0;
+        padding: 16px;
+        background: #f1f5f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 맑은 고딕, sans-serif;
+    }
+    #report-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+    #report-header h1 {
+        font-size: 15px;
+        margin: 0;
+        color: #334155;
+    }
+    #report-hint {
+        font-size: 11px;
+        color: #94a3b8;
+    }
+</style>
+</head>
+<body>
+    <div id="report-header">
+        <h1>채점 및 결과 (보기 전용)</h1>
+        <span id="report-hint">행을 클릭하면 메인 창에서 해당 이미지가 열립니다</span>
+    </div>
+    <div id="report-root">
+        <div style="text-align:center; padding:60px 20px; color:#94a3b8; font-size:13px;">메인 창에서 데이터를 기다리는 중...</div>
+    </div>
+    <script>
+        window.reportAPI.onContent((html) => {
+            document.getElementById('report-root').innerHTML = html;
+        });
+        document.getElementById('report-root').addEventListener('click', (e) => {
+            const tr = e.target.closest('tr[data-nav]');
+            if (!tr) return;
+            const localIdx = parseInt(tr.dataset.localIdx, 10);
+            if (isNaN(localIdx)) return;
+            window.reportAPI.navigate({ periodId: tr.dataset.periodId || null, localIdx });
+        });
+    </script>
+</body>
+</html>
